@@ -20,10 +20,18 @@ pub struct Config {
     pub bar_height: u16,
     pub master_ratio: f32,
     pub terminal: Vec<String>,
+    /// NIRUWM-only: second terminal. Read-only here so the shared file is
+    /// accepted unchanged; NIRUBAR never starts programs from it.
+    pub terminal_alt: Vec<String>,
+    /// NIRUWM-only: browser command.
+    pub browser: Vec<String>,
     pub launcher: Vec<String>,
     pub font_path: Option<String>,
     pub font_size: f32,
     pub bar: Bar,
+    /// NIRUWM-only key bindings. Parsed as an opaque value: the bar must not
+    /// reject a configuration that mentions keys it does not use.
+    pub keys: Vec<toml::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -52,10 +60,13 @@ impl Default for Config {
             bar_height: 28,
             master_ratio: 0.55,
             terminal: vec!["kitty".into()],
+            terminal_alt: Vec::new(),
+            browser: vec!["brave".into()],
             launcher: vec!["rofi".into(), "-show".into(), "drun".into()],
             font_path: None,
             font_size: 15.0,
             bar: Bar::default(),
+            keys: Vec::new(),
         }
     }
 }
@@ -198,6 +209,29 @@ mod tests {
         // file is shared, so both programs must describe every key they use.
         let err = toml::from_str::<Config>("gap = 8\nbogus = 1");
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn accepts_the_wm_config_unchanged() {
+        // The two programs share one file. If the bar rejects a key the WM
+        // writes, the bar dies at login — so every WM key must parse here.
+        let shared = r#"
+theme = "niru-noir"
+terminal = ["kitty"]
+terminal_alt = ["alacritty"]
+browser = ["brave"]
+
+[bar]
+title = true
+
+[[keys]]
+keys = "super+Return"
+action = "terminal"
+"#;
+        let c: Config = toml::from_str(shared).expect("shared config must parse");
+        assert!(c.bar.title);
+        assert_eq!(c.terminal_alt, vec!["alacritty"]);
+        assert_eq!(c.keys.len(), 1);
     }
 
     #[test]

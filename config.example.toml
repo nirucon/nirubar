@@ -8,6 +8,8 @@ border_width = 2
 bar_height = 28
 master_ratio = 0.55
 terminal = ["kitty"]
+terminal_alt = []
+browser = ["brave"]
 launcher = ["rofi", "-show", "drun"]
 
 font_size = 15.0
