@@ -1,16 +1,23 @@
 # NIRUBAR
 
 Minimal Rust/X11 status bar for [NIRUWM](https://github.com/nirucon/niruwm).
-**0.1.0-alpha.1**, with **Niru Noir** as the built-in default.
+**0.2.0**, with **Niru Noir** as the built-in default.
+
+The bar shows what you actually look at: clickable workspaces, the Swedish
+weekday and ISO date, and the time (`lör 2026-10-17 16:48`). It is not a
+system monitor.
 
 ## Implemented
 
-- Clickable workspaces, active/occupied states and focused-window title.
-- Memory usage, battery percentage when available, local date and time.
-- Native `/proc` and `/sys` reads for these system values; no recurring shell pipelines.
-- Small anti-aliased Unicode TrueType renderer, without GTK/Qt or a GPU requirement.
+- Clickable workspaces with active/occupied states.
+- Swedish weekday, ISO 8601 date and `hh:mm`; built-in weekday names so no
+  `sv_SE` locale is required.
+- Optional focused-window title (`[bar] title = true`).
+- Small anti-aliased Unicode TrueType renderer, without GTK/Qt or a GPU
+  requirement, double buffered so redraws never flicker.
 - X11 dock/strut properties and singleton protection.
-- Blocking X11 event loop plus a five-second timer; no continuous rendering loop.
+- Blocking X11 event loop; a one-second tick repaints only when the rendered
+  string changes.
 - Runtime palette, font and height reload through `niructl reload`.
 - Separate process: WM windows remain usable if the bar exits.
 
