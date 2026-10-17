@@ -6,8 +6,8 @@
 //! window manager with it.
 mod config;
 mod render;
+mod status;
 
-use chrono::Datelike;
 use config::{Config, Result, Theme};
 use std::{collections::HashMap, thread, time::Duration};
 use x11rb::{
@@ -33,6 +33,7 @@ struct Bar {
     atoms: HashMap<&'static str, Atom>,
     renderer: render::Renderer,
     last_frame: String,
+    icons: status::Icons,
 }
 
 impl Bar {
@@ -52,6 +53,7 @@ impl Bar {
     fn new() -> Result<Self> {
         let cfg = Config::load()?;
         let theme = Theme::load(&cfg.theme)?;
+        let icons = cfg.bar.icons;
         let (c, s) = x11rb::connect(None)?;
         let screen = &c.setup().roots[s];
         let root = screen.root;
@@ -148,6 +150,7 @@ impl Bar {
         // The queue is empty, so the first frame can be composed before the
         // window is visible; the renderer is sized for the initial width.
         renderer.resize(&c, root, width, cfg.bar_height)?;
+        let icons = choose_icons(&renderer, icons);
         Ok(Self {
             c,
             root,
@@ -160,6 +163,10 @@ impl Bar {
             atoms,
             renderer,
             last_frame: String::new(),
+            // Choose the icon set from what the font can actually draw, not
+            // from the setting alone: a Nerd Font glyph in a plain font is a
+            // blank box.
+            icons,
         })
     }
 
@@ -222,26 +229,37 @@ impl Bar {
             )?;
         }
 
-        // Clock, right-aligned. The Swedish date is ISO 8601 (SS-ISO 8601),
-        // which is the Swedish standard: 2026-10-17, then hh:mm.
+        // Status, right-aligned. Date and time are ISO (the Swedish
+        // standard) without a weekday: `2026-10-17  21:16`.
         let now = chrono::Local::now();
-        let clock = format!(
-            "{}  {}  {}",
-            swedish_weekday(now.weekday()),
-            now.format("%Y-%m-%d"),
-            now.format("%H:%M")
-        );
-        let clock_width = self.renderer.width(&clock);
-        let clock_x = i16::try_from(self.width)
+        let clock = status::clock(now);
+        let mut parts: Vec<String> = Vec::new();
+        if self.cfg.bar.network {
+            let link = status::network();
+            let text = status::network_text(link, &self.icons, self.cfg.bar.icons);
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+        if self.cfg.bar.battery {
+            // No battery (a desktop) or no reading: draw nothing.
+            if let Some(b) = status::battery() {
+                parts.push(status::battery_text(&b, &self.icons));
+            }
+        }
+        parts.push(clock);
+        let text = parts.join("   ");
+        let text_width = self.renderer.width(&text);
+        let start = i16::try_from(self.width)
             .unwrap_or(i16::MAX)
-            .saturating_sub(clock_width)
+            .saturating_sub(text_width)
             .saturating_sub(10)
             .max(cell * 9);
         self.renderer.text(
             &self.c,
             self.gc,
-            clock_x,
-            &clock,
+            start,
+            &text,
             fg,
             bg,
             i16::try_from(self.width).unwrap_or(i16::MAX),
@@ -279,8 +297,12 @@ impl Bar {
                 }
             }
         }
+        // Include the status segments: a battery drop or a link change must
+        // repaint even when the minute and the tag did not change.
         let clock = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        format!("{}:{:?}:{}", tag, occupied, clock)
+        let bat = status::battery().map(|b| (b.percent, b.charging));
+        let net = status::network();
+        format!("{}:{:?}:{}:{bat:?}:{net:?}", tag, occupied, clock)
     }
 
     fn reload(&mut self) -> Result<()> {
@@ -298,6 +320,7 @@ impl Bar {
         )?;
         self.theme = theme;
         self.height = cfg.bar_height;
+        self.icons = choose_icons(&self.renderer, cfg.bar.icons);
         self.cfg = cfg;
         self.last_frame.clear();
         self.draw()
@@ -390,6 +413,60 @@ impl Bar {
     }
 }
 
+/// Pick the icon set the font can actually draw.
+///
+/// The bar is a status line: a missing glyph shows as a blank box, which reads
+/// as a broken bar. Choose per glyph instead of all-or-nothing, so a font that
+/// has the battery icons but not the network one still looks right.
+fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons {
+    if !want_icons {
+        return status::Icons::plain();
+    }
+    let nerd = status::Icons::nerd();
+    let plain = status::Icons::plain();
+    let ok = |g: &str| g.chars().all(|ch| renderer.has_glyph(ch));
+    status::Icons {
+        battery_full: if ok(nerd.battery_full) {
+            nerd.battery_full
+        } else {
+            plain.battery_full
+        },
+        battery_high: if ok(nerd.battery_high) {
+            nerd.battery_high
+        } else {
+            plain.battery_high
+        },
+        battery_medium: if ok(nerd.battery_medium) {
+            nerd.battery_medium
+        } else {
+            plain.battery_medium
+        },
+        battery_low: if ok(nerd.battery_low) {
+            nerd.battery_low
+        } else {
+            plain.battery_low
+        },
+        battery_empty: if ok(nerd.battery_empty) {
+            nerd.battery_empty
+        } else {
+            plain.battery_empty
+        },
+        battery_charging: if ok(nerd.battery_charging) {
+            nerd.battery_charging
+        } else {
+            plain.battery_charging
+        },
+        wifi: if ok(nerd.wifi) { nerd.wifi } else { plain.wifi },
+        ethernet: if ok(nerd.ethernet) {
+            nerd.ethernet
+        } else {
+            plain.ethernet
+        },
+        wifi_fallback: plain.wifi_fallback,
+        ethernet_fallback: plain.ethernet_fallback,
+    }
+}
+
 fn set_strut(
     c: &RustConnection,
     win: Window,
@@ -427,21 +504,6 @@ fn set_strut(
     Ok(())
 }
 
-/// Swedish weekday names, kept in code so the bar works without a locale
-/// database (minimal containers and Void installs often have no `sv_SE`).
-fn swedish_weekday(day: chrono::Weekday) -> &'static str {
-    use chrono::Weekday::*;
-    match day {
-        Mon => "mån",
-        Tue => "tis",
-        Wed => "ons",
-        Thu => "tor",
-        Fri => "fre",
-        Sat => "lör",
-        Sun => "sön",
-    }
-}
-
 fn main() {
     let arg = std::env::args().nth(1).unwrap_or_default();
     if arg == "--version" {
@@ -475,31 +537,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn weekday_names_are_swedish() {
-        use chrono::Weekday::*;
-        for (day, name) in [
-            (Mon, "mån"),
-            (Tue, "tis"),
-            (Wed, "ons"),
-            (Thu, "tor"),
-            (Fri, "fre"),
-            (Sat, "lör"),
-            (Sun, "sön"),
-        ] {
-            assert_eq!(swedish_weekday(day), name);
-        }
-    }
-
-    #[test]
     fn clock_uses_iso_date_and_24h_time() {
         let now = chrono::Local::now();
-        let text = format!(
-            "{}  {}  {}",
-            swedish_weekday(now.weekday()),
-            now.format("%Y-%m-%d"),
-            now.format("%H:%M")
-        );
-        assert_eq!(text.split("  ").nth(1).unwrap().len(), 10);
-        assert_eq!(text.split("  ").nth(2).unwrap().len(), 5);
+        let text = status::clock(now);
+        assert_eq!(text.split("  ").count(), 2, "date, two spaces, time");
+        assert_eq!(text.split("  ").next().unwrap().len(), 10);
     }
 }

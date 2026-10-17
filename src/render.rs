@@ -44,6 +44,15 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Whether the loaded font can draw a glyph.
+    ///
+    /// A missing glyph renders as a blank box, so the bar checks the icons it
+    /// is about to use and falls back to ASCII when the font lacks them.
+    /// `ab_glyph` reports glyph id 0 for characters the font does not cover.
+    pub fn has_glyph(&self, ch: char) -> bool {
+        self.font.glyph_id(ch).0 != 0
+    }
+
     pub fn new(c: &RustConnection, root: Window, cfg: &Config, width: u16) -> Result<Self> {
         let path = match &cfg.font_path {
             Some(p) => std::path::PathBuf::from(p),

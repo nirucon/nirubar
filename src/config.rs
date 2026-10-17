@@ -32,6 +32,9 @@ pub struct Config {
     /// NIRUWM-only key bindings. Parsed as an opaque value: the bar must not
     /// reject a configuration that mentions keys it does not use.
     pub keys: Vec<toml::Value>,
+    /// NIRUWM-only wallpaper settings. Parsed as an opaque value for the same
+    /// reason as `keys`: one shared file must be accepted by both programs.
+    pub wallpaper: toml::Value,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -49,6 +52,14 @@ pub struct Bar {
     pub cell_width: u16,
     /// Separator drawn between the status groups.
     pub separator: String,
+    /// Show a battery segment on laptops. Machines without a battery never
+    /// show one, whatever this is set to.
+    pub battery: bool,
+    /// Show a network icon while a wired or wireless link is up.
+    pub network: bool,
+    /// Use Nerd Font glyphs. When the configured font lacks them, set this to
+    /// false for plain ASCII labels.
+    pub icons: bool,
 }
 
 impl Default for Config {
@@ -67,6 +78,7 @@ impl Default for Config {
             font_size: 15.0,
             bar: Bar::default(),
             keys: Vec::new(),
+            wallpaper: toml::Value::Table(Default::default()),
         }
     }
 }
@@ -79,6 +91,9 @@ impl Default for Bar {
             title_max: 60,
             cell_width: 30,
             separator: "|".into(),
+            battery: true,
+            network: true,
+            icons: true,
         }
     }
 }

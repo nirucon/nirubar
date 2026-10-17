@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Battery segment on laptops, with a charging bolt and level icons. Machines
+  without a battery show nothing.
+- Network icon for a wired or wireless link, read from `/sys/class/net` so no
+  daemon or NetworkManager is needed.
+- `[bar] battery`, `network` and `icons` settings.
+
+### Changed
+
+- The weekday is gone from the clock: `2026-10-17  21:16`.
+
+### Fixed
+
+- Icons are chosen per glyph from what the loaded font can draw, so a font
+  without the full Nerd Font range falls back to plain text instead of drawing
+  blank boxes.
+
+
 ## 0.2.0 — minimal bar, rebuilt
 
 ### Added
