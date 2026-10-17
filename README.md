@@ -1,94 +1,74 @@
 # NIRUBAR
 
-Minimal Rust/X11 status bar for [NIRUWM](https://github.com/nirucon/niruwm).
-**0.2.0**, with **Niru Noir** as the built-in default.
+The status bar for [NIRUWM](https://github.com/nirucon/niruwm).
 
-The bar shows what you actually look at: clickable workspaces, the Swedish
-weekday and ISO date, and the time (`lör 2026-10-17 16:48`). It is not a
-system monitor.
+**A personal hobby project.** I build this for my own machines. It is public
+so others can read it and try it, but there is no support promise. Treat it as
+alpha software and use it at your own risk.
 
-## Implemented
+## What it is
 
-- Clickable workspaces with active/occupied states.
-- Swedish weekday, ISO 8601 date and `hh:mm`; built-in weekday names so no
-  `sv_SE` locale is required.
-- Optional focused-window title (`[bar] title = true`).
-- Small anti-aliased Unicode TrueType renderer, without GTK/Qt or a GPU
-  requirement, double buffered so redraws never flicker.
-- X11 dock/strut properties and singleton protection.
-- Blocking X11 event loop; a one-second tick repaints only when the rendered
-  string changes.
-- Runtime palette, font and height reload through `niructl reload`.
-- Separate process: WM windows remain usable if the bar exits.
+A minimal X11 bar in Rust that draws:
+
+- nine clickable workspaces (active and occupied states)
+- the Swedish weekday and ISO date, e.g. `lör 2026-10-17`
+- the time, `hh:mm`
+
+That is all. It is a status line, not a system monitor. Text is rendered with
+a small built-in TrueType renderer, so no GTK, Qt or GPU is needed.
+
+## How it works
+
+NIRUBAR is a separate process. NIRUWM starts it at login, and it can also be
+run on its own. It reserves screen space with an X11 strut, so windows are
+never hidden behind it. Clicking a workspace switches NIRUWM to it through the
+standard EWMH protocol.
+
+Both programs share `~/.config/niruwm/config.toml`. The bar only reads the
+`[bar]` section and the theme; it never rejects settings meant for the window
+manager.
 
 ## Install
 
+No Rust or compiler is required: the installer downloads a static binary.
+
 ```sh
-git clone https://github.com/nirucon/nirubar.git
+git clone https://github.com/nirucon/nirubar
 cd nirubar
 ./install.sh
-~/.local/bin/nirubar --check-config
 ```
 
-NIRUWM starts `nirubar` from PATH automatically. For a standalone test in an
-isolated X session, run `~/.local/bin/nirubar`. Do not expect integration with
-unpatched dwm: this bar uses EWMH workspaces rather than dwm status text.
-The installer preserves existing configuration and backs up an existing binary.
-
-## Alpha limits / roadmap
-
-One bar across the X screen for now; per-monitor panels and hotplug accompany
-NIRUWM's monitor milestone. Audio, network, media/MPRIS, update counts, weather,
-tray and module pop-ups are not implemented yet. The CPU/memory impact and redraw
-frequency must be measured before calling this faster than the existing bar.
-Unicode coverage depends on the selected font; there is no fallback-font chain yet.
-
-## Build requirements
-
-Rust/Cargo 1.75 or newer, a C linker, and an X11 session. No systemd dependency.
-The bar needs fontconfig plus a TrueType font (JetBrainsMono Nerd Font is preferred,
-DejaVu Sans Mono works). This first renderer targets 24/32-bit TrueColor screens.
+Then start NIRUWM (which starts the bar automatically). To build from source
+instead (Rust 1.75+):
 
 ```sh
-# Arch
-sudo pacman -S --needed rust base-devel fontconfig ttf-dejavu kitty rofi
-# Debian
-sudo apt install cargo rustc build-essential fontconfig fonts-dejavu-core kitty rofi
-# Void (glibc)
-sudo xbps-install -S rust cargo base-devel fontconfig dejavu-fonts-ttf kitty rofi
-```
-
-Void musl is not yet a tested target. CI builds on Debian, Arch and Void glibc;
-these builds do not replace real hardware/session testing.
-
-## Configuration and themes
-
-Both programs read `~/.config/niru/config.toml` (or `$XDG_CONFIG_HOME/niru/config.toml`).
-See `config.example.toml`. Commands are argument arrays, never passed through a shell.
-**Niru Noir is the built-in default**, using NIRUPI's original palette:
-`0f0f10`, `e5e5e5`, `a8a8a8`, `2a2a2d`, `5a5a60`.
-
-Additional themes are files in `~/.config/niru/themes/NAME.toml`, following
-`themes/niru-noir.toml`. Set `theme = "NAME"` and run `niructl reload`, or use
-`niructl theme NAME`. This rewrites the TOML configuration while preserving values
-(comments are not preserved). Invalid configurations/themes are rejected.
-The working runtime configuration is retained when reload fails.
-
-`font_size` and optional `font_path` control the bar's Unicode TrueType renderer.
-Changing themes does not modify GTK, terminals or other applications yet.
-
-## Development
-
-```sh
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
 cargo build --release --locked
-# Isolated X11 tests (install xvfb and xauth first):
-xvfb-run -a cargo test --locked --test x11 -- --ignored --test-threads=1
 ```
 
-Initial local verification: Rust 1.75, unit tests and real Xvfb integration tests.
-No performance advantage over dwm is claimed without measurements.
+## Configuration
+
+```toml
+font_size = 15.0
+# font_path = "/path/to/monospace.ttf"
+
+[bar]
+title = false      # show the focused window title
+cell_width = 30
+```
+
+Apply changes with `niructl reload`.
+
+## Status
+
+Version 0.2.0. Shows workspaces, date and time.
+
+Not there yet: battery, volume, network, media, trays, popups, per-monitor
+bars, and a configurable date format.
+
+## Build needs (only when building yourself)
+
+Rust 1.75+, a C linker, `fontconfig` and a monospace font.
+
+## License
 
 MIT. Copyright 2026 Nicklas Rudolfsson.
