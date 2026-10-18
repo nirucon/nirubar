@@ -1,14 +1,20 @@
-//! NIRUBAR — the NIRU minimal status bar.
+//! NIRUBAR — the NIRU status bar.
 //!
-//! Draws clickable NIRUWM workspaces, the Swedish date and the local time.
-//! Everything else is deliberately absent: the bar is a status line, not a
-//! dashboard. It runs as a separate process so a bar crash never takes the
-//! window manager with it.
+//! Modules are independent: workspaces, network, battery and clock. Which ones
+//! appear, and in what order, comes from `[bar] modules` in the shared config.
+//! Each can be clicked for a small panel with more detail.
+//!
+//! The bar runs as a separate process, so a bar crash never takes the window
+//! manager with it.
+
 mod config;
+mod module;
+mod popup;
 mod render;
 mod status;
 
 use config::{Config, Result, Theme};
+use module::{Module, Side, Workspaces};
 use std::{collections::HashMap, thread, time::Duration};
 use x11rb::{
     connection::Connection,
@@ -17,9 +23,18 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-/// How often the clock is re-read. One tick per second keeps `hh:mm` exact
-/// while the bar itself only repaints when the rendered string changes.
+/// One tick per second keeps `hh:mm` exact while only changed frames repaint.
 const TICK: Duration = Duration::from_secs(1);
+
+/// Horizontal space reserved per drawn module, in characters of padding.
+const MODULE_PAD: i16 = 2;
+
+/// One drawn module, with where it landed so a click can open its panel.
+struct Placed {
+    index: usize,
+    x: i16,
+    width: i16,
+}
 
 struct Bar {
     c: RustConnection,
@@ -34,6 +49,11 @@ struct Bar {
     renderer: render::Renderer,
     last_frame: String,
     icons: status::Icons,
+    modules: Vec<Box<dyn Module>>,
+    workspaces: Workspaces,
+    /// Hit boxes from the last frame: where each module and workspace cell is.
+    placed: Vec<Placed>,
+    cells: i16,
 }
 
 impl Bar {
@@ -79,8 +99,6 @@ impl Bar {
             atoms.insert(n, c.intern_atom(false, n.as_bytes())?.reply()?.atom);
         }
 
-        // A single bar per screen. The selection is per X display, so a nested
-        // test server and the real session can coexist.
         let selection = atoms["_NIRUBAR_SELECTION"];
         if c.get_selection_owner(selection)?.reply()?.owner != 0 {
             return Err("NIRUBAR is already running on this X screen".into());
@@ -122,7 +140,6 @@ impl Bar {
             AtomEnum::ATOM,
             &[atoms["_NET_WM_WINDOW_TYPE_DOCK"]],
         )?;
-        // Identify the bar to the window manager and tools like `wmctrl`.
         c.change_property32(
             PropMode::REPLACE,
             win,
@@ -147,10 +164,11 @@ impl Bar {
         c.map_window(win)?;
         c.flush()?;
 
-        // The queue is empty, so the first frame can be composed before the
-        // window is visible; the renderer is sized for the initial width.
         renderer.resize(&c, root, width, cfg.bar_height)?;
-        let icons = choose_icons(&renderer, icons);
+        let icons = crate::choose_icons(&renderer, icons);
+        let modules = module::build(&cfg.bar, icons);
+        let workspaces = Workspaces::new(&cfg.bar);
+        let cells = cfg.bar.cell_width as i16;
         Ok(Self {
             c,
             root,
@@ -163,21 +181,16 @@ impl Bar {
             atoms,
             renderer,
             last_frame: String::new(),
-            // Choose the icon set from what the font can actually draw, not
-            // from the setting alone: a Nerd Font glyph in a plain font is a
-            // blank box.
             icons,
+            modules,
+            workspaces,
+            placed: Vec::new(),
+            cells,
         })
     }
 
-    /// Compose the frame on the backing pixmap.
-    fn compose(&mut self) -> Result<()> {
-        let bg = Theme::pixel(&self.theme.background)?;
-        let fg = Theme::pixel(&self.theme.foreground)?;
-        let muted = Theme::pixel(&self.theme.muted)?;
-        let border = Theme::pixel(&self.theme.border)?;
-        self.renderer.clear(&self.c, self.gc, bg)?;
-
+    /// Collect the EWMH state the bar displays.
+    fn snapshot(&mut self) {
         let tag = self
             .values(self.root, "_NET_CURRENT_DESKTOP")
             .first()
@@ -191,84 +204,138 @@ impl Bar {
                 }
             }
         }
+        self.workspaces.update(tag, occupied);
+    }
 
-        let cell = self.cfg.bar.cell_width as i16;
-        for (i, &is_occupied) in occupied.iter().enumerate() {
-            let x = (i as i16) * cell;
-            let active = i == tag as usize;
-            if active {
-                self.renderer.fill(
-                    &self.c,
-                    self.gc,
-                    Rectangle {
-                        x,
-                        y: 0,
-                        width: cell as u16,
-                        height: self.height,
-                    },
-                    border,
-                )?;
+    fn title(&self) -> String {
+        if !self.cfg.bar.show_title {
+            return String::new();
+        }
+        let Some(w) = self
+            .values(self.root, "_NET_ACTIVE_WINDOW")
+            .first()
+            .copied()
+        else {
+            return String::new();
+        };
+        let name = self
+            .c
+            .get_property(
+                false,
+                w,
+                self.atom("_NET_WM_NAME"),
+                self.atom("UTF8_STRING"),
+                0,
+                256,
+            )
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .map(|r| r.value)
+            .unwrap_or_default();
+        let name = if name.is_empty() {
+            self.c
+                .get_property(false, w, AtomEnum::WM_NAME, AtomEnum::ANY, 0, 256)
+                .ok()
+                .and_then(|r| r.reply().ok())
+                .map(|r| r.value)
+                .unwrap_or_default()
+        } else {
+            name
+        };
+        String::from_utf8_lossy(&name)
+            .chars()
+            .take(self.cfg.bar.title_max)
+            .collect()
+    }
+
+    fn compose(&mut self) -> Result<()> {
+        let bg = Theme::pixel(&self.theme.background)?;
+        let fg = Theme::pixel(&self.theme.foreground)?;
+        let muted = Theme::pixel(&self.theme.muted)?;
+        let border = Theme::pixel(&self.theme.border)?;
+        self.renderer.clear(&self.c, self.gc, bg)?;
+        self.placed.clear();
+
+        // Workspaces are cells, drawn first on the left.
+        let cell = self.cells;
+        let show_workspaces = self.cfg.bar.modules.iter().any(|m| m == "workspaces");
+        if show_workspaces {
+            for i in 0..9usize {
+                let x = (i as i16) * cell;
+                let active = i == self.workspaces.active as usize;
+                if active {
+                    self.renderer.fill(
+                        &self.c,
+                        self.gc,
+                        Rectangle {
+                            x,
+                            y: 0,
+                            width: cell as u16,
+                            height: self.height,
+                        },
+                        border,
+                    )?;
+                }
+                let (colour, cell_bg) = if active {
+                    (fg, border)
+                } else if self.workspaces.occupied[i] {
+                    (fg, bg)
+                } else {
+                    (muted, bg)
+                };
+                let label = self.workspaces.names[i].clone();
+                let text_x = x + (cell - self.renderer.width(&label)) / 2;
+                self.renderer
+                    .text(&self.c, self.gc, text_x, &label, colour, cell_bg, x + cell)?;
             }
-            let (colour, background) = if active {
-                (fg, border)
-            } else if is_occupied {
-                (fg, bg)
-            } else {
-                (muted, bg)
-            };
-            let label = (i + 1).to_string();
-            let text_x = x + (cell - self.renderer.advance) / 2;
-            self.renderer.text(
-                &self.c,
-                self.gc,
-                text_x,
-                &label,
-                colour,
-                background,
-                x + cell,
-            )?;
         }
 
-        // Status, right-aligned. Date and time are ISO (the Swedish
-        // standard) without a weekday: `2026-10-17  21:16`.
-        let now = chrono::Local::now();
-        let clock = status::clock(now);
-        let mut parts: Vec<String> = Vec::new();
-        if self.cfg.bar.network {
-            let link = status::network();
-            let text = status::network_text(link, &self.icons, self.cfg.bar.icons);
+        // Right-aligned status modules, in config order.
+        let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10;
+        let mut texts: Vec<(usize, String)> = Vec::new();
+        for (index, m) in self.modules.iter_mut().enumerate() {
+            if m.side() != Side::Right {
+                continue;
+            }
+            let text = m.render();
             if !text.is_empty() {
-                parts.push(text);
+                texts.push((index, text));
             }
         }
-        if self.cfg.bar.battery {
-            // No battery (a desktop) or no reading: draw nothing.
-            if let Some(b) = status::battery() {
-                parts.push(status::battery_text(&b, &self.icons));
+        let mut x = right_edge;
+        let mut placed: Vec<Placed> = Vec::new();
+        for (index, text) in texts.iter().rev() {
+            let w = self.renderer.width(text);
+            x -= w;
+            self.renderer
+                .text(&self.c, self.gc, x, text, fg, bg, right_edge)?;
+            placed.push(Placed {
+                index: *index,
+                x,
+                width: w,
+            });
+            x -= self.renderer.width(&self.cfg.bar.separator) + self.renderer.advance * MODULE_PAD;
+        }
+        placed.reverse();
+        self.placed = placed;
+
+        // The window title, clipped to the space that is left.
+        let title = self.title();
+        if !title.is_empty() {
+            let start = self.cells * 9;
+            let end = x - self.renderer.advance * 2;
+            if end > start {
+                self.renderer
+                    .text(&self.c, self.gc, start, &title, muted, bg, end)?;
             }
         }
-        parts.push(clock);
-        let text = parts.join("   ");
-        let text_width = self.renderer.width(&text);
-        let start = i16::try_from(self.width)
-            .unwrap_or(i16::MAX)
-            .saturating_sub(text_width)
-            .saturating_sub(10)
-            .max(cell * 9);
-        self.renderer.text(
-            &self.c,
-            self.gc,
-            start,
-            &text,
-            fg,
-            bg,
-            i16::try_from(self.width).unwrap_or(i16::MAX),
-        )?;
+
         self.c.flush()?;
         Ok(())
     }
 
     fn draw(&mut self) -> Result<()> {
+        self.snapshot();
         let frame = self.frame_key();
         if frame == self.last_frame {
             return Ok(());
@@ -281,28 +348,63 @@ impl Bar {
         Ok(())
     }
 
-    /// Cheap description of what the visible frame depends on. A changed key
-    /// means the bar must be redrawn.
-    fn frame_key(&self) -> String {
-        let tag = self
-            .values(self.root, "_NET_CURRENT_DESKTOP")
-            .first()
-            .copied()
-            .unwrap_or(0);
-        let mut occupied = [0u8; 9];
-        for w in self.values(self.root, "_NET_CLIENT_LIST") {
-            if let Some(t) = self.values(w, "_NET_WM_DESKTOP").first() {
-                if *t < 9 {
-                    occupied[*t as usize] = 1;
-                }
-            }
+    /// Everything the frame depends on. A changed key means a redraw.
+    fn frame_key(&mut self) -> String {
+        let tag = self.workspaces.active;
+        let occupied: Vec<bool> = self.workspaces.occupied.to_vec();
+        let modules: Vec<String> = self.modules.iter_mut().map(|m| m.render()).collect();
+        let title = self.title();
+        format!("{tag}:{occupied:?}:{modules:?}:{title}")
+    }
+
+    /// Open the detail panel for whatever was clicked.
+    fn click(&mut self, x: i16, y: i16) -> Result<()> {
+        let _ = y;
+        if self.cfg.bar.modules.iter().any(|m| m == "workspaces") && x < self.cells * 9 {
+            let tag = (x / self.cells).clamp(0, 8) as u32;
+            self.c.send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                ClientMessageEvent::new(
+                    32,
+                    self.root,
+                    self.atom("_NET_CURRENT_DESKTOP"),
+                    [tag, x11rb::CURRENT_TIME, 0, 0, 0],
+                ),
+            )?;
+            self.c.flush()?;
+            self.last_frame.clear();
+            return self.draw();
         }
-        // Include the status segments: a battery drop or a link change must
-        // repaint even when the minute and the tag did not change.
-        let clock = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        let bat = status::battery().map(|b| (b.percent, b.charging));
-        let net = status::network();
-        format!("{}:{:?}:{}:{bat:?}:{net:?}", tag, occupied, clock)
+        if !self.cfg.bar.popups {
+            return Ok(());
+        }
+        let hit = self
+            .placed
+            .iter()
+            .find(|p| x >= p.x && x < p.x + p.width)
+            .map(|p| p.index);
+        let Some(index) = hit else {
+            return Ok(());
+        };
+        let left = self.placed.iter().find(|p| p.index == index).map(|p| p.x);
+        let content = self.modules.get_mut(index).and_then(|m| m.popup());
+        if let (Some((title, lines)), Some(left)) = (content, left) {
+            popup::show(
+                &self.c,
+                self.root,
+                &self.theme,
+                self.height,
+                self.cfg.font_size,
+                self.cfg.font_path.as_deref(),
+                left,
+                &title,
+                &lines,
+            )?;
+            self.last_frame.clear();
+        }
+        Ok(())
     }
 
     fn reload(&mut self) -> Result<()> {
@@ -320,18 +422,18 @@ impl Bar {
         )?;
         self.theme = theme;
         self.height = cfg.bar_height;
-        self.icons = choose_icons(&self.renderer, cfg.bar.icons);
+        self.icons = crate::choose_icons(&self.renderer, cfg.bar.icons);
+        self.modules = module::build(&cfg.bar, self.icons);
+        self.workspaces = Workspaces::new(&cfg.bar);
+        self.cells = cfg.bar.cell_width as i16;
         self.cfg = cfg;
         self.last_frame.clear();
         self.draw()
     }
 
     fn run(&mut self) -> Result<()> {
-        // The first tick paints synchronously so the bar is never empty.
         self.draw()?;
         thread::spawn({
-            // A watchdog thread keeps `hh:mm` correct without adding a timer
-            // file descriptor to the X connection.
             let (timer, _) = x11rb::connect(None)?;
             let win = self.win;
             let atom = self.atoms["_NIRUBAR_REDRAW"];
@@ -354,29 +456,10 @@ impl Bar {
         loop {
             let event = self.c.wait_for_event()?;
             match event {
-                Event::ButtonPress(e) if e.event_x >= 0 => {
-                    let x = e.event_x;
-                    let cell = self.cfg.bar.cell_width as i16;
-                    if x < 9 * cell {
-                        let tag = (x / cell) as u32;
-                        self.c.send_event(
-                            false,
-                            self.root,
-                            // No event mask: deliver the click to the WM
-                            // exactly once, regardless of its selected masks.
-                            EventMask::NO_EVENT,
-                            ClientMessageEvent::new(
-                                32,
-                                self.root,
-                                self.atom("_NET_CURRENT_DESKTOP"),
-                                [tag, x11rb::CURRENT_TIME, 0, 0, 0],
-                            ),
-                        )?;
-                        // Optimistically show the new tag; the WM confirms with
-                        // its own property update.
-                        self.last_frame.clear();
+                Event::ButtonPress(e) => {
+                    if e.event_x >= 0 {
+                        self.click(e.event_x, e.event_y)?;
                     }
-                    self.draw()?;
                 }
                 Event::ConfigureNotify(e) if e.window == self.root && e.width != self.width => {
                     self.width = e.width;
@@ -391,19 +474,18 @@ impl Bar {
                     self.draw()?;
                 }
                 Event::Expose(_) => {
-                    // An expose often follows a resize; the backing pixmap may
-                    // be stale, so redraw unconditionally.
                     self.last_frame.clear();
                     self.draw()?;
                 }
-                // `niructl reload` publishes a new serial on the root window;
-                // both the window manager and the bar pick it up.
                 Event::PropertyNotify(e) if e.atom == self.atom("_NIRU_CONFIG_SERIAL") => {
                     if let Err(e) = self.reload() {
                         eprintln!("Reload rejected: {e}");
                     }
                 }
-                Event::PropertyNotify(_) | Event::ClientMessage(_) => self.draw()?,
+                Event::PropertyNotify(_) | Event::ClientMessage(_) => {
+                    self.last_frame.clear();
+                    self.draw()?;
+                }
                 Event::DestroyNotify(e) if e.window == self.win => break,
                 Event::SelectionClear(_) => break,
                 _ => (),
@@ -413,11 +495,44 @@ impl Bar {
     }
 }
 
-/// Pick the icon set the font can actually draw.
-///
-/// The bar is a status line: a missing glyph shows as a blank box, which reads
-/// as a broken bar. Choose per glyph instead of all-or-nothing, so a font that
-/// has the battery icons but not the network one still looks right.
+fn set_strut(
+    c: &RustConnection,
+    win: Window,
+    atoms: &HashMap<&'static str, Atom>,
+    height: u16,
+    width: u16,
+) -> Result<()> {
+    c.change_property32(
+        PropMode::REPLACE,
+        win,
+        atoms["_NET_WM_STRUT_PARTIAL"],
+        AtomEnum::CARDINAL,
+        &[
+            0,
+            0,
+            u32::from(height),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            u32::from(width.saturating_sub(1)),
+            0,
+            0,
+        ],
+    )?;
+    c.change_property32(
+        PropMode::REPLACE,
+        win,
+        atoms["_NET_WM_STRUT"],
+        AtomEnum::CARDINAL,
+        &[0, 0, u32::from(height), 0],
+    )?;
+    Ok(())
+}
+
+/// Pick the icon set the font can actually draw, per glyph.
 fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons {
     if !want_icons {
         return status::Icons::plain();
@@ -467,43 +582,6 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
     }
 }
 
-fn set_strut(
-    c: &RustConnection,
-    win: Window,
-    atoms: &HashMap<&'static str, Atom>,
-    height: u16,
-    width: u16,
-) -> Result<()> {
-    c.change_property32(
-        PropMode::REPLACE,
-        win,
-        atoms["_NET_WM_STRUT_PARTIAL"],
-        AtomEnum::CARDINAL,
-        &[
-            0,
-            0,
-            u32::from(height),
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            u32::from(width.saturating_sub(1)),
-            0,
-            0,
-        ],
-    )?;
-    c.change_property32(
-        PropMode::REPLACE,
-        win,
-        atoms["_NET_WM_STRUT"],
-        AtomEnum::CARDINAL,
-        &[0, 0, u32::from(height), 0],
-    )?;
-    Ok(())
-}
-
 fn main() {
     let arg = std::env::args().nth(1).unwrap_or_default();
     if arg == "--version" {
@@ -534,13 +612,24 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn clock_uses_iso_date_and_24h_time() {
-        let now = chrono::Local::now();
-        let text = status::clock(now);
-        assert_eq!(text.split("  ").count(), 2, "date, two spaces, time");
-        assert_eq!(text.split("  ").next().unwrap().len(), 10);
+    fn clock_follows_the_configured_formats() {
+        use crate::config::Bar;
+        use crate::module::Module;
+        let bar = Bar {
+            date_format: "%d/%m".into(),
+            time_format: "%H.%M".into(),
+            ..Default::default()
+        };
+        let mut c = crate::module::Clock::new(&bar);
+        let text = c.render();
+        assert_eq!(
+            text,
+            format!(
+                "{}  {}",
+                chrono::Local::now().format("%d/%m"),
+                chrono::Local::now().format("%H.%M")
+            )
+        );
     }
 }

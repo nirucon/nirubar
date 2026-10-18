@@ -12,6 +12,7 @@ use std::path::Path;
 ///
 /// The fallback matters on a clean install where the preferred font is
 /// missing: a missing glyph renders as a blank box, which is worse than text.
+#[derive(Clone, Copy)]
 pub struct Icons {
     pub battery_full: &'static str,
     pub battery_high: &'static str,
@@ -155,14 +156,6 @@ pub fn network() -> Option<Link> {
     }
 }
 
-/// The clock text: ISO date and `hh:mm`, as used by NIRUWM.
-///
-/// The date is deliberately shown without a weekday: NIRUWM asked for
-/// `2026-10-17  21:16`.
-pub fn clock(now: chrono::DateTime<chrono::Local>) -> String {
-    format!("{}  {}", now.format("%Y-%m-%d"), now.format("%H:%M"))
-}
-
 /// Format the battery segment, e.g. ` 87%` or `+ 42%` while charging.
 pub fn battery_text(b: &Battery, icons: &Icons) -> String {
     let icon = if b.charging {
@@ -246,15 +239,6 @@ mod tests {
     }
 
     #[test]
-    fn clock_has_no_weekday() {
-        let now = chrono::Local::now();
-        let text = clock(now);
-        assert_eq!(text.len(), 17, "YYYY-MM-DD + two spaces + HH:MM");
-        assert!(!text.contains("lör"));
-        assert!(text.contains(':'));
-    }
-
-    #[test]
     fn battery_icons_track_level() {
         let icons = Icons::nerd();
         let at = |p: u8, c: bool| {
@@ -287,5 +271,163 @@ mod tests {
         assert!(icons.wifi.is_ascii());
         assert!(icons.ethernet.is_ascii());
         assert!(icons.battery_full.is_ascii());
+    }
+}
+
+/// Detail lines for the battery popup.
+pub fn battery_detail(b: &Battery) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push(format!("charge: {}%", b.percent));
+    if b.charging {
+        lines.push("state: charging".to_string());
+    } else {
+        lines.push("state: on battery".to_string());
+    }
+    if let Some(name) = battery_name() {
+        lines.push(format!("device: {name}"));
+    }
+    lines
+}
+
+fn battery_name() -> Option<String> {
+    let entries = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let kind = std::fs::read_to_string(path.join("type")).ok()?;
+        if kind.trim() == "Battery" {
+            return Some(entry.file_name().to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// Detail lines for the network popup: interface, address and link state.
+pub fn network_detail(link: Link) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push(match link {
+        Link::Wifi => "type: wireless".to_string(),
+        Link::Ethernet => "type: wired".to_string(),
+    });
+    for (iface, kind) in active_interfaces() {
+        lines.push(format!("interface: {iface}"));
+        let addr = interface_address(&iface);
+        lines.push(match addr {
+            Some(a) => format!("address: {a}"),
+            None => "address: (none)".to_string(),
+        });
+        if kind == Link::Wifi {
+            if let Some(ssid) = wifi_ssid(&iface) {
+                lines.push(format!("network: {ssid}"));
+            }
+            if let Some(sig) = wifi_signal(&iface) {
+                lines.push(format!("signal: {sig}%"));
+            }
+        }
+    }
+    lines
+}
+
+fn active_interfaces() -> Vec<(String, Link)> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "lo" || name.starts_with("docker") || name.starts_with("veth") {
+            continue;
+        }
+        let path = entry.path();
+        let state = std::fs::read_to_string(path.join("operstate"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let carrier = std::fs::read_to_string(path.join("carrier"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if state != "up" || !(carrier.is_empty() || carrier == "1") {
+            continue;
+        }
+        let kind = if path.join("wireless").exists() {
+            Link::Wifi
+        } else {
+            Link::Ethernet
+        };
+        out.push((name, kind));
+    }
+    out
+}
+
+/// First IPv4 address of an interface, read from the kernel without a command.
+fn interface_address(iface: &str) -> Option<String> {
+    // `getifaddrs` through /proc is awkward; using `ip` is portable across the
+    // three supported distributions and only runs when the popup is opened.
+    let out = std::process::Command::new("ip")
+        .args(["-4", "-o", "addr", "show", "dev", iface])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace()
+        .skip_while(|w| *w != "inet")
+        .nth(1)
+        .map(|s| s.split('/').next().unwrap_or(s).to_string())
+}
+
+/// SSID from the wireless interface, without NetworkManager.
+fn wifi_ssid(iface: &str) -> Option<String> {
+    // iw is the standard tool for cfg80211; fall back to nothing.
+    let out = std::process::Command::new("iw")
+        .args(["dev", iface, "link"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let line = line.trim();
+        if let Some(ssid) = line.strip_prefix("SSID: ") {
+            return Some(ssid.to_string());
+        }
+    }
+    None
+}
+
+/// Signal quality as a percentage of the interface's maximum.
+fn wifi_signal(iface: &str) -> Option<u8> {
+    let raw = std::fs::read_to_string("/proc/net/wireless").ok()?;
+    for line in raw.lines().skip(2) {
+        if !line.starts_with(iface) {
+            continue;
+        }
+        let quality = line.split_whitespace().nth(2)?;
+        let value: f32 = quality.trim_end_matches('.').parse().ok()?;
+        return Some((value / 70.0 * 100.0).clamp(0.0, 100.0) as u8);
+    }
+    None
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::*;
+
+    #[test]
+    fn battery_detail_mentions_charge() {
+        let b = Battery {
+            percent: 42,
+            charging: true,
+        };
+        let lines = battery_detail(&b);
+        assert!(lines[0].contains("42%"));
+        assert!(lines.iter().any(|l| l.contains("charging")));
+    }
+
+    #[test]
+    fn network_detail_states_the_type() {
+        let lines = network_detail(Link::Wifi);
+        assert!(lines[0].contains("wireless"));
     }
 }

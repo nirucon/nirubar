@@ -8,29 +8,24 @@ used at your own risk.
 
 ## What it is
 
-A minimal X11 bar in Rust that draws:
+Modules, configured in one line each:
 
-- nine clickable workspaces, active and occupied
-- a battery indicator on laptops, with a charging bolt
-- a network icon while a wired or wireless link is up
-- the ISO date and the time, for example `2026-10-17  21:16`
+| Module | Shows |
+| --- | --- |
+| `workspaces` | nine cells, click one to switch |
+| `network` | wired or wireless icon while a link is up |
+| `battery` | charge and a charging bolt, laptops only |
+| `clock` | date and time |
 
-No weekday, no decoration. Text is drawn with a small built in TrueType
-renderer, so no GTK, Qt or GPU is needed.
+Click a module for a panel: a month calendar, network name and address,
+battery detail.
 
 ## How it works
 
-NIRUBAR is a separate process. NIRUWM starts it at login, and it also runs on
-its own. It reserves screen space with an X11 strut, so windows are never
-hidden behind it. Clicking a workspace switches NIRUWM to it through the
-standard EWMH protocol.
-
-System values are read straight from the kernel (`/sys/class/power_supply` for
-the battery, `/sys/class/net` for the link), so no daemon, D-Bus or
-NetworkManager is involved. A machine without a battery shows no battery
-segment at all.
-
-The bar only redraws when something it shows changes.
+NIRUBAR is a separate process. NIRUWM starts it at login and it also runs on
+its own. It reserves screen space with an X11 strut and only redraws when
+something it shows changes. System values come from `/sys`, so no daemon or
+NetworkManager is involved.
 
 ## Install
 
@@ -43,40 +38,34 @@ cd nirubar
 ```
 
 Then start NIRUWM, which starts the bar. To build from source (Rust 1.75 or
-newer):
-
-```sh
-cargo build --release --locked
-```
+newer): `cargo build --release --locked`.
 
 ## Settings
 
 Shared with NIRUWM in `~/.config/niruwm/config.toml`:
 
 ```toml
+theme = "niru-noir"        # niru-noir, niru-nord, niru-satie, niru-carl-larsson
 font_size = 15.0
-# font_path = "/path/to/monospace.ttf"
 
 [bar]
-enabled = true
-title = false      # show the focused window title
-cell_width = 30
-battery = true
-network = true
-icons = true       # Nerd Font glyphs; falls back to plain text per glyph
+modules = ["workspaces", "network", "battery", "clock"]
+tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+date_format = "%Y-%m-%d"
+time_format = "%H:%M"
+icons = true               # Nerd Font glyphs, plain text where missing
+popups = true              # click a module for detail
 ```
 
-The bar picks icons per glyph, so a font without the full Nerd Font range still
-looks right. With `icons = false` every segment uses plain ASCII labels.
+`tags` takes words or glyphs, for example `["web", "code", "chat"]` or a Nerd
+Font code point.
 
-Apply changes with `niructl reload`.
+**Reload after editing:** `niructl reload`, or press Super+R in NIRUWM.
+Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.3.0. Shows workspaces, battery, network, date and time.
-
-Missing: media, updates, trays, popups, per monitor bars, and a configurable
-date format.
+Version 0.5.0. Missing: media, updates, trays, per-monitor bars.
 
 ## Build needs
 

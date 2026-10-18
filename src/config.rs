@@ -44,14 +44,24 @@ pub struct Bar {
     /// standalone use.
     pub enabled: bool,
     /// Show a short hint of the focused window's title between the tags and
-    /// the clock. `false` keeps the bar minimal: tags and clock only.
-    pub title: bool,
+    /// the clock. Both `show_title` and `title` are accepted in the file.
+    #[serde(alias = "title")]
+    pub show_title: bool,
     /// Maximum number of characters kept from the window title.
     pub title_max: usize,
     /// Width reserved per workspace cell, in pixels.
     pub cell_width: u16,
     /// Separator drawn between the status groups.
     pub separator: String,
+    /// Modules to show, in order: workspaces, network, battery, clock.
+    pub modules: Vec<String>,
+    /// Workspace labels shown instead of 1..9.
+    pub tags: Vec<String>,
+    pub show_date: bool,
+    pub show_time: bool,
+    pub date_format: String,
+    pub time_format: String,
+    pub popups: bool,
     /// Show a battery segment on laptops. Machines without a battery never
     /// show one, whatever this is set to.
     pub battery: bool,
@@ -87,10 +97,22 @@ impl Default for Bar {
     fn default() -> Self {
         Self {
             enabled: true,
-            title: false,
+            show_title: false,
             title_max: 60,
             cell_width: 30,
             separator: "|".into(),
+            modules: vec![
+                "workspaces".into(),
+                "network".into(),
+                "battery".into(),
+                "clock".into(),
+            ],
+            tags: (1..=9).map(|n| n.to_string()).collect(),
+            show_date: true,
+            show_time: true,
+            date_format: "%Y-%m-%d".into(),
+            time_format: "%H:%M".into(),
+            popups: true,
             battery: true,
             network: true,
             icons: true,
@@ -180,10 +202,17 @@ impl Theme {
         {
             return Err("Invalid theme name".into());
         }
-        let text = if name == "niru-noir" {
-            include_str!("../themes/niru-noir.toml").to_string()
-        } else {
-            fs::read_to_string(directory().join("themes").join(format!("{name}.toml")))?
+        // Built-in themes are compiled in; a file of the same name in
+        // ~/.config/niruwm/themes takes precedence so a user can tweak one.
+        let user_file = directory().join("themes").join(format!("{name}.toml"));
+        let text = match (name, user_file.exists()) {
+            ("niru-noir", false) => include_str!("../themes/niru-noir.toml").to_string(),
+            ("niru-nord", false) => include_str!("../themes/niru-nord.toml").to_string(),
+            ("niru-satie", false) => include_str!("../themes/niru-satie.toml").to_string(),
+            ("niru-carl-larsson", false) => {
+                include_str!("../themes/niru-carl-larsson.toml").to_string()
+            }
+            _ => fs::read_to_string(&user_file)?,
         };
         let theme: Self = toml::from_str(&text)?;
         for s in [
@@ -214,7 +243,7 @@ mod tests {
     fn defaults_are_minimal() {
         let c = Config::default();
         assert!(c.bar.enabled);
-        assert!(!c.bar.title, "the bar defaults to tags and clock only");
+        assert!(!c.bar.show_title, "the bar defaults to tags and clock only");
         assert_eq!(c.bar.cell_width, 30);
     }
 
@@ -244,7 +273,7 @@ keys = "super+Return"
 action = "terminal"
 "#;
         let c: Config = toml::from_str(shared).expect("shared config must parse");
-        assert!(c.bar.title);
+        assert!(c.bar.show_title);
         assert_eq!(c.terminal_alt, vec!["alacritty"]);
         assert_eq!(c.keys.len(), 1);
     }
@@ -280,15 +309,22 @@ keys = "super+Return"
 action = "terminal"
 "#;
         let c: Config = toml::from_str(shared).expect("every WM key must parse");
-        assert!(c.bar.title);
+        assert!(c.bar.show_title);
     }
 
     #[test]
     fn partial_config_falls_back_to_defaults() {
         let c: Config = toml::from_str("[bar]\ntitle = true\n").unwrap();
-        assert!(c.bar.title);
+        assert!(c.bar.show_title);
         assert_eq!(c.bar.cell_width, 30);
         assert_eq!(c.gap, 8);
+    }
+
+    #[test]
+    fn all_builtin_themes_load() {
+        for name in ["niru-noir", "niru-nord", "niru-satie", "niru-carl-larsson"] {
+            Theme::load(name).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
     }
 
     #[test]

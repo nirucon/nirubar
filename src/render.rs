@@ -41,6 +41,8 @@ pub struct Renderer {
     back_width: u16,
     pub height: u16,
     masks: HashMap<char, Mask>,
+    /// True when `back` is a window rather than a pixmap.
+    direct: bool,
 }
 
 impl Renderer {
@@ -51,6 +53,32 @@ impl Renderer {
     /// `ab_glyph` reports glyph id 0 for characters the font does not cover.
     pub fn has_glyph(&self, ch: char) -> bool {
         self.font.glyph_id(ch).0 != 0
+    }
+
+    /// A renderer that draws straight onto `target` with no backing pixmap.
+    ///
+    /// Popups are short-lived windows that are painted once, so a second
+    /// buffer adds a copy without removing any flicker.
+    pub fn direct(
+        c: &RustConnection,
+        root: Window,
+        target: Window,
+        font_path: Option<&str>,
+        font_size: f32,
+        width: u16,
+        height: u16,
+    ) -> Result<Self> {
+        let cfg = Config {
+            font_path: font_path.map(str::to_string),
+            font_size,
+            bar_height: height,
+            ..Config::default()
+        };
+        let mut r = Self::new(c, root, &cfg, width)?;
+        // Point every draw at the window instead of the pixmap.
+        r.back = target;
+        r.direct = true;
+        Ok(r)
     }
 
     pub fn new(c: &RustConnection, root: Window, cfg: &Config, width: u16) -> Result<Self> {
@@ -102,6 +130,7 @@ impl Renderer {
             back_width: width.max(1),
             height: cfg.bar_height,
             masks: HashMap::new(),
+            direct: false,
         })
     }
 
@@ -164,6 +193,45 @@ impl Renderer {
         Ok(())
     }
 
+    /// Draw one line of text with its baseline at `baseline`.
+    ///
+    /// Popups stack lines, so they place each baseline themselves instead of
+    /// using the bar's single centred line.
+    #[allow(clippy::too_many_arguments)]
+    pub fn line(
+        &mut self,
+        c: &RustConnection,
+        gc: Gcontext,
+        x: i16,
+        baseline: i16,
+        text: &str,
+        colour: u32,
+        background: u32,
+    ) -> Result<()> {
+        let clip = i16::try_from(self.back_width).unwrap_or(i16::MAX);
+        let mut pen = x;
+        for ch in text.chars() {
+            if ch.is_control() {
+                continue;
+            }
+            if pen.saturating_add(self.advance) > clip {
+                break;
+            }
+            let mask = self.mask(ch).clone();
+            self.blend(c, gc, &mask, pen, baseline, colour, background)?;
+            pen = pen.saturating_add(self.advance);
+        }
+        Ok(())
+    }
+
+    fn centred_baseline(&self) -> i16 {
+        (i16::try_from(self.height)
+            .unwrap_or(0)
+            .saturating_sub(self.line_height))
+        .div_euclid(2)
+        .saturating_add(self.ascent.ceil() as i16)
+    }
+
     /// Draw text at `x`, clipped so that nothing is painted at or past
     /// `clip_to`. Returns the pen position after the last drawn glyph.
     #[allow(clippy::too_many_arguments)] // One draw target and one paint spec.
@@ -177,6 +245,7 @@ impl Renderer {
         background: u32,
         clip_to: i16,
     ) -> Result<i16> {
+        let baseline = self.centred_baseline();
         let mut pen = x;
         for ch in text.chars() {
             if ch.is_control() {
@@ -189,14 +258,19 @@ impl Renderer {
             // blending. Glyph masks are tiny (a few hundred bytes) and this
             // only runs for characters actually drawn.
             let mask = self.mask(ch).clone();
-            self.blend(c, gc, &mask, pen, colour, background)?;
+            self.blend(c, gc, &mask, pen, baseline, colour, background)?;
             pen = pen.saturating_add(self.advance);
         }
         Ok(pen)
     }
 
     /// Copy the finished frame to the window in one request.
+    ///
+    /// A renderer created with `direct` has already drawn on the window.
     pub fn present(&self, c: &RustConnection, gc: Gcontext, win: Window, width: u16) -> Result<()> {
+        if self.direct {
+            return Ok(());
+        }
         c.copy_area(
             self.back,
             win,
@@ -258,26 +332,20 @@ impl Renderer {
     /// Upload one glyph, blended against the background colour, to the
     /// backing pixmap. Glyphs are always drawn over a known solid background
     /// (the tag cell or the bar), so no read-back is needed.
+    #[allow(clippy::too_many_arguments)]
     fn blend(
         &self,
         c: &RustConnection,
         gc: Gcontext,
         mask: &Mask,
         pen: i16,
+        baseline: i16,
         fg: u32,
         bg: u32,
     ) -> Result<()> {
         if mask.width == 0 || mask.height == 0 {
             return Ok(());
         }
-        // Centre the text line vertically: the baseline sits at
-        // `(bar height - line height) / 2 + ascent`, and the mask is relative
-        // to the baseline.
-        let baseline = (i16::try_from(self.height)
-            .unwrap_or(0)
-            .saturating_sub(self.line_height))
-        .div_euclid(2)
-        .saturating_add(self.ascent.ceil() as i16);
         let gx = pen.saturating_add(mask.x);
         let gy = baseline.saturating_add(mask.y);
         // Reject glyphs entirely outside the bar.
