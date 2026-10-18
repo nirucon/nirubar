@@ -34,11 +34,22 @@ jobs:
           mkdir -p /tmp/h/.config/niruwm/themes
           cp config.example.toml /tmp/h/.config/niruwm/config.toml
           cp themes/niru-noir.toml /tmp/h/.config/niruwm/themes/
-          Xvfb :93 -screen 0 800x32x24 -nolisten tcp & sleep 1
-          DISPLAY=:93 HOME=/tmp/h target/x86_64-unknown-linux-musl/release/nirubar & pid=$!
+          Xvfb :93 -screen 0 800x32x24 -nolisten tcp &
+          sleep 2
+          export DISPLAY=:93 HOME=/tmp/h
+          target/x86_64-unknown-linux-musl/release/nirubar & pid=$!
           sleep 2
           kill -0 $pid || { echo "::error::bar exited"; exit 1; }
-          xwd -root -silent > /tmp/bar.xwd
+          # Wait until the bar has painted something.
+          i=0
+          while [ $i -lt 40 ]; do
+            sleep 0.2
+            if xwd -root -silent > /tmp/bar.xwd 2>/dev/null; then
+              n=$(convert /tmp/bar.xwd -format "%k" info:)
+              [ "$n" -gt 3 ] && break
+            fi
+            i=$((i + 1))
+          done
           colours=$(convert /tmp/bar.xwd -format "%k" info:)
           echo "distinct colours: $colours"
           [ "$colours" -gt 3 ] || { echo "::error::bar rendered nothing"; exit 1; }
