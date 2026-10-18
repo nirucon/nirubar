@@ -18,6 +18,9 @@ Modules, configured in one line each:
 | `volume` | level with an icon, or a mute icon; click to mute |
 | `media` | what is playing, `artist - title`, scrolling when it is long |
 | `updates` | available package upgrades; click for the detail and the command |
+| `pulse` | cpu and memory, click for a graph of the last minute |
+| `uptime` | how long the machine has been on |
+| `sun` | sunrise and sunset for your latitude |
 | `clock` | date and time |
 
 A system tray is on by default: applications that show a tray icon appear at
@@ -67,6 +70,10 @@ popup_timeout_seconds = 8  # 0 keeps a panel until dismissed
 media_width = 32           # characters kept from the media title
 update_check_minutes = 30  # package checks; the count is cached
 tray = true                # own the session's tray
+title_delay_seconds = 0    # with title = true: wait before showing a title
+weather_latitude = 0.0     # for the sun module, degrees; north and east
+weather_longitude = 0.0    # positive. 0, 0 hides the times.
+graph_width = 24           # characters in the pulse graph
 ```
 
 The `updates` module reads the package manager of the distribution it runs on:
@@ -79,6 +86,15 @@ A title longer than `media_width` scrolls twice, pauses between passes, and
 rests showing the beginning, so the artist stays readable. A short title is
 shown as it is.
 
+`pulse` samples once per second and draws cpu, memory and the fullest
+filesystem as block characters, so a spike has a shape before it has a name.
+`uptime` adds two numbers in its panel that the rest of the bar does not show:
+memory in use and the fullest filesystem.
+
+`sun` computes sunrise and sunset locally with the standard solar position
+formula; there is no network call and no key to set. Inside the polar day or
+night it shows nothing, and the panel explains why.
+
 The media keys work through NIRUWM, not the bar: volume up and down, mute, play
 and pause, next and previous. They need `wpctl` (or `amixer`) and `playerctl`.
 
@@ -90,7 +106,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.13.1. Missing: per-monitor bars in this release.
+Version 0.14.0. Missing: per-monitor bars in this release.
 
 ## Build needs
 

@@ -4,7 +4,7 @@
 //! A module produces text (and optionally a popup with more detail) and knows
 //! its own width, so adding one later does not touch the layout code.
 
-use crate::{av, config, status, updates};
+use crate::{ambient, av, config, status, updates};
 use chrono::Datelike;
 
 /// Where a module sits on the bar.
@@ -318,6 +318,142 @@ impl Module for Updates {
     }
 }
 
+/// How long the machine has been up, and how the memory and disk look.
+pub struct Uptime;
+
+impl Module for Uptime {
+    fn name(&self) -> &'static str {
+        "uptime"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        ambient::uptime_text().unwrap_or_default()
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let mut lines = Vec::new();
+        match ambient::uptime_text() {
+            Some(t) => lines.push(format!("up {t}")),
+            None => lines.push("cannot read /proc/uptime".to_string()),
+        }
+        lines.push(String::new());
+        lines.push(match crate::pulse::memory_percent() {
+            Some(m) => format!("memory in use: {m}%"),
+            None => "memory: unknown".to_string(),
+        });
+        lines.push(match crate::pulse::disk_percent() {
+            Some(d) => format!("fullest filesystem: {d}% used"),
+            None => "disk: unknown".to_string(),
+        });
+        Some(("Uptime".into(), lines))
+    }
+}
+
+/// A small graph of CPU and memory, drawn with block characters.
+pub struct Pulse {
+    previous: crate::pulse::CpuCounters,
+    samples: Vec<crate::pulse::Sample>,
+    width: usize,
+}
+
+impl Pulse {
+    pub fn new(width: usize) -> Self {
+        Self {
+            previous: crate::pulse::CpuCounters::read().unwrap_or_default(),
+            samples: Vec::new(),
+            width: width.clamp(6, 60),
+        }
+    }
+
+    fn take(&mut self) -> crate::pulse::Sample {
+        let now = crate::pulse::CpuCounters::read().unwrap_or_default();
+        let sample = crate::pulse::sample(&now, &self.previous);
+        self.previous = now;
+        self.samples.push(sample);
+        // A minute of history is enough to see a spike; more is a statistic.
+        if self.samples.len() > 240 {
+            self.samples.remove(0);
+        }
+        sample
+    }
+}
+
+impl Module for Pulse {
+    fn name(&self) -> &'static str {
+        "pulse"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        let sample = self.take();
+        crate::pulse::summary(sample)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let sample = self.samples.last().copied().unwrap_or_default();
+        let rows = crate::pulse::graph_rows(&self.samples, self.width.min(40));
+        Some((
+            "Load".into(),
+            vec![
+                format!(
+                    "cpu {}%   memory {}%   disk {}%",
+                    sample.cpu, sample.memory, sample.disk
+                ),
+                String::new(),
+                rows[0].clone(),
+                rows[1].clone(),
+                rows[2].clone(),
+                String::new(),
+                "cpu, memory, fullest filesystem".to_string(),
+                "each block covers one second".to_string(),
+            ],
+        ))
+    }
+}
+
+/// When the sun rises and sets, from `latitude` and `longitude`.
+pub struct Sun {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+impl Module for Sun {
+    fn name(&self) -> &'static str {
+        "sun"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        // An empty bar is quiet; a missing location is explained in the popup.
+        match ambient::sun_times(self.latitude, self.longitude) {
+            Some((rise, set)) => format!(
+                "{} {rise} {} {set}",
+                char::from_u32(0x2191).unwrap_or('^'),
+                char::from_u32(0x2193).unwrap_or('v')
+            ),
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let lines = match ambient::sun_times(self.latitude, self.longitude) {
+            Some((rise, set)) => vec![
+                format!("sunrise {rise}"),
+                format!("sunset  {set}"),
+                String::new(),
+                format!("at {:.1}, {:.1}", self.latitude, self.longitude),
+            ],
+            None => vec![
+                "no sunrise or sunset today".to_string(),
+                String::new(),
+                "the sun stays up, or stays down, all day".to_string(),
+            ],
+        };
+        Some(("Sun".into(), lines))
+    }
+}
+
 /// Build the active modules in the order the config lists them.
 ///
 /// An unknown name is reported once and skipped, so a typo in the config does
@@ -342,6 +478,12 @@ pub fn build(cfg: &config::Bar, icons: status::Icons) -> Vec<Box<dyn Module>> {
             "media" => out.push(Box::new(Media {
                 icons: cfg.media_icons(),
                 scroller: crate::scroll::Scroller::new(cfg.media_width),
+            })),
+            "pulse" => out.push(Box::new(Pulse::new(cfg.graph_width))),
+            "uptime" => out.push(Box::new(Uptime)),
+            "sun" => out.push(Box::new(Sun {
+                latitude: cfg.weather_latitude,
+                longitude: cfg.weather_longitude,
             })),
             // `workspaces` is drawn separately, not as a text module.
             "workspaces" => {}
@@ -400,6 +542,71 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_module_in_the_example_config_is_known() {
+        // A typo in the example would teach every user the same mistake.
+        let text = include_str!("../config.example.toml");
+        let value: toml::Value = text.parse().expect("example config parses");
+        let list = value["bar"]["modules"]
+            .as_array()
+            .expect("bar.modules is a list");
+        let built = build(&config::Config::default().bar, status::Icons::plain());
+        for name in list {
+            let name = name.as_str().expect("module names are strings");
+            assert!(
+                matches!(
+                    name,
+                    "workspaces"
+                        | "clock"
+                        | "battery"
+                        | "network"
+                        | "volume"
+                        | "media"
+                        | "updates"
+                        | "pulse"
+                        | "uptime"
+                        | "sun"
+                ),
+                "example config names an unknown module {name:?}"
+            );
+        }
+        // The example leaves the new modules out, so they must not be built;
+        // and a hand-made config that asks for all of them builds each once.
+        let cfg = &config::Config::default().bar;
+        assert!(built.len() <= list.len());
+        let mut all = cfg.clone();
+        all.modules = vec![
+            "pulse".into(),
+            "uptime".into(),
+            "sun".into(),
+            "clock".into(),
+        ];
+        assert_eq!(build(&all, status::Icons::plain()).len(), 4);
+    }
+
+    #[test]
+    fn the_new_modules_always_open_a_panel() {
+        let mut pulse = Pulse::new(10);
+        pulse.render();
+        pulse.render();
+        let (title, lines) = pulse.popup().expect("pulse has a panel");
+        assert_eq!(title, "Load");
+        assert!(lines.iter().any(|l| l.starts_with("cpu ")));
+
+        let (title, lines) = Uptime.popup().expect("uptime has a panel");
+        assert_eq!(title, "Uptime");
+        assert!(lines[0].starts_with("up "));
+
+        // A locationless sun module shows whatever the equator has today.
+        let mut sun = Sun {
+            latitude: 0.0,
+            longitude: 0.0,
+        };
+        let _ = sun.render();
+        let (_, lines) = sun.popup().expect("sun has a panel");
+        assert!(lines[0].starts_with("sunrise") || lines[0].starts_with("no sunrise"));
+    }
 
     #[test]
     fn calendar_starts_on_monday() {

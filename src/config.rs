@@ -84,6 +84,21 @@ pub struct Bar {
     /// Minutes between package update checks. 0 asks every redraw, which is
     /// never a good idea; 30 is the default.
     pub update_check_minutes: u32,
+    /// Minutes the focused window must stay the same before its title is
+    /// shown. 0 shows it at once. A title that appears while you are still
+    /// switching windows is noise; a short delay makes it a reward.
+    #[serde(default)]
+    pub title_delay_seconds: u32,
+    /// Width of the graph in the `pulse` popup, in characters.
+    #[serde(default)]
+    pub graph_width: usize,
+    /// Where the machine is, for the `sun` module: the sunrise and sunset
+    /// times. Degrees, north and east positive. Set both to 0 to hide the
+    /// times and explain it in the popup instead.
+    #[serde(default)]
+    pub weather_latitude: f64,
+    #[serde(default)]
+    pub weather_longitude: f64,
     /// Own a system tray. The bar becomes the tray for the session, so
     /// applications that show an icon are visible in it.
     pub tray: bool,
@@ -160,6 +175,10 @@ impl Default for Bar {
             icons: true,
             media_width: 32,
             update_check_minutes: 30,
+            title_delay_seconds: 0,
+            graph_width: 24,
+            weather_latitude: 0.0,
+            weather_longitude: 0.0,
             tray: true,
             volume_icons: None,
             media_icons: None,

@@ -7,10 +7,12 @@
 //! The bar runs as a separate process, so a bar crash never takes the window
 //! manager with it.
 
+mod ambient;
 mod av;
 mod config;
 mod module;
 mod popup;
+mod pulse;
 mod render;
 mod scroll;
 mod status;
@@ -208,6 +210,13 @@ struct Bar {
     cells: i16,
     /// The one open panel, if any. Owned by the bar so clicks stay responsive.
     popup: Option<popup::Popup>,
+    /// The window whose title was last shown, and since when.
+    ///
+    /// With `title_delay_seconds` set, a title is shown only once the focus
+    /// has stayed on the same window that long. Switching several windows
+    /// then shows no titles at all, which is what the eye wants.
+    title_shown: Option<Window>,
+    title_since: std::time::Instant,
 }
 
 impl Bar {
@@ -377,6 +386,8 @@ impl Bar {
             placed: Vec::new(),
             cells,
             popup: None,
+            title_shown: None,
+            title_since: std::time::Instant::now(),
         })
     }
 
@@ -398,15 +409,11 @@ impl Bar {
         self.workspaces.update(tag, occupied);
     }
 
-    fn title(&self) -> String {
+    fn title(&mut self) -> String {
         if !self.cfg.bar.show_title {
             return String::new();
         }
-        let Some(w) = self
-            .values(self.root, "_NET_ACTIVE_WINDOW")
-            .first()
-            .copied()
-        else {
+        let Some(w) = self.title_allowed() else {
             return String::new();
         };
         let name = self
@@ -437,6 +444,25 @@ impl Bar {
             .chars()
             .take(self.cfg.bar.title_max)
             .collect()
+    }
+
+    /// The active window, if the title should be shown right now.
+    fn title_allowed(&mut self) -> Option<Window> {
+        let active = self
+            .values(self.root, "_NET_ACTIVE_WINDOW")
+            .first()
+            .copied()
+            .filter(|w| *w != 0);
+        match active {
+            Some(w) if self.title_shown == Some(w) => {}
+            other => {
+                self.title_shown = other;
+                self.title_since = std::time::Instant::now();
+            }
+        }
+        let w = active?;
+        let delay = std::time::Duration::from_secs(u64::from(self.cfg.bar.title_delay_seconds));
+        (self.title_since.elapsed() >= delay).then_some(w)
     }
 
     fn compose(&mut self) -> Result<()> {
