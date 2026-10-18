@@ -129,8 +129,15 @@ impl Module for Battery {
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let b = status::battery()?;
-        Some(("Battery".into(), status::battery_detail(&b)))
+        // Always open. A machine without a battery explains that instead of
+        // ignoring the click.
+        match status::battery() {
+            Some(b) => Some(("Battery".into(), status::battery_detail(&b))),
+            None => Some((
+                "Battery".into(),
+                vec!["no battery in this machine".to_string()],
+            )),
+        }
     }
 }
 
@@ -150,8 +157,19 @@ impl Module for Network {
         status::network_text(status::network(), &self.icons, self.use_icons)
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let link = status::network()?;
-        Some(("Network".into(), status::network_detail(link)))
+        // Always open, even when offline: a click that does nothing looks
+        // broken, and people want to know why the icon is missing.
+        match status::network() {
+            Some(link) => Some(("Network".into(), status::network_detail(link))),
+            None => Some((
+                "Network".into(),
+                vec![
+                    "no wired or wireless connection".to_string(),
+                    String::new(),
+                    "check the cable or the wireless switch".to_string(),
+                ],
+            )),
+        }
     }
 }
 
