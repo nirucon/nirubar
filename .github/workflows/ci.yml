@@ -49,3 +49,14 @@ jobs:
           esac
       - uses: actions/checkout@v4
       - run: cargo test --locked && cargo build --release --locked
+      - name: One config file, two programs
+        shell: sh
+        run: |
+          # Build the window manager from source so the test uses this
+          # commit's parser, not an older release.
+          git clone --depth 1 https://github.com/nirucon/niruwm /tmp/nw
+          ( cd /tmp/nw && cargo build --release --locked )
+          mkdir -p /tmp/pair
+          cp target/release/nirubar /tmp/pair/
+          cp /tmp/nw/target/release/niruwm /tmp/pair/
+          sh tests/config-agreement.sh /tmp/pair

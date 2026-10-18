@@ -106,7 +106,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.14.0. Missing: per-monitor bars in this release.
+Version 0.14.1. Missing: per-monitor bars in this release.
 
 ## Build needs
 

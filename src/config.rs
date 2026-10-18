@@ -42,11 +42,28 @@ pub struct Config {
     pub scratchpad: toml::Value,
     /// NIRUWM-only window rules.
     pub rules: Vec<toml::Value>,
+    /// The `sun` module's location: degrees, north and east positive. Set both
+    /// to 0 to hide the times and explain it in the popup instead.
+    ///
+    /// Read only by NIRUBAR, but it lives at the top level of the file so that
+    /// NIRUWM accepts the same document. A setting only one of the two
+    /// programs knows is a config the other one refuses to start with, and a
+    /// window manager that will not start is a session that will not start.
+    pub weather_latitude: f64,
+    pub weather_longitude: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Bar {
+    /// Where the machine is, for the `sun` module: the sunrise and sunset times.
+    /// Degrees, north and east positive. Set both to 0 to hide the times and
+    /// explain it in the popup instead.
+    ///
+    /// Read only by NIRUBAR, but it lives at the top level of the file so NIRUWM
+    /// accepts the same document. A setting that only one of the two programs
+    /// knows is a config the other one refuses to start with, and a window
+    /// manager that will not start is a session that will not start.
     /// `true` renders the bar as a dock window (NIRUWM only). Ignored by
     /// standalone use.
     pub enabled: bool,
@@ -92,13 +109,6 @@ pub struct Bar {
     /// Width of the graph in the `pulse` popup, in characters.
     #[serde(default)]
     pub graph_width: usize,
-    /// Where the machine is, for the `sun` module: the sunrise and sunset
-    /// times. Degrees, north and east positive. Set both to 0 to hide the
-    /// times and explain it in the popup instead.
-    #[serde(default)]
-    pub weather_latitude: f64,
-    #[serde(default)]
-    pub weather_longitude: f64,
     /// Own a system tray. The bar becomes the tray for the session, so
     /// applications that show an icon are visible in it.
     pub tray: bool,
@@ -128,6 +138,8 @@ impl Bar {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            weather_latitude: 0.0,
+            weather_longitude: 0.0,
             theme: "niru-noir".into(),
             gap: 8,
             border_width: 2,
@@ -177,8 +189,6 @@ impl Default for Bar {
             update_check_minutes: 30,
             title_delay_seconds: 0,
             graph_width: 24,
-            weather_latitude: 0.0,
-            weather_longitude: 0.0,
             tray: true,
             volume_icons: None,
             media_icons: None,

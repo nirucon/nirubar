@@ -267,6 +267,7 @@ impl Bar {
             "_NIRUBAR_SELECTION",
             "_NIRUBAR_REDRAW",
             "_NIRU_CONFIG_SERIAL",
+            "_NIRUWM_COMMAND",
         ] {
             atoms.insert(n, c.intern_atom(false, n.as_bytes())?.reply()?.atom);
         }
@@ -362,7 +363,7 @@ impl Bar {
         let mut cfg = cfg;
         cfg.bar.volume_icons = Some(av::volume_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
         cfg.bar.media_icons = Some(av::media_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
-        let modules = module::build(&cfg.bar, icons);
+        let modules = module::build(&cfg, icons);
         let workspaces = Workspaces::new(&cfg.bar);
         let cells = cfg.bar.cell_width as i16;
         Ok(Self {
@@ -687,7 +688,7 @@ impl Bar {
             |c| self.renderer.has_glyph(c),
             cfg.bar.icons,
         ));
-        self.modules = module::build(&cfg.bar, self.icons);
+        self.modules = module::build(&cfg, self.icons);
         self.workspaces = Workspaces::new(&cfg.bar);
         self.cells = cfg.bar.cell_width as i16;
         self.cfg = cfg;
@@ -760,6 +761,15 @@ impl Bar {
                 }
             }
             match event {
+                // A reload must not depend on where the command came from: the
+                // window manager bumps the serial, `niructl` may deliver it
+                // directly to the root, and a bar on its own must obey both.
+                Event::PropertyNotify(e) if e.atom == self.atom("_NIRU_CONFIG_SERIAL") => {
+                    match self.reload() {
+                        Ok(()) => eprintln!("nirubar: reloaded"),
+                        Err(e) => eprintln!("nirubar: reload rejected: {e}"),
+                    }
+                }
                 Event::ButtonPress(e) => {
                     if let Some(p) = self.popup.take() {
                         // Clicking the bar under a panel toggles or replaces it.
@@ -803,17 +813,27 @@ impl Bar {
                     self.last_frame.clear();
                     self.draw()?;
                 }
-                Event::PropertyNotify(e) if e.atom == self.atom("_NIRU_CONFIG_SERIAL") => {
-                    if let Err(e) = self.reload() {
-                        eprintln!("Reload rejected: {e}");
-                    }
-                }
                 Event::NoExposure(_) => {}
                 Event::PropertyNotify(_) => {
                     self.last_frame.clear();
                     self.draw()?;
                 }
                 Event::ClientMessage(e) => {
+                    // `niructl reload` and `niructl theme` reach a bar that
+                    // runs without a window manager as well; the window
+                    // manager normally turns them into the serial bump
+                    // below, and this path covers running the bar alone.
+                    let reload = e.type_ == self.atom("_NIRUWM_COMMAND")
+                        && matches!(e.data.as_data32()[0], 4);
+                    if reload {
+                        match self.reload() {
+                            Ok(()) => eprintln!("nirubar: reloaded"),
+                            Err(e) => eprintln!("nirubar: reload rejected: {e}"),
+                        }
+                        self.last_frame.clear();
+                        self.draw()?;
+                        continue;
+                    }
                     let handled = self
                         .tray
                         .as_mut()

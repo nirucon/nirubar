@@ -53,6 +53,15 @@ font_size = 15.0
 # NIRUWM sets and rotates the wallpaper only when enabled = true. Leave it
 # false when NIRUPI's wallrotate.sh owns the background, or two programs will
 # fight over it.
+# ── The bar's location ──────────────────────────────────────────────────────
+# The `sun` module shows sunrise and sunset for this place, in degrees; north
+# and east are positive. Leave both at 0 to hide the times (the panel then
+# says why). At the top level, not under [bar]: NIRUWM reads this file too and
+# refuses fields it does not know, so a setting only the bar uses still has to
+# be somewhere both accept.
+weather_latitude = 0.0
+weather_longitude = 0.0
+
 [wallpaper]
 enabled = false
 # Directory to draw from. Images: jpg, jpeg, png, webp, bmp.
@@ -138,10 +147,6 @@ popups = true
 popup_timeout_seconds = 4
 # Characters kept from the media title before an ellipsis.
 media_width = 32
-# The sun module's location, in degrees; north and east are positive. Leave
-# both at 0 to hide the times (the panel then says why).
-weather_latitude = 0.0
-weather_longitude = 0.0
 # Width of the graph in the pulse panel, in characters.
 graph_width = 24
 # Minutes between package update checks. The result is cached in

@@ -458,7 +458,8 @@ impl Module for Sun {
 ///
 /// An unknown name is reported once and skipped, so a typo in the config does
 /// not stop the bar from starting.
-pub fn build(cfg: &config::Bar, icons: status::Icons) -> Vec<Box<dyn Module>> {
+pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>> {
+    let cfg = &full.bar;
     let mut out: Vec<Box<dyn Module>> = Vec::new();
     for name in &cfg.modules {
         match name.as_str() {
@@ -482,8 +483,8 @@ pub fn build(cfg: &config::Bar, icons: status::Icons) -> Vec<Box<dyn Module>> {
             "pulse" => out.push(Box::new(Pulse::new(cfg.graph_width))),
             "uptime" => out.push(Box::new(Uptime)),
             "sun" => out.push(Box::new(Sun {
-                latitude: cfg.weather_latitude,
-                longitude: cfg.weather_longitude,
+                latitude: full.weather_latitude,
+                longitude: full.weather_longitude,
             })),
             // `workspaces` is drawn separately, not as a text module.
             "workspaces" => {}
@@ -551,7 +552,7 @@ mod tests {
         let list = value["bar"]["modules"]
             .as_array()
             .expect("bar.modules is a list");
-        let built = build(&config::Config::default().bar, status::Icons::plain());
+        let built = build(&config::Config::default(), status::Icons::plain());
         for name in list {
             let name = name.as_str().expect("module names are strings");
             assert!(
@@ -573,10 +574,9 @@ mod tests {
         }
         // The example leaves the new modules out, so they must not be built;
         // and a hand-made config that asks for all of them builds each once.
-        let cfg = &config::Config::default().bar;
         assert!(built.len() <= list.len());
-        let mut all = cfg.clone();
-        all.modules = vec![
+        let mut all = config::Config::default();
+        all.bar.modules = vec![
             "pulse".into(),
             "uptime".into(),
             "sun".into(),
@@ -650,8 +650,11 @@ mod tests {
 
     #[test]
     fn unknown_modules_are_skipped() {
-        let cfg = config::Bar {
-            modules: vec!["clock".into(), "nonsense".into(), "battery".into()],
+        let cfg = config::Config {
+            bar: config::Bar {
+                modules: vec!["clock".into(), "nonsense".into(), "battery".into()],
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mods = build(&cfg, status::Icons::plain());
