@@ -1,0 +1,57 @@
+name: Release
+
+# NIRUBAR also ships inside every NIRUWM release, because the two run together
+# and install.sh fetches a matching pair. This workflow exists so the bar has a
+# release of its own for anyone who wants only the bar.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Verify the binary is static
+        run: |
+          bin=target/x86_64-unknown-linux-musl/release/nirubar
+          file "$bin"
+          if ldd "$bin" 2>&1 | grep -q "=>"; then
+            echo "::error::nirubar is dynamically linked"; exit 1
+          fi
+      - name: Render the bar in a real X server
+        run: |
+          sudo apt-get install -y xvfb x11-utils x11-apps x11-xserver-utils imagemagick fonts-dejavu-core
+          mkdir -p /tmp/h/.config/niruwm/themes
+          cp config.example.toml /tmp/h/.config/niruwm/config.toml
+          cp themes/niru-noir.toml /tmp/h/.config/niruwm/themes/
+          Xvfb :93 -screen 0 800x32x24 -nolisten tcp & sleep 1
+          DISPLAY=:93 HOME=/tmp/h target/x86_64-unknown-linux-musl/release/nirubar & pid=$!
+          sleep 2
+          kill -0 $pid || { echo "::error::bar exited"; exit 1; }
+          xwd -root -silent > /tmp/bar.xwd
+          colours=$(convert /tmp/bar.xwd -format "%k" info:)
+          echo "distinct colours: $colours"
+          [ "$colours" -gt 3 ] || { echo "::error::bar rendered nothing"; exit 1; }
+          kill $pid
+      - run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/nirubar dist/
+          cd dist && sha256sum nirubar > SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.4.0' }}
+          make_latest: true
+          files: |
+            dist/nirubar
+            dist/SHA256SUMS
+          generate_release_notes: true
