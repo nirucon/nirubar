@@ -190,8 +190,39 @@ impl Module for Network {
     }
 }
 
+/// Probe cadence is independent of animation cadence; failures are cached too.
+struct Sample<T> {
+    checked: Option<std::time::Instant>,
+    value: Option<T>,
+}
+
+impl<T> Default for Sample<T> {
+    fn default() -> Self {
+        Self {
+            checked: None,
+            value: None,
+        }
+    }
+}
+
+impl<T> Sample<T> {
+    fn get(&mut self, probe: impl FnOnce() -> Option<T>) -> Option<&T> {
+        let now = std::time::Instant::now();
+        if self
+            .checked
+            .map(|t| now.duration_since(t).as_secs() >= 1)
+            .unwrap_or(true)
+        {
+            self.checked = Some(now);
+            self.value = probe();
+        }
+        self.value.as_ref()
+    }
+}
+
 pub struct Volume {
     pub icons: av::VolumeIcons,
+    sample: Sample<av::Volume>,
 }
 
 impl Module for Volume {
@@ -202,8 +233,8 @@ impl Module for Volume {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match av::Volume::read() {
-            Some(v) => av::volume_text(&v, &self.icons),
+        match self.sample.get(av::Volume::read) {
+            Some(v) => av::volume_text(v, &self.icons),
             // No audio server answers. Showing the speaker with a dash says
             // "the module is here, the sound is not", which is truer than the
             // silence of a module that vanishes.
@@ -213,6 +244,7 @@ impl Module for Volume {
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         // Clicking toggles mute: the most useful thing a volume icon can do.
         av::Volume::toggle_mute();
+        self.sample.checked = None;
         let lines = match av::Volume::read() {
             Some(v) => vec![
                 if v.muted {
@@ -239,11 +271,10 @@ impl Module for Volume {
 /// Placeholder for the drawn music mark. The em space keeps the layout honest
 /// where the text width is measured; the bar paints shapes over it.
 pub struct Media {
+    sample: Sample<av::Media>,
     pub icons: av::MediaIcons,
     /// Scrolls a long title instead of cutting it off.
     pub scroller: crate::scroll::Scroller,
-    /// Whether the player is playing, so a paused track can let the bar sleep.
-    pub playing: bool,
     /// Where the track is, 0..=1, for the thin line under the title.
     ///
     /// It follows the track, so it moves even while the title rests at its
@@ -259,14 +290,13 @@ impl Module for Media {
         Side::Right
     }
     fn render(&mut self) -> String {
-        let Some(m) = av::Media::read() else {
+        let Some(m) = self.sample.get(av::Media::read).cloned() else {
             // Nothing plays: let the next track start from its beginning, and
             // stop asking the bar to repaint.
             self.scroller.observe("");
             self.progress = None;
             return String::new();
         };
-        self.playing = m.playing;
         self.progress = m
             .position
             .and_then(|(pos, len)| (len > 0).then(|| (pos as f32 / len as f32).clamp(0.0, 1.0)));
@@ -299,9 +329,9 @@ impl Module for Media {
         format!("{mark} {window}")
     }
     fn scrolling(&self) -> bool {
-        // A moving progress line needs the frame rate too, but only while the
-        // player is playing: a paused track can sleep.
-        self.scroller.moving() || self.progress.is_some() && self.playing
+        // Playback position is sampled once/second. Only moving text needs
+        // the animation cadence; a short playing title can sleep too.
+        self.scroller.moving()
     }
     fn mark(&self) -> Option<av::MediaIcons> {
         // Only when the font can draw shapes; otherwise the ">" stays text.
@@ -314,6 +344,7 @@ impl Module for Media {
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         // Clicking plays or pauses.
         av::Media::toggle();
+        self.sample.checked = None;
         let lines = match av::Media::read() {
             Some(m) => vec![
                 m.title.clone(),
@@ -550,11 +581,12 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
             })),
             "volume" => out.push(Box::new(Volume {
                 icons: cfg.volume_icons(),
+                sample: Sample::default(),
             })),
             "media" => out.push(Box::new(Media {
+                sample: Sample::default(),
                 icons: cfg.media_icons(),
                 scroller: crate::scroll::Scroller::new(cfg.media_width),
-                playing: false,
                 progress: None,
             })),
             "pulse" => out.push(Box::new(Pulse::new(cfg.graph_width, icons))),
@@ -620,6 +652,39 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn samples_cache_success_and_failure_independently_of_redraws() {
+        let mut sample = super::Sample::default();
+        let mut calls = 0;
+        for _ in 0..100 {
+            assert_eq!(
+                sample.get(|| {
+                    calls += 1;
+                    Some(42)
+                }),
+                Some(&42)
+            );
+        }
+        assert_eq!(calls, 1);
+        sample.checked = sample
+            .checked
+            .map(|t| t - std::time::Duration::from_secs(2));
+        assert_eq!(
+            sample.get(|| {
+                calls += 1;
+                None
+            }),
+            None
+        );
+        assert_eq!(
+            sample.get(|| {
+                calls += 1;
+                Some(99)
+            }),
+            None
+        );
+        assert_eq!(calls, 2);
+    }
     use super::*;
 
     #[test]

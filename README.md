@@ -115,7 +115,12 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.16.4. Missing: per-monitor bars in this release.
+Version 0.16.5. Missing: per-monitor bars in this release.
+
+Part of a personal desktop for the author's own use; others are welcome to try it.
+[Roadmap](https://github.com/nirucon/nirux/blob/main/ROADMAP.md).
+Audio/media probes are sampled once per second, independently of scrolling.
+The event loop uses deadlines, not an always-running animation thread.
 
 ## Build needs
 

@@ -50,20 +50,13 @@ fn parse_monitor(args: &[String]) -> Result<Option<Monitor>> {
     }))
 }
 use module::{Module, Side, Workspaces};
-use std::{collections::HashMap, os::fd::AsRawFd as _, thread, time::Duration};
+use std::{collections::HashMap, os::fd::AsRawFd as _};
 use x11rb::{
     connection::Connection,
     protocol::{xproto::*, Event},
     rust_connection::RustConnection,
     wrapper::ConnectionExt as _,
 };
-
-/// How often the frame is reconsidered.
-///
-/// Ten times a second is what makes a scrolling title look smooth. The bar
-/// still repaints only when the rendered text changes, so an idle bar does
-/// the same work as before: one comparison per tick.
-const TICK: Duration = Duration::from_millis(100);
 
 /// Horizontal space reserved per drawn module, in characters of padding.
 const MODULE_PAD: i16 = 2;
@@ -675,12 +668,20 @@ impl Bar {
         let occupied: Vec<bool> = self.workspaces.occupied.to_vec();
         let modules: Vec<String> = self.modules.iter_mut().map(|m| m.render()).collect();
         self.rendered = modules.clone();
+        let progress: Vec<Option<u16>> = self
+            .modules
+            .iter()
+            .map(|m| {
+                m.progress()
+                    .map(|p| (p.clamp(0.0, 1.0) * 1000.0).round() as u16)
+            })
+            .collect();
         let title = self.title();
         // The module text is part of the key, and the media module's text
         // changes on every scroll step, so a title in motion asks for a redraw
         // by itself. (The first version compared only the track, which does not
         // change while it moves, and the title froze after one frame.)
-        format!("{tag}:{occupied:?}:{modules:?}:{title}")
+        format!("{tag}:{occupied:?}:{modules:?}:{progress:?}:{title}")
     }
 
     /// Draw the music mark as shapes, in the cell of its placeholder.
@@ -852,26 +853,6 @@ impl Bar {
         // a blocking X read.
         let (read_fd, _write_fd) = install_exit_signal()?;
         self.draw()?;
-        thread::spawn({
-            let (timer, _) = x11rb::connect(None)?;
-            let win = self.win;
-            let atom = self.atoms["_NIRUBAR_REDRAW"];
-            move || loop {
-                thread::sleep(TICK);
-                if timer
-                    .send_event(
-                        false,
-                        win,
-                        EventMask::NO_EVENT,
-                        ClientMessageEvent::new(32, win, atom, [0; 5]),
-                    )
-                    .is_err()
-                    || timer.flush().is_err()
-                {
-                    break;
-                }
-            }
-        });
         loop {
             // Sleep until X has work, but never longer than a second while a
             // panel is open: that is how its timeout is enforced without a
@@ -900,9 +881,7 @@ impl Bar {
                     // Nothing arrived, so nothing below this point runs, and
                     // the bar used to go to sleep with a scrolling title in the
                     // middle of a move. Paint on the timer as well.
-                    if self.modules.iter().any(|m| m.scrolling()) {
-                        self.draw()?;
-                    }
+                    self.draw()?;
                     continue;
                 }
             };
