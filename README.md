@@ -15,6 +15,8 @@ Modules, configured in one line each:
 | `workspaces` | nine cells, click one to switch |
 | `network` | wired or wireless icon while a link is up |
 | `battery` | charge and a charging bolt, laptops only |
+| `volume` | level with an icon, or a mute icon; click to mute |
+| `media` | what is playing, `artist - title`; click to play or pause |
 | `clock` | date and time |
 
 Click a module for a panel: a month calendar, network name and address,
@@ -58,7 +60,11 @@ time_format = "%H:%M"
 icons = true               # Nerd Font glyphs, plain text where missing
 popups = true              # click a module for detail
 popup_timeout_seconds = 8  # 0 keeps a panel until dismissed
+media_width = 32           # characters kept from the media title
 ```
+
+The media keys work through NIRUWM, not the bar: volume up and down, mute, play
+and pause, next and previous. They need `wpctl` (or `amixer`) and `playerctl`.
 
 `tags` takes words or glyphs, for example `["web", "code", "chat"]` or a Nerd
 Font code point.
@@ -68,7 +74,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.7.0. Missing: media, updates, trays, per-monitor bars.
+Version 0.8.0. Missing: update counts, trays, per-monitor bars.
 
 ## Build needs
 

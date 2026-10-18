@@ -79,6 +79,29 @@ pub struct Bar {
     /// Use Nerd Font glyphs. When the configured font lacks them, set this to
     /// false for plain ASCII labels.
     pub icons: bool,
+    /// Characters kept from the media title before an ellipsis.
+    pub media_width: usize,
+    /// Whether the volume and media icons use glyphs. Follows `icons`; the
+    /// bar narrows it per glyph to what the font can draw.
+    #[serde(skip)]
+    pub volume_icons: Option<crate::av::VolumeIcons>,
+    #[serde(skip)]
+    pub media_icons: Option<crate::av::MediaIcons>,
+}
+
+impl Bar {
+    /// Volume icons resolved against the loaded font.
+    pub fn volume_icons(&self) -> crate::av::VolumeIcons {
+        self.volume_icons
+            .clone()
+            .unwrap_or_else(crate::av::VolumeIcons::plain)
+    }
+
+    pub fn media_icons(&self) -> crate::av::MediaIcons {
+        self.media_icons
+            .clone()
+            .unwrap_or_else(crate::av::MediaIcons::plain)
+    }
 }
 
 impl Default for Config {
@@ -129,6 +152,9 @@ impl Default for Bar {
             battery: true,
             network: true,
             icons: true,
+            media_width: 32,
+            volume_icons: None,
+            media_icons: None,
         }
     }
 }

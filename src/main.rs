@@ -7,6 +7,7 @@
 //! The bar runs as a separate process, so a bar crash never takes the window
 //! manager with it.
 
+mod av;
 mod config;
 mod module;
 mod popup;
@@ -283,6 +284,12 @@ impl Bar {
 
         renderer.resize(&c, root, width, cfg.bar_height)?;
         let icons = crate::choose_icons(&renderer, icons);
+        // Resolve the volume and media glyphs against the loaded font, the
+        // same way the bar's own icons are chosen. Without this a fresh start
+        // used the defaults and drew plain text, while a reload looked right.
+        let mut cfg = cfg;
+        cfg.bar.volume_icons = Some(av::volume_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
+        cfg.bar.media_icons = Some(av::media_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
         let modules = module::build(&cfg.bar, icons);
         let workspaces = Workspaces::new(&cfg.bar);
         let cells = cfg.bar.cell_width as i16;
@@ -564,6 +571,15 @@ impl Bar {
         self.theme = theme;
         self.height = cfg.bar_height;
         self.icons = crate::choose_icons(&self.renderer, cfg.bar.icons);
+        let mut cfg = cfg;
+        cfg.bar.volume_icons = Some(av::volume_icons(
+            |c| self.renderer.has_glyph(c),
+            cfg.bar.icons,
+        ));
+        cfg.bar.media_icons = Some(av::media_icons(
+            |c| self.renderer.has_glyph(c),
+            cfg.bar.icons,
+        ));
         self.modules = module::build(&cfg.bar, self.icons);
         self.workspaces = Workspaces::new(&cfg.bar);
         self.cells = cfg.bar.cell_width as i16;

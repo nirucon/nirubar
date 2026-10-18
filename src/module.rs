@@ -4,7 +4,7 @@
 //! A module produces text (and optionally a popup with more detail) and knows
 //! its own width, so adding one later does not touch the layout code.
 
-use crate::{config, status};
+use crate::{av, config, status};
 use chrono::Datelike;
 
 /// Where a module sits on the bar.
@@ -173,6 +173,87 @@ impl Module for Network {
     }
 }
 
+pub struct Volume {
+    pub icons: av::VolumeIcons,
+}
+
+impl Module for Volume {
+    fn name(&self) -> &'static str {
+        "volume"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        match av::Volume::read() {
+            Some(v) => av::volume_text(&v, &self.icons),
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        // Clicking toggles mute: the most useful thing a volume icon can do.
+        av::Volume::toggle_mute();
+        let lines = match av::Volume::read() {
+            Some(v) => vec![
+                if v.muted {
+                    "muted".to_string()
+                } else {
+                    format!("{}%", v.percent)
+                },
+                String::new(),
+                "click to mute or unmute".to_string(),
+                String::new(),
+                "media keys: volume up, down, mute".to_string(),
+            ],
+            None => vec!["no audio output found".to_string()],
+        };
+        Some(("Volume".into(), lines))
+    }
+}
+
+pub struct Media {
+    pub icons: av::MediaIcons,
+    pub width: usize,
+}
+
+impl Module for Media {
+    fn name(&self) -> &'static str {
+        "media"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        match av::Media::read() {
+            Some(m) => av::media_text(&m, &self.icons, self.width),
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        // Clicking plays or pauses.
+        av::Media::toggle();
+        let lines = match av::Media::read() {
+            Some(m) => vec![
+                m.title.clone(),
+                m.artist.clone(),
+                String::new(),
+                if m.playing {
+                    "playing".to_string()
+                } else {
+                    "paused".to_string()
+                },
+                "click to play or pause".to_string(),
+            ],
+            None => vec![
+                "no player running".to_string(),
+                String::new(),
+                "a player must support MPRIS, for example mpv, VLC or Firefox".to_string(),
+            ],
+        };
+        Some(("Media".into(), lines))
+    }
+}
+
 /// Build the active modules in the order the config lists them.
 ///
 /// An unknown name is reported once and skipped, so a typo in the config does
@@ -186,6 +267,13 @@ pub fn build(cfg: &config::Bar, icons: status::Icons) -> Vec<Box<dyn Module>> {
             "network" => out.push(Box::new(Network {
                 icons,
                 use_icons: cfg.icons,
+            })),
+            "volume" => out.push(Box::new(Volume {
+                icons: cfg.volume_icons(),
+            })),
+            "media" => out.push(Box::new(Media {
+                icons: cfg.media_icons(),
+                width: cfg.media_width,
             })),
             // `workspaces` is drawn separately, not as a text module.
             "workspaces" => {}
