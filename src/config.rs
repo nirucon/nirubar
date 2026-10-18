@@ -35,6 +35,13 @@ pub struct Config {
     /// NIRUWM-only wallpaper settings. Parsed as an opaque value for the same
     /// reason as `keys`: one shared file must be accepted by both programs.
     pub wallpaper: toml::Value,
+    /// NIRUWM-only monitor settings. Opaque here for the same reason as keys:
+    /// the bar must accept the shared file whatever the window manager stores.
+    pub monitors: toml::Value,
+    /// NIRUWM-only scratchpad settings.
+    pub scratchpad: toml::Value,
+    /// NIRUWM-only window rules.
+    pub rules: Vec<toml::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -62,6 +69,8 @@ pub struct Bar {
     pub date_format: String,
     pub time_format: String,
     pub popups: bool,
+    /// Seconds before an open panel closes itself. 0 keeps it until dismissed.
+    pub popup_timeout_seconds: u32,
     /// Show a battery segment on laptops. Machines without a battery never
     /// show one, whatever this is set to.
     pub battery: bool,
@@ -89,6 +98,9 @@ impl Default for Config {
             bar: Bar::default(),
             keys: Vec::new(),
             wallpaper: toml::Value::Table(Default::default()),
+            monitors: toml::Value::Table(Default::default()),
+            scratchpad: toml::Value::Table(Default::default()),
+            rules: Vec::new(),
         }
     }
 }
@@ -113,6 +125,7 @@ impl Default for Bar {
             date_format: "%Y-%m-%d".into(),
             time_format: "%H:%M".into(),
             popups: true,
+            popup_timeout_seconds: 8,
             battery: true,
             network: true,
             icons: true,
@@ -276,6 +289,14 @@ action = "terminal"
         assert!(c.bar.show_title);
         assert_eq!(c.terminal_alt, vec!["alacritty"]);
         assert_eq!(c.keys.len(), 1);
+    }
+
+    #[test]
+    fn accepts_the_shipped_example_file() {
+        // The strongest guard against the two programs drifting apart: parse
+        // the file NIRUWM ships. This broke three times before the test existed.
+        let example = include_str!("../config.example.toml");
+        toml::from_str::<Config>(example).expect("config.example.toml must parse in NIRUBAR");
     }
 
     #[test]

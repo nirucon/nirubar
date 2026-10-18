@@ -18,7 +18,9 @@ Modules, configured in one line each:
 | `clock` | date and time |
 
 Click a module for a panel: a month calendar, network name and address,
-battery detail.
+battery detail. One panel is open at a time and it closes on a click on the
+same module, a click anywhere else, Escape, or after
+`popup_timeout_seconds`.
 
 ## How it works
 
@@ -55,6 +57,7 @@ date_format = "%Y-%m-%d"
 time_format = "%H:%M"
 icons = true               # Nerd Font glyphs, plain text where missing
 popups = true              # click a module for detail
+popup_timeout_seconds = 8  # 0 keeps a panel until dismissed
 ```
 
 `tags` takes words or glyphs, for example `["web", "code", "chat"]` or a Nerd
@@ -65,7 +68,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.5.0. Missing: media, updates, trays, per-monitor bars.
+Version 0.6.0. Missing: media, updates, trays, per-monitor bars.
 
 ## Build needs
 

@@ -15,7 +15,7 @@ mod status;
 
 use config::{Config, Result, Theme};
 use module::{Module, Side, Workspaces};
-use std::{collections::HashMap, thread, time::Duration};
+use std::{collections::HashMap, os::fd::AsRawFd as _, thread, time::Duration};
 use x11rb::{
     connection::Connection,
     protocol::{xproto::*, Event},
@@ -28,6 +28,116 @@ const TICK: Duration = Duration::from_secs(1);
 
 /// Horizontal space reserved per drawn module, in characters of padding.
 const MODULE_PAD: i16 = 2;
+
+#[repr(C)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+extern "C" {
+    fn poll(fds: *mut PollFd, nfds: u64, timeout: i32) -> i32;
+}
+
+/// A pipe whose readable end becomes ready when a signal arrives.
+static EXIT_PIPE: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
+
+extern "C" fn on_exit_signal(_sig: i32) {
+    // Writing one byte is async-signal-safe. The value is ignored.
+    if let Some((_, write)) = EXIT_PIPE.get() {
+        // SAFETY: a 1-byte write to a pipe created before any handler ran.
+        unsafe {
+            let byte = [1u8];
+            let _ = libc_write(*write, byte.as_ptr() as *const _, 1);
+        }
+    }
+}
+
+extern "C" {
+    fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
+    #[link_name = "write"]
+    fn libc_write(fd: i32, buf: *const std::ffi::c_void, count: usize) -> isize;
+    fn pipe(fds: *mut i32) -> i32;
+}
+
+const SIGINT: i32 = 2;
+const SIGTERM: i32 = 15;
+
+/// Create the signal pipe. Returns (read, write).
+fn install_exit_signal() -> Result<(i32, i32)> {
+    let mut fds = [0i32; 2];
+    // SAFETY: `fds` is a valid two-element array.
+    if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
+        return Err("cannot create the signal pipe".into());
+    }
+    let _ = EXIT_PIPE.set((fds[0], fds[1]));
+    unsafe {
+        signal(SIGTERM, on_exit_signal);
+        signal(SIGINT, on_exit_signal);
+    }
+    Ok((fds[0], fds[1]))
+}
+
+/// True when a signal has arrived on the pipe.
+fn exit_requested(read_fd: i32) -> bool {
+    let mut byte = [0u8; 1];
+    let mut pfd = PollFd {
+        fd: read_fd,
+        events: 1,
+        revents: 0,
+    };
+    // SAFETY: one valid pollfd with a zero timeout.
+    let n = unsafe { poll(&mut pfd, 1, 0) };
+    if n > 0 {
+        // SAFETY: reading one byte into a one-byte buffer.
+        unsafe {
+            let _ = libc_read(read_fd, byte.as_mut_ptr() as *mut _, 1);
+        }
+        return true;
+    }
+    false
+}
+
+extern "C" {
+    #[link_name = "read"]
+    fn libc_read(fd: i32, buf: *mut std::ffi::c_void, count: usize) -> isize;
+}
+
+/// Wait for either the X socket or the exit pipe.
+fn wait_readable2(x_fd: i32, exit_fd: i32, timeout_ms: i32) {
+    let mut pfds = [
+        PollFd {
+            fd: x_fd,
+            events: 1,
+            revents: 0,
+        },
+        PollFd {
+            fd: exit_fd,
+            events: 1,
+            revents: 0,
+        },
+    ];
+    // SAFETY: two valid pollfds for the duration of the call.
+    unsafe {
+        poll(pfds.as_mut_ptr(), 2, timeout_ms);
+    }
+}
+
+/// True when the event is a key press the panel dismisses on.
+fn is_dismiss_key(event: &Event) -> bool {
+    matches!(event, Event::KeyPress(_))
+}
+
+/// True when an event was delivered to `window`.
+fn event_is_from(event: &Event, window: Window) -> bool {
+    match event {
+        Event::ButtonPress(e) => e.event == window,
+        Event::KeyPress(e) => e.event == window,
+        Event::Expose(e) => e.window == window,
+        _ => false,
+    }
+}
 
 /// One drawn module, with where it landed so a click can open its panel.
 struct Placed {
@@ -54,6 +164,8 @@ struct Bar {
     /// Hit boxes from the last frame: where each module and workspace cell is.
     placed: Vec<Placed>,
     cells: i16,
+    /// The one open panel, if any. Owned by the bar so clicks stay responsive.
+    popup: Option<popup::Popup>,
 }
 
 impl Bar {
@@ -158,6 +270,11 @@ impl Bar {
         c.set_selection_owner(win, selection, x11rb::CURRENT_TIME)?;
         c.change_window_attributes(
             root,
+            // Only property and structure events. Selecting BUTTON_PRESS here
+            // would also claim SubstructureRedirect on the root, which is the
+            // window manager's lock: the bar would then stop the WM from
+            // starting at all. Clicks outside an open panel are caught by the
+            // panel's own catch-all window instead.
             &ChangeWindowAttributesAux::new()
                 .event_mask(EventMask::PROPERTY_CHANGE | EventMask::STRUCTURE_NOTIFY),
         )?;
@@ -186,6 +303,7 @@ impl Bar {
             workspaces,
             placed: Vec::new(),
             cells,
+            popup: None,
         })
     }
 
@@ -358,24 +476,15 @@ impl Bar {
     }
 
     /// Open the detail panel for whatever was clicked.
-    fn click(&mut self, x: i16, y: i16) -> Result<()> {
-        let _ = y;
+    /// Handle a click on the bar.
+    ///
+    /// With a panel open, the same module toggles it and any other spot
+    /// closes it; a click on a different module then opens that one.
+    fn click(&mut self, x: i16) -> Result<()> {
         if self.cfg.bar.modules.iter().any(|m| m == "workspaces") && x < self.cells * 9 {
+            self.close_popup()?;
             let tag = (x / self.cells).clamp(0, 8) as u32;
-            self.c.send_event(
-                false,
-                self.root,
-                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-                ClientMessageEvent::new(
-                    32,
-                    self.root,
-                    self.atom("_NET_CURRENT_DESKTOP"),
-                    [tag, x11rb::CURRENT_TIME, 0, 0, 0],
-                ),
-            )?;
-            self.c.flush()?;
-            self.last_frame.clear();
-            return self.draw();
+            return self.select_workspace(tag);
         }
         if !self.cfg.bar.popups {
             return Ok(());
@@ -384,25 +493,57 @@ impl Bar {
             .placed
             .iter()
             .find(|p| x >= p.x && x < p.x + p.width)
-            .map(|p| p.index);
-        let Some(index) = hit else {
+            .map(|p| (p.index, p.x));
+        let Some((index, left)) = hit else {
+            self.close_popup()?;
             return Ok(());
         };
-        let left = self.placed.iter().find(|p| p.index == index).map(|p| p.x);
+        // Clicking the module that opened the open panel closes it.
+        if let Some(open) = &self.popup {
+            if open.module == index {
+                return self.close_popup();
+            }
+        }
+        self.close_popup()?;
         let content = self.modules.get_mut(index).and_then(|m| m.popup());
-        if let (Some((title, lines)), Some(left)) = (content, left) {
-            popup::show(
+        if let Some((title, lines)) = content {
+            self.popup = Some(popup::Popup::open(
                 &self.c,
                 self.root,
                 &self.theme,
                 self.height,
                 self.cfg.font_size,
                 self.cfg.font_path.as_deref(),
+                index,
                 left,
                 &title,
                 &lines,
-            )?;
-            self.last_frame.clear();
+                self.cfg.bar.popup_timeout_seconds,
+            )?);
+        }
+        Ok(())
+    }
+
+    fn select_workspace(&mut self, tag: u32) -> Result<()> {
+        self.c.send_event(
+            false,
+            self.root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            ClientMessageEvent::new(
+                32,
+                self.root,
+                self.atom("_NET_CURRENT_DESKTOP"),
+                [tag, x11rb::CURRENT_TIME, 0, 0, 0],
+            ),
+        )?;
+        self.c.flush()?;
+        self.last_frame.clear();
+        self.draw()
+    }
+
+    fn close_popup(&mut self) -> Result<()> {
+        if let Some(p) = self.popup.take() {
+            p.destroy(&self.c, self.root)?;
         }
         Ok(())
     }
@@ -432,6 +573,14 @@ impl Bar {
     }
 
     fn run(&mut self) -> Result<()> {
+        // Exit on SIGTERM and SIGINT.
+        //
+        // The session script stops the bar with SIGTERM at logout. Without a
+        // handler the process ignores it while it waits for X events, so the
+        // bar outlived the session. The handler sets a flag and writes to a
+        // pipe the event loop watches, which is the portable way to interrupt
+        // a blocking X read.
+        let (read_fd, _write_fd) = install_exit_signal()?;
         self.draw()?;
         thread::spawn({
             let (timer, _) = x11rb::connect(None)?;
@@ -454,14 +603,60 @@ impl Bar {
             }
         });
         loop {
-            let event = self.c.wait_for_event()?;
+            // Sleep until X has work, but never longer than a second while a
+            // panel is open: that is how its timeout is enforced without a
+            // second thread.
+            if exit_requested(read_fd) {
+                self.close_popup()?;
+                break;
+            }
+            let event = match self.c.poll_for_event()? {
+                Some(e) => e,
+                None => {
+                    if self.popup.as_ref().map(|p| p.expired()).unwrap_or(false) {
+                        self.close_popup()?;
+                    }
+                    let timeout = if self.popup.is_some() { 250 } else { 1000 };
+                    wait_readable2(self.c.stream().as_raw_fd(), read_fd, timeout);
+                    continue;
+                }
+            };
+            // A click on the panel itself: keep it open.
+            if let Some(p) = &self.popup {
+                // Escape is grabbed at the root, so it arrives with the root as
+                // its window, not the panel's. A click inside the panel has the
+                // panel as its window. Both belong to the open panel.
+                if event_is_from(&event, p.window())
+                    || event_is_from(&event, p.catch_window())
+                    || event_is_from(&event, self.root) && is_dismiss_key(&event)
+                {
+                    if let popup::Outcome::Close = p.handle(&event) {
+                        self.close_popup()?;
+                    }
+                    continue;
+                }
+            }
             match event {
                 Event::ButtonPress(e) => {
+                    if let Some(p) = self.popup.take() {
+                        // Clicking the bar under a panel toggles or replaces it.
+                        let same_module = self
+                            .placed
+                            .iter()
+                            .find(|pl| e.event_x >= pl.x && e.event_x < pl.x + pl.width)
+                            .map(|pl| pl.index == p.module)
+                            .unwrap_or(false);
+                        p.destroy(&self.c, self.root)?;
+                        if same_module {
+                            continue;
+                        }
+                    }
                     if e.event_x >= 0 {
-                        self.click(e.event_x, e.event_y)?;
+                        self.click(e.event_x)?;
                     }
                 }
                 Event::ConfigureNotify(e) if e.window == self.root && e.width != self.width => {
+                    self.close_popup()?;
                     self.width = e.width;
                     self.renderer
                         .resize(&self.c, self.root, self.width, self.height)?;
@@ -486,6 +681,7 @@ impl Bar {
                     self.last_frame.clear();
                     self.draw()?;
                 }
+                Event::NoExposure(_) => {}
                 Event::DestroyNotify(e) if e.window == self.win => break,
                 Event::SelectionClear(_) => break,
                 _ => (),
