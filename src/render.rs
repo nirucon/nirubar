@@ -82,26 +82,7 @@ impl Renderer {
     }
 
     pub fn new(c: &RustConnection, root: Window, cfg: &Config, width: u16) -> Result<Self> {
-        let path = match &cfg.font_path {
-            Some(p) => std::path::PathBuf::from(p),
-            None => {
-                let found = std::process::Command::new("fc-match")
-                    .args([
-                        "-f",
-                        "%{file}",
-                        "JetBrainsMono Nerd Font,DejaVu Sans Mono:style=Regular",
-                    ])
-                    .output()
-                    .ok()
-                    .filter(|o| o.status.success())
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
-                std::path::PathBuf::from(found.unwrap_or_else(|| {
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".into()
-                }))
-            }
-        };
-        let font =
-            FontArc::try_from_vec(std::fs::read(path)?).map_err(|_| "Cannot load TrueType font")?;
+        let font = load_font(cfg)?;
         let depth = c.get_geometry(root)?.reply()?.depth;
         if ![24, 32].contains(&depth)
             || !c
@@ -402,6 +383,71 @@ impl Renderer {
 
 fn split(colour: u32) -> (u32, u32, u32) {
     ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255)
+}
+
+/// Find a monospaced font, and say which ones were tried when none is there.
+///
+/// A bare `No such file or directory` from a missing font byte makes no sense
+/// to anyone reading a log, and that is exactly what happened on a bare Arch
+/// installation without fontconfig installed: the bar exited during start-up
+/// and the session had no bar at all.
+fn load_font(cfg: &Config) -> crate::Result<FontArc> {
+    let mut tried: Vec<String> = Vec::new();
+    if let Some(p) = &cfg.font_path {
+        tried.push(p.clone());
+        match std::fs::read(p) {
+            Ok(bytes) => return font_from(bytes),
+            Err(e) => {
+                return Err(format!("font_path {p}: {e}").into());
+            }
+        }
+    }
+    // fontconfig, when it is installed, knows the system best.
+    if let Ok(out) = std::process::Command::new("fc-match")
+        .args([
+            "-f",
+            "%{file}",
+            "JetBrainsMono Nerd Font,DejaVu Sans Mono:style=Regular",
+        ])
+        .output()
+    {
+        if out.status.success() {
+            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !p.is_empty() {
+                tried.push(p.clone());
+                if let Ok(bytes) = std::fs::read(&p) {
+                    return font_from(bytes);
+                }
+            }
+        }
+    }
+    // The usual paths, across distributions. A machine with the bar and no
+    // fontconfig still gets a bar.
+    for p in [
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/TTF/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+    ] {
+        tried.push(p.to_string());
+        if let Ok(bytes) = std::fs::read(p) {
+            return font_from(bytes);
+        }
+    }
+    Err(format!(
+        "no monospaced font found; tried {}. Install a font (for example ttf-dejavu, \
+         fonts-dejavu-core or dejavu-fonts-ttf) or set font_path in the config",
+        tried.join(", ")
+    )
+    .into())
+}
+
+fn font_from(bytes: Vec<u8>) -> crate::Result<FontArc> {
+    FontArc::try_from_vec(bytes).map_err(|_| "cannot read this file as a TrueType font".into())
 }
 
 #[cfg(test)]
