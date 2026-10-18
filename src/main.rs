@@ -14,9 +14,39 @@ mod popup;
 mod render;
 mod scroll;
 mod status;
+mod tray;
 mod updates;
 
 use config::{Config, Result, Theme};
+
+/// Which monitor this bar belongs to, read with `--monitor`.
+#[derive(Clone, Debug)]
+struct Monitor {
+    x: i16,
+    y: i16,
+    w: u16,
+}
+
+/// Read `--monitor X,Y,W` from the command line.
+///
+/// The window manager passes the geometry rather than a name, so the bar does
+/// not need its own RandR query and cannot disagree with the WM about where a
+/// screen is.
+fn parse_monitor(args: &[String]) -> Result<Option<Monitor>> {
+    let Some(pos) = args.iter().position(|a| a == "--monitor") else {
+        return Ok(None);
+    };
+    let value = args.get(pos + 1).ok_or("--monitor needs X,Y,W")?;
+    let parts: Vec<&str> = value.split(',').collect();
+    if parts.len() != 3 {
+        return Err("--monitor needs X,Y,W".into());
+    }
+    Ok(Some(Monitor {
+        x: parts[0].parse()?,
+        y: parts[1].parse()?,
+        w: parts[2].parse()?,
+    }))
+}
 use module::{Module, Side, Workspaces};
 use std::{collections::HashMap, os::fd::AsRawFd as _, thread, time::Duration};
 use x11rb::{
@@ -166,6 +196,11 @@ struct Bar {
     renderer: render::Renderer,
     last_frame: String,
     icons: status::Icons,
+    /// Where this bar sits, for the strut and for placing popups.
+    bar_x: i16,
+    bar_y: i16,
+    /// System tray, when enabled.
+    tray: Option<tray::Tray>,
     modules: Vec<Box<dyn Module>>,
     workspaces: Workspaces,
     /// Hit boxes from the last frame: where each module and workspace cell is.
@@ -189,14 +224,23 @@ impl Bar {
             .unwrap_or_default()
     }
 
-    fn new() -> Result<Self> {
+    /// Create the bar.
+    ///
+    /// `monitor` places the bar at the top of one monitor instead of the whole
+    /// X screen. With several screens the window manager starts one bar per
+    /// monitor, each with its own workspace cells.
+    fn new(monitor: Option<Monitor>) -> Result<Self> {
         let cfg = Config::load()?;
         let theme = Theme::load(&cfg.theme)?;
         let icons = cfg.bar.icons;
         let (c, s) = x11rb::connect(None)?;
         let screen = &c.setup().roots[s];
         let root = screen.root;
-        let width = screen.width_in_pixels;
+        // A bar on one monitor covers that monitor's width and sits at its top.
+        let (bar_x, bar_y, width) = match &monitor {
+            Some(m) => (m.x, m.y, m.w),
+            None => (0, 0, screen.width_in_pixels),
+        };
 
         let mut atoms = HashMap::new();
         for n in [
@@ -232,8 +276,8 @@ impl Bar {
             0,
             win,
             root,
-            0,
-            0,
+            bar_x,
+            bar_y,
             width,
             cfg.bar_height,
             0,
@@ -273,7 +317,7 @@ impl Bar {
             atoms["UTF8_STRING"],
             b"NIRUBAR",
         )?;
-        set_strut(&c, win, &atoms, cfg.bar_height, width)?;
+        set_strut(&c, win, &atoms, cfg.bar_height, width, bar_x, bar_y == 0)?;
         c.set_selection_owner(win, selection, x11rb::CURRENT_TIME)?;
         c.change_window_attributes(
             root,
@@ -289,6 +333,19 @@ impl Bar {
         c.flush()?;
 
         renderer.resize(&c, root, width, cfg.bar_height)?;
+        // A tray only when asked for, since it owns an X selection that
+        // another tray program may already hold.
+        let tray = if cfg.bar.tray {
+            match tray::Tray::new(&c, root, s) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    eprintln!("nirubar: tray: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let icons = crate::choose_icons(&renderer, icons);
         // Resolve the volume and media glyphs against the loaded font, the
         // same way the bar's own icons are chosen. Without this a fresh start
@@ -311,7 +368,10 @@ impl Bar {
             atoms,
             renderer,
             last_frame: String::new(),
+            bar_x,
+            bar_y,
             icons,
+            tray,
             modules,
             workspaces,
             placed: Vec::new(),
@@ -421,8 +481,10 @@ impl Bar {
             }
         }
 
-        // Right-aligned status modules, in config order.
-        let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10;
+        // Right-aligned status modules, in config order. The tray takes the
+        // last stretch of the bar, so modules stop before it.
+        let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0) as i16;
+        let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10 - tray_width;
         let mut texts: Vec<(usize, String)> = Vec::new();
         for (index, m) in self.modules.iter_mut().enumerate() {
             if m.side() != Side::Right {
@@ -459,6 +521,11 @@ impl Bar {
                 self.renderer
                     .text(&self.c, self.gc, start, &title, muted, bg, end)?;
             }
+        }
+
+        if let Some(t) = &self.tray {
+            let edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 4;
+            t.layout(&self.c, 0, edge, self.height)?;
         }
 
         self.c.flush()?;
@@ -569,7 +636,15 @@ impl Bar {
             self.win,
             &ConfigureWindowAux::new().height(u32::from(cfg.bar_height)),
         )?;
-        set_strut(&self.c, self.win, &self.atoms, cfg.bar_height, self.width)?;
+        set_strut(
+            &self.c,
+            self.win,
+            &self.atoms,
+            cfg.bar_height,
+            self.width,
+            self.bar_x,
+            self.bar_y == 0,
+        )?;
         self.c.change_window_attributes(
             self.win,
             &ChangeWindowAttributesAux::new().background_pixel(Theme::pixel(&theme.background)?),
@@ -686,7 +761,15 @@ impl Bar {
                         self.win,
                         &ConfigureWindowAux::new().width(u32::from(self.width)),
                     )?;
-                    set_strut(&self.c, self.win, &self.atoms, self.height, self.width)?;
+                    set_strut(
+                        &self.c,
+                        self.win,
+                        &self.atoms,
+                        self.height,
+                        self.width,
+                        self.bar_x,
+                        self.bar_y == 0,
+                    )?;
                     self.last_frame.clear();
                     self.draw()?;
                 }
@@ -699,13 +782,41 @@ impl Bar {
                         eprintln!("Reload rejected: {e}");
                     }
                 }
-                Event::PropertyNotify(_) | Event::ClientMessage(_) => {
+                Event::NoExposure(_) => {}
+                Event::PropertyNotify(_) => {
                     self.last_frame.clear();
                     self.draw()?;
                 }
-                Event::NoExposure(_) => {}
-                Event::DestroyNotify(e) if e.window == self.win => break,
-                Event::SelectionClear(_) => break,
+                Event::ClientMessage(e) => {
+                    let handled = self
+                        .tray
+                        .as_mut()
+                        .map(|t| t.handle(&self.c, &e))
+                        .unwrap_or(false);
+                    self.last_frame.clear();
+                    if handled {
+                        self.draw()?;
+                    }
+                }
+                Event::DestroyNotify(e) => {
+                    // An icon that quits must not leave a gap in the tray.
+                    if let Some(t) = self.tray.as_mut() {
+                        if t.icons.contains(&e.window) {
+                            t.remove(e.window);
+                            self.last_frame.clear();
+                            self.draw()?;
+                        }
+                    }
+                    if e.window == self.win {
+                        break;
+                    }
+                }
+                Event::SelectionClear(_) => {
+                    if let Some(t) = &self.tray {
+                        t.release(&self.c);
+                    }
+                    break;
+                }
                 _ => (),
             }
         }
@@ -713,12 +824,19 @@ impl Bar {
     }
 }
 
+/// Reserve screen space for the bar.
+///
+/// Only a bar on the top edge reserves space: `_NET_WM_STRUT` has no way to
+/// describe a bar in the middle of a tall virtual screen, and a monitor below
+/// the primary one must not take space from the primary screen's work area.
 fn set_strut(
     c: &RustConnection,
     win: Window,
     atoms: &HashMap<&'static str, Atom>,
     height: u16,
     width: u16,
+    x: i16,
+    top_edge: bool,
 ) -> Result<()> {
     c.change_property32(
         PropMode::REPLACE,
@@ -728,14 +846,14 @@ fn set_strut(
         &[
             0,
             0,
-            u32::from(height),
+            if top_edge { u32::from(height) } else { 0 },
             0,
             0,
             0,
             0,
             0,
-            0,
-            u32::from(width.saturating_sub(1)),
+            x.max(0) as u32,
+            (x.max(0) as u32) + u32::from(width.saturating_sub(1)),
             0,
             0,
         ],
@@ -745,7 +863,7 @@ fn set_strut(
         win,
         atoms["_NET_WM_STRUT"],
         AtomEnum::CARDINAL,
-        &[0, 0, u32::from(height), 0],
+        &[0, 0, if top_edge { u32::from(height) } else { 0 }, 0],
     )?;
     Ok(())
 }
@@ -827,7 +945,15 @@ fn main() {
         eprintln!("Usage: nirubar [--version|--check-config]");
         std::process::exit(2)
     }
-    if let Err(e) = Bar::new().and_then(|mut b| b.run()) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let monitor = match parse_monitor(&args) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("nirubar: {e}");
+            std::process::exit(2)
+        }
+    };
+    if let Err(e) = Bar::new(monitor).and_then(|mut b| b.run()) {
         eprintln!("nirubar: {e}");
         std::process::exit(1)
     }

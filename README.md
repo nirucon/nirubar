@@ -20,6 +20,9 @@ Modules, configured in one line each:
 | `updates` | available package upgrades; click for the detail and the command |
 | `clock` | date and time |
 
+A system tray is on by default: applications that show a tray icon appear at
+the right end of the bar.
+
 Click a module for a panel: a month calendar, network name and address,
 battery detail. One panel is open at a time and it closes on a click on the
 same module, a click anywhere else, Escape, or after
@@ -63,6 +66,7 @@ popups = true              # click a module for detail
 popup_timeout_seconds = 8  # 0 keeps a panel until dismissed
 media_width = 32           # characters kept from the media title
 update_check_minutes = 30  # package checks; the count is cached
+tray = true                # own the session's tray
 ```
 
 The `updates` module reads the package manager of the distribution it runs on:
@@ -86,7 +90,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.11.0. Missing: trays, per-monitor bars.
+Version 0.12.0. Missing: per-monitor bars in this release.
 
 ## Build needs
 

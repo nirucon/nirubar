@@ -84,6 +84,9 @@ pub struct Bar {
     /// Minutes between package update checks. 0 asks every redraw, which is
     /// never a good idea; 30 is the default.
     pub update_check_minutes: u32,
+    /// Own a system tray. The bar becomes the tray for the session, so
+    /// applications that show an icon are visible in it.
+    pub tray: bool,
     /// Whether the volume and media icons use glyphs. Follows `icons`; the
     /// bar narrows it per glyph to what the font can draw.
     #[serde(skip)]
@@ -157,6 +160,7 @@ impl Default for Bar {
             icons: true,
             media_width: 32,
             update_check_minutes: 30,
+            tray: true,
             volume_icons: None,
             media_icons: None,
         }
@@ -319,6 +323,12 @@ action = "terminal"
         assert!(c.bar.show_title);
         assert_eq!(c.terminal_alt, vec!["alacritty"]);
         assert_eq!(c.keys.len(), 1);
+    }
+
+    #[test]
+    fn tray_is_on_by_default() {
+        let c = Config::default();
+        assert!(c.bar.tray, "a tray nobody has to enable is the useful one");
     }
 
     #[test]

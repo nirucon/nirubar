@@ -187,7 +187,10 @@ impl Module for Volume {
     fn render(&mut self) -> String {
         match av::Volume::read() {
             Some(v) => av::volume_text(&v, &self.icons),
-            None => String::new(),
+            // No audio server answers. Showing the speaker with a dash says
+            // "the module is here, the sound is not", which is truer than the
+            // silence of a module that vanishes.
+            None => format!("{} --", self.icons.muted),
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
@@ -205,7 +208,12 @@ impl Module for Volume {
                 String::new(),
                 "media keys: volume up, down, mute".to_string(),
             ],
-            None => vec!["no audio output found".to_string()],
+            None => vec![
+                "no audio server answers".to_string(),
+                String::new(),
+                "on Void the session starts PipeWire at login".to_string(),
+                "elsewhere check: wpctl status".to_string(),
+            ],
         };
         Some(("Volume".into(), lines))
     }
