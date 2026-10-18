@@ -68,7 +68,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.6.0. Missing: media, updates, trays, per-monitor bars.
+Version 0.7.0. Missing: media, updates, trays, per-monitor bars.
 
 ## Build needs
 
