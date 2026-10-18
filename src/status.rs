@@ -26,6 +26,13 @@ pub struct Icons {
     pub ethernet_fallback: &'static str,
     /// Shown before the update count.
     pub updates: &'static str,
+    /// The `pulse` module: a small rising graph, in the same family as the
+    /// wifi and battery glyphs so the bar reads as one set.
+    pub cpu: &'static str,
+    /// The `sun` module: sunrise and sunset.
+    pub sun: &'static str,
+    /// The `uptime` module: a clock face, distinct from the bar's own clock.
+    pub uptime: &'static str,
 }
 
 impl Icons {
@@ -48,6 +55,9 @@ impl Icons {
             wifi_fallback: "wifi",
             ethernet_fallback: "net",
             updates: "\u{f021}", // nf-fa-refresh, stable across Nerd Font versions
+            cpu: "\u{f1fe}",     // nf-fa-area_chart
+            sun: "\u{f185}",     // nf-fa-sun_o
+            uptime: "\u{f017}",  // nf-fa-clock_o
         }
     }
 
@@ -65,6 +75,9 @@ impl Icons {
             wifi_fallback: "wifi",
             ethernet_fallback: "net",
             updates: "upd",
+            cpu: "cpu",
+            sun: "sun",
+            uptime: "up",
         }
     }
 }

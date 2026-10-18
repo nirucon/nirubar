@@ -36,11 +36,36 @@ impl Scroller {
             lead_in: Duration::from_secs(2),
             hold: Duration::from_millis(1500),
             gap: Duration::from_millis(400),
-            per_char: Duration::from_millis(120),
+            // 33 ms per character is roughly one column a frame at 30 Hz. The
+            // old 120 ms moved the window by a third of a column per frame,
+            // which on a thin bar reads as frozen rather than slow.
+            per_char: Duration::from_millis(33),
             passes: 2,
             started: Instant::now(),
             current: String::new(),
         }
+    }
+
+    /// Whether the text is moving right now: not during the opening pause and
+    /// not once the passes are over. The bar repaints at the frame rate only
+    /// while this is true, and stays idle otherwise.
+    pub fn moving(&self) -> bool {
+        let chars = self.current.chars().count();
+        if chars <= self.visible {
+            return false;
+        }
+        let travel = (chars - self.visible) as f32;
+        let step = self.per_char.as_secs_f32().max(0.001);
+        let pass = self.lead_in.as_secs_f32() + travel * step + self.hold.as_secs_f32();
+        let full = self.passes as f32 * pass + (self.passes as f32 - 1.0) * self.gap.as_secs_f32();
+        let t = self.started.elapsed().as_secs_f32();
+        if t >= full {
+            return false;
+        }
+        let pass_len = pass + self.gap.as_secs_f32();
+        let in_pass = t % pass_len;
+        in_pass >= self.lead_in.as_secs_f32()
+            && in_pass < self.lead_in.as_secs_f32() + travel * step
     }
 
     /// Tell the scroller what the player reports. A changed title restarts.
@@ -135,6 +160,24 @@ mod tests {
         // Far beyond the two passes.
         s.started -= Duration::from_secs(30);
         assert_eq!(s.frame("abcdefghij"), "abcde");
+    }
+
+    #[test]
+    fn only_a_new_track_restarts_the_scroll() {
+        // The bar renders the module once per frame (twice before 0.14.2).
+        // Calling observe with the same track must not reset the clock, or the
+        // window never moves past its first step.
+        let mut s = short_scroller(5);
+        s.observe("abcdefghij");
+        s.started -= Duration::from_millis(60);
+        let before = s.frame("abcdefghij");
+        for _ in 0..5 {
+            s.observe("abcdefghij");
+        }
+        assert_eq!(s.frame("abcdefghij"), before, "the same track is not news");
+        // A different track is, and starts from the beginning.
+        s.observe("klmnopqrst");
+        assert_eq!(s.frame("klmnopqrst"), "klmno");
     }
 
     #[test]

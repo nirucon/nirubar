@@ -210,6 +210,14 @@ struct Bar {
     cells: i16,
     /// The one open panel, if any. Owned by the bar so clicks stay responsive.
     popup: Option<popup::Popup>,
+    /// The module texts of the frame being drawn. `frame_key` renders the
+    /// modules once and `compose` uses what it produced.
+    ///
+    /// Rendering twice was a real bug: the media module advances the scroll
+    /// position on every render, so the second render returned different text,
+    /// the key looked unchanged, the frame was skipped, and the title froze
+    /// after one step.
+    rendered: Vec<String>,
     /// The window whose title was last shown, and since when.
     ///
     /// With `title_delay_seconds` set, a title is shown only once the focus
@@ -383,6 +391,7 @@ impl Bar {
             icons,
             tray,
             modules,
+            rendered: Vec::new(),
             workspaces,
             placed: Vec::new(),
             cells,
@@ -414,7 +423,20 @@ impl Bar {
         if !self.cfg.bar.show_title {
             return String::new();
         }
-        let Some(w) = self.title_allowed() else {
+        if self.title_allowed().is_none() {
+            return String::new();
+        }
+        self.title_text()
+    }
+
+    /// The active window's title, without touching the delay timer.
+    fn title_text(&self) -> String {
+        let Some(w) = self
+            .values(self.root, "_NET_ACTIVE_WINDOW")
+            .first()
+            .copied()
+            .filter(|w| *w != 0)
+        else {
             return String::new();
         };
         let name = self
@@ -513,34 +535,107 @@ impl Bar {
         let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0) as i16;
         let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10 - tray_width;
         let mut texts: Vec<(usize, String)> = Vec::new();
-        for (index, m) in self.modules.iter_mut().enumerate() {
+        let mut marks: Vec<Option<crate::av::MediaIcons>> = Vec::new();
+        let mut progress: Vec<Option<f32>> = Vec::new();
+        for (index, m) in self.modules.iter().enumerate() {
             if m.side() != Side::Right {
                 continue;
             }
-            let text = m.render();
+            let text = match self.rendered.get(index) {
+                Some(t) => t.clone(),
+                None => continue,
+            };
             if !text.is_empty() {
                 texts.push((index, text));
+                marks.push(m.mark());
+                progress.push(m.progress());
             }
         }
         let mut x = right_edge;
         let mut placed: Vec<Placed> = Vec::new();
+        let separator = self.cfg.bar.separator.clone();
         for (index, text) in texts.iter().rev() {
             let w = self.renderer.width(text);
             x -= w;
             self.renderer
                 .text(&self.c, self.gc, x, text, fg, bg, right_edge)?;
+            // The media module's mark is drawn, not typed: three bars of the
+            // theme's foreground, sitting where its placeholder is.
+            let slot = texts.iter().position(|(i, _)| i == index);
+            if let Some(slot) = slot {
+                if let Some(bars) = marks.get(slot).and_then(|m| m.clone()) {
+                    self.draw_mark(x, bars, fg, bg)?;
+                }
+                // A hairline under the module: a faint track and a brighter
+                // part up to the position. It is the one thing in the bar that
+                // moves while music plays, so a resting title still feels alive.
+                if let Some(share) = progress.get(slot).copied().flatten() {
+                    let y = (self.height as i16) - 3;
+                    self.renderer.fill(
+                        &self.c,
+                        self.gc,
+                        Rectangle {
+                            x,
+                            y,
+                            width: w.max(1) as u16,
+                            height: 1,
+                        },
+                        border,
+                    )?;
+                    let filled = (f32::from(w.max(1) as u16) * share).round() as u16;
+                    if filled > 0 {
+                        self.renderer.fill(
+                            &self.c,
+                            self.gc,
+                            Rectangle {
+                                x,
+                                y,
+                                width: filled,
+                                height: 1,
+                            },
+                            muted,
+                        )?;
+                    }
+                }
+            }
             placed.push(Placed {
                 index: *index,
                 x,
                 width: w,
             });
-            x -= self.renderer.width(&self.cfg.bar.separator) + self.renderer.advance * MODULE_PAD;
+            let gap = self.renderer.advance * MODULE_PAD;
+            if !separator.is_empty() && w > 0 && !text.starts_with(' ') {
+                // A hairline, not a character. A "|" is as loud as the text it
+                // separates and makes the bar read as one long string; a thin
+                // line in the muted colour is a boundary, and boundaries stay
+                // quiet. Only between modules: a space plus the line.
+                let line_x = x - gap / 2;
+                self.renderer.fill(
+                    &self.c,
+                    self.gc,
+                    Rectangle {
+                        x: line_x,
+                        y: (self.height as i16) / 5,
+                        width: 1,
+                        height: (self.height / 2).max(4),
+                    },
+                    muted,
+                )?;
+            }
+            x -= gap * 2;
         }
         placed.reverse();
         self.placed = placed;
 
         // The window title, clipped to the space that is left.
-        let title = self.title();
+        //
+        // It is drawn here and nowhere else: a second call would compute the
+        // title-delay timer a second time and could turn it off again.
+        let title = if self.cfg.bar.show_title && self.title_shown.is_some() {
+            self.title_text()
+        } else {
+            String::new()
+        };
         if !title.is_empty() {
             let start = self.cells * 9;
             let end = x - self.renderer.advance * 2;
@@ -578,8 +673,58 @@ impl Bar {
         let tag = self.workspaces.active;
         let occupied: Vec<bool> = self.workspaces.occupied.to_vec();
         let modules: Vec<String> = self.modules.iter_mut().map(|m| m.render()).collect();
+        self.rendered = modules.clone();
         let title = self.title();
+        // The module text is part of the key, and the media module's text
+        // changes on every scroll step, so a title in motion asks for a redraw
+        // by itself. (The first version compared only the track, which does not
+        // change while it moves, and the title froze after one frame.)
         format!("{tag}:{occupied:?}:{modules:?}:{title}")
+    }
+
+    /// Draw the music mark as shapes, in the cell of its placeholder.
+    ///
+    /// Three bars of equal width and different heights, the middle one shorter,
+    /// so the mark reads as sound at any font size and never changes width when
+    /// the player starts or stops. The placeholder text underneath is painted
+    /// over with the background colour first: its em space is wider than the
+    /// drawn mark, and a leftover sliver of a glyph looks like a second mark.
+    fn draw_mark(&self, x: i16, bars: crate::av::MediaIcons, fg: u32, bg: u32) -> Result<()> {
+        let adv = self.renderer.advance.max(1);
+        let line = self.renderer.line_height.max(1);
+        let width = (adv / 3).max(2);
+        let heights = [line * 6 / 10, line * 4 / 10, line * 6 / 10];
+        let bottom = (line / 2) + line * 2 / 5;
+        let total = width * 3;
+        let left = x + (adv - total).max(0) / 2;
+        // Clear the placeholder cell.
+        self.renderer.fill(
+            &self.c,
+            self.gc,
+            Rectangle {
+                x,
+                y: 0,
+                width: adv as u16,
+                height: self.height,
+            },
+            bg,
+        )?;
+        for (i, h) in heights.iter().enumerate() {
+            let bh = (*h).max(2) as u16;
+            self.renderer.fill(
+                &self.c,
+                self.gc,
+                Rectangle {
+                    x: left + i as i16 * width,
+                    y: bottom - i16::try_from(bh).unwrap_or(2),
+                    width: width as u16,
+                    height: bh,
+                },
+                fg,
+            )?;
+        }
+        let _ = bars;
+        Ok(())
     }
 
     /// Open the detail panel for whatever was clicked.
@@ -740,8 +885,23 @@ impl Bar {
                     if self.popup.as_ref().map(|p| p.expired()).unwrap_or(false) {
                         self.close_popup()?;
                     }
-                    let timeout = if self.popup.is_some() { 250 } else { 1000 };
+                    // A moving title needs the frame rate; everything else
+                    // can wait for an event or the next second. A bar that
+                    // repaints all the time burns a core for nothing.
+                    let timeout = if self.popup.is_some() {
+                        250
+                    } else if self.modules.iter().any(|m| m.scrolling()) {
+                        33
+                    } else {
+                        1000
+                    };
                     wait_readable2(self.c.stream().as_raw_fd(), read_fd, timeout);
+                    // Nothing arrived, so nothing below this point runs, and
+                    // the bar used to go to sleep with a scrolling title in the
+                    // middle of a move. Paint on the timer as well.
+                    if self.modules.iter().any(|m| m.scrolling()) {
+                        self.draw()?;
+                    }
                     continue;
                 }
             };
@@ -965,6 +1125,13 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.updates
         } else {
             plain.updates
+        },
+        cpu: if ok(nerd.cpu) { nerd.cpu } else { plain.cpu },
+        sun: if ok(nerd.sun) { nerd.sun } else { plain.sun },
+        uptime: if ok(nerd.uptime) {
+            nerd.uptime
+        } else {
+            plain.uptime
         },
     }
 }

@@ -183,6 +183,10 @@ pub struct Media {
     pub artist: String,
     pub title: String,
     pub playing: bool,
+    /// How far into the track, and how long it is, in seconds. `None` when the
+    /// player does not report a length, which is common for streams: no bar is
+    /// better than a bar that is always full or always empty.
+    pub position: Option<(u64, u64)>,
 }
 
 impl Media {
@@ -198,10 +202,20 @@ impl Media {
         let playing = run("playerctl", &["status"]).as_deref() == Some("Playing");
         let artist = run("playerctl", &["metadata", "artist"]).unwrap_or_default();
         let title = run("playerctl", &["metadata", "title"])?;
+        // Position and length are asked for once: two separate calls would be
+        // two more processes, and `playerctl` prints both in one query.
+        let position = run("playerctl", &["position"]).and_then(|p| {
+            let pos: f64 = p.parse().ok()?;
+            let len = run("playerctl", &["metadata", "mpris:length"])
+                .and_then(|l| l.parse::<f64>().ok())
+                .map(|us| us / 1_000_000.0)?;
+            (len > 1.0).then_some((pos.max(0.0) as u64, len as u64))
+        });
         Some(Self {
             artist,
             title,
             playing,
+            position,
         })
     }
 
@@ -241,21 +255,38 @@ impl Media {
 
 #[derive(Clone, Debug)]
 pub struct MediaIcons {
+    /// Text shown before the track when the font has no music mark: ">" and
+    /// "||", which every font draws.
     pub playing: &'static str,
     pub paused: &'static str,
+    /// The mark as shapes (block characters), or empty when the font has no
+    /// blocks and the text above is used instead.
+    pub playing_codes: &'static [char],
+    /// Kept so a future paused mark (a dimmer set of bars) needs no change to
+    /// callers; today both states draw the same shape.
+    #[allow(dead_code)]
+    pub paused_codes: &'static [char],
 }
 
 impl MediaIcons {
-    pub fn nerd() -> Self {
+    /// Shapes for a font with block characters: three bars, the middle one
+    /// lower, so the mark reads as sound rather than as a button. Its width
+    /// never changes, whatever the font does with a glyph.
+    pub fn blocks() -> Self {
         Self {
-            playing: "\u{f04b}", // play
-            paused: "\u{f04c}",  // pause
+            playing: ">",
+            paused: "||",
+            playing_codes: &NOTE_MARK,
+            paused_codes: &NOTE_MARK,
         }
     }
+    /// Plain text, for a font without blocks.
     pub fn plain() -> Self {
         Self {
             playing: ">",
             paused: "||",
+            playing_codes: &[],
+            paused_codes: &[],
         }
     }
 }
@@ -323,25 +354,15 @@ pub fn volume_icons(renderer_has: impl Fn(char) -> bool, want_nerd: bool) -> Vol
 }
 
 pub fn media_icons(renderer_has: impl Fn(char) -> bool, want_nerd: bool) -> MediaIcons {
-    let nerd = MediaIcons::nerd();
-    let plain = MediaIcons::plain();
-    if !want_nerd {
-        return plain;
+    let blocks = MediaIcons::blocks();
+    if !want_nerd || !blocks.playing_codes.iter().all(|c| renderer_has(*c)) {
+        return MediaIcons::plain();
     }
-    let ok = |s: &str| s.chars().all(&renderer_has);
-    MediaIcons {
-        playing: if ok(nerd.playing) {
-            nerd.playing
-        } else {
-            plain.playing
-        },
-        paused: if ok(nerd.paused) {
-            nerd.paused
-        } else {
-            plain.paused
-        },
-    }
+    blocks
 }
+
+/// The music mark, as block characters the bar draws as shapes.
+const NOTE_MARK: [char; 3] = ['\u{2588}', '\u{2584}', '\u{2588}'];
 
 #[cfg(test)]
 mod tests {
@@ -373,6 +394,7 @@ mod tests {
             artist: "A".into(),
             title: "B".into(),
             playing: true,
+            position: None,
         };
         assert_eq!(m.line(20), "A - B");
     }
@@ -383,6 +405,7 @@ mod tests {
             artist: "Artist".into(),
             title: "A very long title indeed".into(),
             playing: true,
+            position: None,
         };
         let line = m.line(10);
         assert_eq!(line.chars().count(), 10);
@@ -395,6 +418,7 @@ mod tests {
             artist: String::new(),
             title: "Only a title".into(),
             playing: false,
+            position: None,
         };
         assert_eq!(m.line(30), "Only a title");
     }

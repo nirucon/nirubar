@@ -16,7 +16,7 @@ Modules, configured in one line each:
 | `network` | wired or wireless icon while a link is up |
 | `battery` | charge and a charging bolt, laptops only |
 | `volume` | level with an icon, or a mute icon; click to mute |
-| `media` | what is playing, `artist - title`, scrolling when it is long |
+| `media` | what is playing, `artist - title`, scrolling when it is long, with a thin progress line under it |
 | `updates` | available package upgrades; click for the detail and the command |
 | `pulse` | cpu and memory, click for a graph of the last minute |
 | `uptime` | how long the machine has been on |
@@ -86,6 +86,14 @@ A title longer than `media_width` scrolls twice, pauses between passes, and
 rests showing the beginning, so the artist stays readable. A short title is
 shown as it is.
 
+`media` shows a drawn music mark (three bars, painted, so it never changes
+width when the font changes), scrolls a long title to the end, rests showing
+the beginning, and draws a hairline under the title that fills as the track
+plays. The bar repaints at the frame rate only while that line moves.
+
+Modules are separated by a hairline in the theme's muted colour rather than a
+`|` character, which was as loud as the text it separated.
+
 `pulse` samples once per second and draws cpu, memory and the fullest
 filesystem as block characters, so a spike has a shape before it has a name.
 `uptime` adds two numbers in its panel that the rest of the bar does not show:
@@ -106,7 +114,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.14.1. Missing: per-monitor bars in this release.
+Version 0.15.0. Missing: per-monitor bars in this release.
 
 ## Build needs
 
