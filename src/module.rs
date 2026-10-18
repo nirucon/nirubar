@@ -213,7 +213,8 @@ impl Module for Volume {
 
 pub struct Media {
     pub icons: av::MediaIcons,
-    pub width: usize,
+    /// Scrolls a long title instead of cutting it off.
+    pub scroller: crate::scroll::Scroller,
 }
 
 impl Module for Media {
@@ -224,9 +225,22 @@ impl Module for Media {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match av::Media::read() {
-            Some(m) => av::media_text(&m, &self.icons, self.width),
-            None => String::new(),
+        let Some(m) = av::Media::read() else {
+            return String::new();
+        };
+        let glyph = if m.playing {
+            self.icons.playing
+        } else {
+            self.icons.paused
+        };
+        let full = m.line(usize::MAX);
+        // A short title is shown as it is; a long one scrolls, so the artist
+        // and as much of the title as fits are readable in turn.
+        self.scroller.observe(&full);
+        if self.scroller.needs_scroll(&full) {
+            format!("{glyph} {}", self.scroller.frame(&full))
+        } else {
+            format!("{glyph} {full}")
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
@@ -268,7 +282,7 @@ impl Module for Updates {
     }
     fn render(&mut self) -> String {
         match updates::cached(self.every) {
-            Some(n) => updates::text(n, &self.icons.updates),
+            Some(n) => updates::text(n, self.icons.updates),
             None => String::new(),
         }
     }
@@ -319,7 +333,7 @@ pub fn build(cfg: &config::Bar, icons: status::Icons) -> Vec<Box<dyn Module>> {
             })),
             "media" => out.push(Box::new(Media {
                 icons: cfg.media_icons(),
-                width: cfg.media_width,
+                scroller: crate::scroll::Scroller::new(cfg.media_width),
             })),
             // `workspaces` is drawn separately, not as a text module.
             "workspaces" => {}

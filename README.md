@@ -16,7 +16,7 @@ Modules, configured in one line each:
 | `network` | wired or wireless icon while a link is up |
 | `battery` | charge and a charging bolt, laptops only |
 | `volume` | level with an icon, or a mute icon; click to mute |
-| `media` | what is playing, `artist - title`; click to play or pause |
+| `media` | what is playing, `artist - title`, scrolling when it is long |
 | `updates` | available package upgrades; click for the detail and the command |
 | `clock` | date and time |
 
@@ -71,6 +71,10 @@ on Debian. The result is cached in `~/.cache/nirubar/updates` for
 `update_check_minutes`, so the bar never runs a package query while redrawing.
 On a distribution without one of those it shows nothing.
 
+A title longer than `media_width` scrolls twice, pauses between passes, and
+rests showing the beginning, so the artist stays readable. A short title is
+shown as it is.
+
 The media keys work through NIRUWM, not the bar: volume up and down, mute, play
 and pause, next and previous. They need `wpctl` (or `amixer`) and `playerctl`.
 
@@ -82,7 +86,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.10.0. Missing: trays, per-monitor bars.
+Version 0.11.0. Missing: trays, per-monitor bars.
 
 ## Build needs
 

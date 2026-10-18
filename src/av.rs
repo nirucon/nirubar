@@ -260,6 +260,7 @@ impl MediaIcons {
     }
 }
 
+#[allow(dead_code)] // the module renders the scrolling form itself
 pub fn media_text(m: &Media, icons: &MediaIcons, width: usize) -> String {
     let glyph = if m.playing {
         icons.playing

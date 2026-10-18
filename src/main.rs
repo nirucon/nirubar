@@ -12,6 +12,7 @@ mod config;
 mod module;
 mod popup;
 mod render;
+mod scroll;
 mod status;
 mod updates;
 
@@ -25,8 +26,12 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-/// One tick per second keeps `hh:mm` exact while only changed frames repaint.
-const TICK: Duration = Duration::from_secs(1);
+/// How often the frame is reconsidered.
+///
+/// Ten times a second is what makes a scrolling title look smooth. The bar
+/// still repaints only when the rendered text changes, so an idle bar does
+/// the same work as before: one comparison per tick.
+const TICK: Duration = Duration::from_millis(100);
 
 /// Horizontal space reserved per drawn module, in characters of padding.
 const MODULE_PAD: i16 = 2;
