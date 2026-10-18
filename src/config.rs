@@ -148,7 +148,7 @@ impl Default for Bar {
             date_format: "%Y-%m-%d".into(),
             time_format: "%H:%M".into(),
             popups: true,
-            popup_timeout_seconds: 8,
+            popup_timeout_seconds: 4,
             battery: true,
             network: true,
             icons: true,
