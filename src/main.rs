@@ -607,9 +607,10 @@ impl Bar {
             if !separator.is_empty() && w > 0 && !text.starts_with(' ') {
                 // A hairline, not a character. A "|" is as loud as the text it
                 // separates and makes the bar read as one long string; a thin
-                // line in the muted colour is a boundary, and boundaries stay
-                // quiet. Only between modules: a space plus the line.
-                let line_x = x - gap / 2;
+                // line in the active workspace's colour is a boundary, and
+                // boundaries stay quiet. It sits at the midpoint of the gap, so
+                // a module with a line on each side has the same space on both.
+                let line_x = x - gap;
                 self.renderer.fill(
                     &self.c,
                     self.gc,
@@ -619,7 +620,7 @@ impl Bar {
                         width: 1,
                         height: (self.height / 2).max(4),
                     },
-                    muted,
+                    border,
                 )?;
             }
             x -= gap * 2;

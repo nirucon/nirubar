@@ -91,8 +91,9 @@ width when the font changes), scrolls a long title to the end, rests showing
 the beginning, and draws a hairline under the title that fills as the track
 plays. The bar repaints at the frame rate only while that line moves.
 
-Modules are separated by a hairline in the theme's muted colour rather than a
-`|` character, which was as loud as the text it separated.
+Modules are separated by a hairline in the active workspace's colour, placed
+halfway between them, rather than a `|` character, which was as loud as the
+text it separated.
 
 `pulse` samples once per second and draws cpu, memory and the fullest
 filesystem as block characters, so a spike has a shape before it has a name.
@@ -114,7 +115,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.16.2. Missing: per-monitor bars in this release.
+Version 0.16.3. Missing: per-monitor bars in this release.
 
 ## Build needs
 
