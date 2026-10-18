@@ -1138,7 +1138,8 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
 }
 
 fn main() {
-    let arg = std::env::args().nth(1).unwrap_or_default();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let arg = args.first().map(String::as_str).unwrap_or_default();
     if arg == "--version" {
         println!("NIRUBAR {}", env!("CARGO_PKG_VERSION"));
         return;
@@ -1155,11 +1156,6 @@ fn main() {
             }
         }
     }
-    if !arg.is_empty() {
-        eprintln!("Usage: nirubar [--version|--check-config]");
-        std::process::exit(2)
-    }
-    let args: Vec<String> = std::env::args().skip(1).collect();
     let monitor = match parse_monitor(&args) {
         Ok(m) => m,
         Err(e) => {
@@ -1167,6 +1163,10 @@ fn main() {
             std::process::exit(2)
         }
     };
+    if monitor.is_none() && !args.is_empty() {
+        eprintln!("Usage: nirubar [--version|--check-config] [--monitor X,Y,W]");
+        std::process::exit(2)
+    }
     if let Err(e) = Bar::new(monitor).and_then(|mut b| b.run()) {
         eprintln!("nirubar: {e}");
         std::process::exit(1)
@@ -1175,6 +1175,24 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn monitor_argument_sets_the_geometry() {
+        let args = vec!["--monitor".to_string(), "10,20,800".to_string()];
+        let m = super::parse_monitor(&args).unwrap().unwrap();
+        assert_eq!((m.x, m.y, m.w), (10, 20, 800));
+    }
+
+    #[test]
+    fn monitor_argument_needs_three_numbers() {
+        let args = vec!["--monitor".to_string(), "10,20".to_string()];
+        assert!(super::parse_monitor(&args).is_err());
+    }
+
+    #[test]
+    fn no_arguments_means_the_default_geometry() {
+        assert!(super::parse_monitor(&[]).unwrap().is_none());
+    }
+
     #[test]
     fn clock_follows_the_configured_formats() {
         use crate::config::Bar;
