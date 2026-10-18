@@ -4,7 +4,7 @@
 //! A module produces text (and optionally a popup with more detail) and knows
 //! its own width, so adding one later does not touch the layout code.
 
-use crate::{av, config, status};
+use crate::{av, config, status, updates};
 use chrono::Datelike;
 
 /// Where a module sits on the bar.
@@ -254,6 +254,48 @@ impl Module for Media {
     }
 }
 
+pub struct Updates {
+    pub icons: status::Icons,
+    pub every: std::time::Duration,
+}
+
+impl Module for Updates {
+    fn name(&self) -> &'static str {
+        "updates"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        match updates::cached(self.every) {
+            Some(n) => updates::text(n, &self.icons.updates),
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let manager = updates::Manager::detect();
+        let how = match manager {
+            updates::Manager::Xbps => "sudo xbps-install -Su",
+            updates::Manager::Pacman => "sudo pacman -Syu",
+            updates::Manager::Apt => "sudo apt upgrade",
+            updates::Manager::Unknown => "no package manager found",
+        };
+        Some((
+            "Updates".into(),
+            vec![
+                match updates::query() {
+                    Some(0) => "everything is up to date".to_string(),
+                    Some(1) => "1 package can be upgraded".to_string(),
+                    Some(n) => format!("{n} packages can be upgraded"),
+                    None => "cannot read the package database".to_string(),
+                },
+                String::new(),
+                how.to_string(),
+            ],
+        ))
+    }
+}
+
 /// Build the active modules in the order the config lists them.
 ///
 /// An unknown name is reported once and skipped, so a typo in the config does
@@ -267,6 +309,10 @@ pub fn build(cfg: &config::Bar, icons: status::Icons) -> Vec<Box<dyn Module>> {
             "network" => out.push(Box::new(Network {
                 icons,
                 use_icons: cfg.icons,
+            })),
+            "updates" => out.push(Box::new(Updates {
+                icons,
+                every: std::time::Duration::from_secs(u64::from(cfg.update_check_minutes) * 60),
             })),
             "volume" => out.push(Box::new(Volume {
                 icons: cfg.volume_icons(),

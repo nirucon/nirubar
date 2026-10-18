@@ -13,6 +13,7 @@ mod module;
 mod popup;
 mod render;
 mod status;
+mod updates;
 
 use config::{Config, Result, Theme};
 use module::{Module, Side, Workspaces};
@@ -791,6 +792,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         },
         wifi_fallback: plain.wifi_fallback,
         ethernet_fallback: plain.ethernet_fallback,
+        updates: if ok(nerd.updates) {
+            nerd.updates
+        } else {
+            plain.updates
+        },
     }
 }
 

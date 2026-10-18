@@ -81,6 +81,9 @@ pub struct Bar {
     pub icons: bool,
     /// Characters kept from the media title before an ellipsis.
     pub media_width: usize,
+    /// Minutes between package update checks. 0 asks every redraw, which is
+    /// never a good idea; 30 is the default.
+    pub update_check_minutes: u32,
     /// Whether the volume and media icons use glyphs. Follows `icons`; the
     /// bar narrows it per glyph to what the font can draw.
     #[serde(skip)]
@@ -153,6 +156,7 @@ impl Default for Bar {
             network: true,
             icons: true,
             media_width: 32,
+            update_check_minutes: 30,
             volume_icons: None,
             media_icons: None,
         }

@@ -17,6 +17,7 @@ Modules, configured in one line each:
 | `battery` | charge and a charging bolt, laptops only |
 | `volume` | level with an icon, or a mute icon; click to mute |
 | `media` | what is playing, `artist - title`; click to play or pause |
+| `updates` | available package upgrades; click for the detail and the command |
 | `clock` | date and time |
 
 Click a module for a panel: a month calendar, network name and address,
@@ -61,7 +62,14 @@ icons = true               # Nerd Font glyphs, plain text where missing
 popups = true              # click a module for detail
 popup_timeout_seconds = 8  # 0 keeps a panel until dismissed
 media_width = 32           # characters kept from the media title
+update_check_minutes = 30  # package checks; the count is cached
 ```
+
+The `updates` module reads the package manager of the distribution it runs on:
+`xbps-install -un` on Void, `pacman -Qu` on Arch and `apt list --upgradable`
+on Debian. The result is cached in `~/.cache/nirubar/updates` for
+`update_check_minutes`, so the bar never runs a package query while redrawing.
+On a distribution without one of those it shows nothing.
 
 The media keys work through NIRUWM, not the bar: volume up and down, mute, play
 and pause, next and previous. They need `wpctl` (or `amixer`) and `playerctl`.
@@ -74,7 +82,7 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.8.0. Missing: update counts, trays, per-monitor bars.
+Version 0.10.0. Missing: trays, per-monitor bars.
 
 ## Build needs
 

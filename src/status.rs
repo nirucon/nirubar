@@ -24,6 +24,8 @@ pub struct Icons {
     pub ethernet: &'static str,
     pub wifi_fallback: &'static str,
     pub ethernet_fallback: &'static str,
+    /// Shown before the update count.
+    pub updates: &'static str,
 }
 
 impl Icons {
@@ -45,6 +47,7 @@ impl Icons {
             ethernet: "\u{f0ac}",         // nf-fa-globe (stable across versions)
             wifi_fallback: "wifi",
             ethernet_fallback: "net",
+            updates: "\u{f021}", // nf-fa-refresh, stable across Nerd Font versions
         }
     }
 
@@ -61,6 +64,7 @@ impl Icons {
             ethernet: "net",
             wifi_fallback: "wifi",
             ethernet_fallback: "net",
+            updates: "upd",
         }
     }
 }
