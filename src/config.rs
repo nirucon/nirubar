@@ -250,6 +250,40 @@ action = "terminal"
     }
 
     #[test]
+    fn accepts_every_wm_key() {
+        // NIRUWM writes this file. If the bar rejects one of its keys the bar
+        // dies at login, which happened when the WM gained new settings.
+        let shared = r#"
+theme = "niru-noir"
+gap = 8
+border_width = 2
+bar_height = 28
+master_ratio = 0.55
+terminal = ["kitty"]
+terminal_alt = []
+browser = ["brave"]
+launcher = ["rofi", "-show", "drun"]
+font_size = 15.0
+
+[wallpaper]
+enabled = true
+dir = "~/Pictures/Wallpapers"
+mode = "random"
+file = ""
+rotation_minutes = 10
+
+[bar]
+title = true
+
+[[keys]]
+keys = "super+Return"
+action = "terminal"
+"#;
+        let c: Config = toml::from_str(shared).expect("every WM key must parse");
+        assert!(c.bar.title);
+    }
+
+    #[test]
     fn partial_config_falls_back_to_defaults() {
         let c: Config = toml::from_str("[bar]\ntitle = true\n").unwrap();
         assert!(c.bar.title);
