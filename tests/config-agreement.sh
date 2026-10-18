@@ -45,6 +45,37 @@ EOF
   { cat /tmp/agree-wm.out; fail "niruwm refuses a bar setting"; }
 ok "the window manager accepts every setting the bar knows"
 
+# The window manager setting that stopped every bar once (0.16.0): a field
+# only NIRUWM reads, written by the installer at the top level.
+cat >>"$XDG_CONFIG_HOME/niruwm/config.toml" <<'EOF'
+
+restore_session = true
+EOF
+"$BINDIR/nirubar" --check-config >/tmp/agree-bar.out 2>&1 ||
+  { cat /tmp/agree-bar.out; fail "nirubar refuses restore_session"; }
+"$BINDIR/niruwm" --check-config >/tmp/agree-wm.out 2>&1 ||
+  { cat /tmp/agree-wm.out; fail "niruwm refuses restore_session"; }
+ok "restore_session is accepted by both"
+
+# Every top-level field of the window manager, with a value of the right kind,
+# written where the bar must also accept it. A field added later without the
+# bar knowing it fails here instead of at a user's login.
+cat >>"$XDG_CONFIG_HOME/niruwm/config.toml" <<'EOF'
+
+bar_height = 28
+border_width = 2
+browser = ["firefox"]
+font_size = 15.0
+gap = 8
+launcher = ["rofi", "-show", "drun"]
+master_ratio = 0.55
+terminal = ["kitty"]
+terminal_alt = ["alacritty"]
+EOF
+"$BINDIR/nirubar" --check-config >/tmp/agree-bar.out 2>&1 ||
+  { cat /tmp/agree-bar.out; fail "nirubar refuses a window-manager field"; }
+ok "every window-manager field is accepted by the bar"
+
 # And the other direction: a window-manager setting must not upset the bar.
 cat >>"$XDG_CONFIG_HOME/niruwm/config.toml" <<'EOF'
 
