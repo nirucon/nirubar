@@ -46,6 +46,11 @@ pub trait Module {
     fn mark(&self) -> Option<av::MediaIcons> {
         None
     }
+    /// Navigate an open panel, e.g. the calendar. Return true when the panel
+    /// content changed and should be reopened.
+    fn popup_navigate(&mut self, _delta: i32) -> bool {
+        false
+    }
 }
 
 /// A workspace cell. Kept separate from the text modules because the bar draws
@@ -108,6 +113,8 @@ pub struct Clock {
     pub format_date: String,
     pub format_time: String,
     pub show: Show,
+    calendar_year: i32,
+    calendar_month: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,9 +126,12 @@ pub enum Show {
 
 impl Clock {
     pub fn new(cfg: &config::Bar) -> Self {
+        let now = chrono::Local::now();
         Self {
             format_date: cfg.date_format.clone(),
             format_time: cfg.time_format.clone(),
+            calendar_year: now.year(),
+            calendar_month: now.month(),
             show: match (cfg.show_date, cfg.show_time) {
                 (true, true) => Show::DateAndTime,
                 (true, false) => Show::Date,
@@ -150,7 +160,26 @@ impl Module for Clock {
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        Some(crate::popup::calendar(&self.format_date))
+        Some(crate::popup::calendar_for(
+            self.calendar_year,
+            self.calendar_month,
+            &self.format_date,
+        ))
+    }
+    fn popup_navigate(&mut self, delta: i32) -> bool {
+        let mut year = self.calendar_year;
+        let mut month = self.calendar_month as i32 + delta;
+        while month < 1 {
+            month += 12;
+            year -= 1;
+        }
+        while month > 12 {
+            month -= 12;
+            year += 1;
+        }
+        self.calendar_year = year;
+        self.calendar_month = month as u32;
+        true
     }
 }
 
@@ -832,14 +861,13 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
     out
 }
 
-/// Month grid for the calendar popup.
+/// Month grid for the calendar popup, Monday first with ISO week numbers.
 pub fn month_grid(year: i32, month: u32) -> Vec<String> {
-    use chrono::{NaiveDate, Weekday};
+    use chrono::{Datelike, NaiveDate, Weekday};
     let first = NaiveDate::from_ymd_opt(year, month, 1)
         .unwrap_or_else(|| NaiveDate::from_ymd_opt(year, 1, 1).expect("valid date"));
     let mut day = first;
-    let mut cells: Vec<Option<u32>> = Vec::new();
-    // Monday first.
+    let mut cells: Vec<Option<NaiveDate>> = Vec::new();
     let lead = match first.weekday() {
         Weekday::Mon => 0,
         Weekday::Tue => 1,
@@ -853,7 +881,7 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
         cells.push(None);
     }
     loop {
-        cells.push(Some(day.day()));
+        cells.push(Some(day));
         match day.succ_opt() {
             Some(next) if next.month() == month => day = next,
             _ => break,
@@ -864,16 +892,21 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
     }
     let mut rows = Vec::new();
     for chunk in cells.chunks(7) {
-        rows.push(
-            chunk
-                .iter()
-                .map(|c| match c {
-                    Some(d) => format!("{d:>3}"),
-                    None => "   ".to_string(),
-                })
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
+        let week = chunk
+            .iter()
+            .flatten()
+            .next()
+            .map(|d| d.iso_week().week())
+            .unwrap_or(0);
+        let days = chunk
+            .iter()
+            .map(|c| match c {
+                Some(d) => format!("{:>3}", d.day()),
+                None => "   ".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        rows.push(format!("{week:>2}  {days}"));
     }
     rows
 }
@@ -990,20 +1023,32 @@ mod tests {
     }
 
     #[test]
-    fn calendar_starts_on_monday() {
-        // 2026-10-01 is a Thursday, so the first row has three blanks.
-        let rows = month_grid(2026, 10);
-        assert!(rows[0].starts_with("        "), "row: {:?}", rows[0]);
-        assert!(rows[0].contains(" 1"));
+    fn calendar_navigation_changes_the_month() {
+        let mut clock = Clock::new(&config::Bar::default());
+        let (before, _) = clock.popup().expect("calendar");
+        assert!(clock.popup_navigate(1));
+        let (after, _) = clock.popup().expect("calendar");
+        assert_ne!(before, after);
+        assert!(clock.popup_navigate(-1));
+        let (back, _) = clock.popup().expect("calendar");
+        assert_eq!(before, back);
     }
 
     #[test]
-    fn calendar_has_full_weeks() {
-        // Seven cells per row, one space between them, three characters each:
-        // 7 * 3 + 6 = 27 characters, matching the Mon..Sun header.
+    fn calendar_starts_on_monday_with_iso_week() {
+        // 2026-10-01 is a Thursday, so the first row has three blanks after
+        // the ISO week prefix.
+        let rows = month_grid(2026, 10);
+        assert!(rows[0].contains("     1"), "row: {:?}", rows[0]);
+        assert_eq!(&rows[0][..2], "40", "row: {:?}", rows[0]);
+    }
+
+    #[test]
+    fn calendar_has_full_weeks_with_iso_numbers() {
+        // Week prefix (2) + two spaces + seven 3-char cells + six separators.
         for m in 1..=12 {
             for r in month_grid(2026, m) {
-                assert_eq!(r.chars().count(), 27, "row {:?} in month {m}", r);
+                assert_eq!(r.chars().count(), 31, "row {:?} in month {m}", r);
             }
         }
     }

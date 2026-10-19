@@ -1041,6 +1041,34 @@ impl Bar {
                     continue;
                 }
             };
+            // Arrow keys navigate an open calendar panel. Handle this before
+            // the generic popup handler, which closes on every key press.
+            if let Event::KeyPress(e) = &event {
+                if let Some(module) = self.popup.as_ref().map(|p| p.module) {
+                    let delta = match e.detail {
+                        113 | 112 => Some(-1), // Left / PageUp
+                        114 | 117 => Some(1),  // Right / PageDown
+                        _ => None,
+                    };
+                    if let Some(delta) = delta {
+                        if self
+                            .modules
+                            .get_mut(module)
+                            .is_some_and(|m| m.popup_navigate(delta))
+                        {
+                            let left = self
+                                .placed
+                                .iter()
+                                .find(|p| p.index == module)
+                                .map(|p| p.x)
+                                .unwrap_or(0);
+                            self.close_popup()?;
+                            self.click(left + 1)?;
+                            continue;
+                        }
+                    }
+                }
+            }
             // A click on the panel itself: keep it open.
             if let Some(p) = &self.popup {
                 // Escape is grabbed at the root, so it arrives with the root as

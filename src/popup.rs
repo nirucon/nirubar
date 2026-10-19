@@ -13,7 +13,7 @@
 //! and let a second panel open on top of the first.
 use crate::config::{Result, Theme};
 use crate::render::Renderer;
-use chrono::{Datelike, Local};
+use chrono::Local;
 use std::time::{Duration, Instant};
 use x11rb::{
     connection::Connection,
@@ -295,13 +295,23 @@ impl Popup {
 }
 
 /// Calendar for the current month, Monday first, English short weekdays.
+#[cfg(test)]
 pub fn calendar(date_format: &str) -> (String, Vec<String>) {
+    use chrono::Datelike;
     let now = Local::now();
-    let title = format!("{} {:04}", month_name(now.month()), now.year());
+    calendar_for(now.year(), now.month(), date_format)
+}
+
+/// Calendar for an explicit month; the bar lets the user step through months.
+pub fn calendar_for(year: i32, month: u32, date_format: &str) -> (String, Vec<String>) {
+    let now = Local::now();
+    let title = format!("{} {:04}", month_name(month), year);
     let mut lines = vec![format!("today: {}", now.format(date_format))];
     lines.push(String::new());
-    lines.push("Mon Tue Wed Thu Fri Sat Sun".to_string());
-    lines.extend(crate::module::month_grid(now.year(), now.month()));
+    lines.push("Wk  Mon Tue Wed Thu Fri Sat Sun".to_string());
+    lines.extend(crate::module::month_grid(year, month));
+    lines.push(String::new());
+    lines.push("←/→ change month".to_string());
     (title, lines)
 }
 
@@ -326,12 +336,13 @@ fn month_name(m: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     #[test]
     fn calendar_title_has_a_month_name() {
         let (title, lines) = calendar("%Y-%m-%d");
         assert!(title.contains(&Local::now().year().to_string()));
-        assert!(lines.iter().any(|l| l.starts_with("Mon")));
+        assert!(lines.iter().any(|l| l.starts_with("Wk  Mon")));
     }
 
     #[test]
