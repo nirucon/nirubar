@@ -33,9 +33,11 @@ niructl reload
 niructl restart-bar
 ```
 
-**0.16.10:** fixed-cadence load sampling, correct ALSA parsing, locale-stable and
-failure-aware update queries, target-correct filesystem bindings, popup/reload
-pixmap cleanup and information-only volume/media clicks. Playback and volume use explicit player
+**0.16.11:** corrected XEmbed tray embedding (mapped manager, real `_XEMBED`
+notification) and a tray selection loss no longer terminates the bar. Also includes
+fixed-cadence load sampling, correct ALSA parsing, locale-stable/failure-aware
+update queries, target-correct filesystem bindings, popup/reload pixmap cleanup and
+information-only volume/media clicks. Playback and volume use explicit player
 controls/media keys. Per-monitor bars, improved panels, weather and fixed-cadence
 background probes remain in the [roadmap](https://github.com/nirucon/nirux/blob/main/ROADMAP.md).
 

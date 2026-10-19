@@ -29,6 +29,8 @@ pub struct Tray {
     pub selection: Atom,
     opcode_send: Atom,
     embed_info: Atom,
+    /// The XEmbed client-message type (distinct from the info property).
+    xembed: Atom,
     /// Icons currently in the tray, left to right.
     pub icons: Vec<Window>,
 }
@@ -41,6 +43,7 @@ impl Tray {
         let selection = atom(&format!("_NET_SYSTEM_TRAY_S{screen}"))?;
         let opcode_send = atom("_NET_SYSTEM_TRAY_OPCODE")?;
         let embed_info = atom("_XEMBED_INFO")?;
+        let xembed = atom("_XEMBED")?;
         let orientation = atom("_NET_SYSTEM_TRAY_ORIENTATION")?;
         let visual = atom("_NET_SYSTEM_TRAY_VISUAL")?;
         let tray_manager = atom("MANAGER")?;
@@ -88,6 +91,9 @@ impl Tray {
             AtomEnum::VISUALID,
             &[c.setup().roots[screen].root_visual],
         )?;
+        // XEmbed clients expect the manager window itself to be mapped; an
+        // unmapped 1x1 parent made some icons never appear.
+        c.map_window(win)?;
         c.set_selection_owner(win, selection, x11rb::CURRENT_TIME)?;
 
         // Tell every running application that a tray exists now.
@@ -108,6 +114,7 @@ impl Tray {
             selection,
             opcode_send,
             embed_info,
+            xembed,
             icons: Vec::new(),
         })
     }
@@ -157,12 +164,17 @@ impl Tray {
             self.embed_info,
             &[0, 1],
         );
-        // _XEMBED message 0 means "embedded": the client may start rendering.
+        // XEMBED_EMBEDDED_NOTIFY (0): data1 is the embedder window.
         let _ = c.send_event(
             false,
             icon,
             EventMask::NO_EVENT,
-            ClientMessageEvent::new(32, icon, self.embed_info, [x11rb::CURRENT_TIME, 0, 0, 0, 0]),
+            ClientMessageEvent::new(
+                32,
+                icon,
+                self.xembed,
+                [x11rb::CURRENT_TIME, 0, 0, self.win, 0],
+            ),
         );
         self.icons.push(icon);
         let _ = c.flush();
@@ -216,6 +228,7 @@ mod tests {
             selection: 2,
             opcode_send: 3,
             embed_info: 5,
+            xembed: 6,
             icons: vec![],
         };
         assert_eq!(tray.width(), 0);
@@ -233,6 +246,7 @@ mod tests {
             selection: 2,
             opcode_send: 3,
             embed_info: 5,
+            xembed: 6,
             icons: vec![10],
         };
         tray.remove(10);

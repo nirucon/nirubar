@@ -448,3 +448,147 @@ fn progress_only_changes_repaint_a_paused_short_title() {
     drop(_bar);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated X server, font and tray support"]
+fn tray_embeds_icons_and_survives_selection_loss() {
+    let directory = std::env::temp_dir().join(format!("nirubar-tray-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "[bar]\nmodules = [\"clock\"]\ntray = true\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let mut bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .spawn()
+            .unwrap(),
+    );
+    let tray_selection = c
+        .intern_atom(false, format!("_NET_SYSTEM_TRAY_S{screen}").as_bytes())
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut tray = 0;
+    while tray == 0 {
+        tray = c
+            .get_selection_owner(tray_selection)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .owner;
+        assert!(Instant::now() < until, "tray selection was not acquired");
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        c.get_window_attributes(tray)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .map_state,
+        MapState::VIEWABLE,
+        "tray manager window must be mapped for XEmbed clients"
+    );
+    let icon = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        icon,
+        root,
+        0,
+        0,
+        16,
+        16,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new().background_pixel(0xff00ff),
+    )
+    .unwrap();
+    c.map_window(icon).unwrap();
+    let opcode = c
+        .intern_atom(false, b"_NET_SYSTEM_TRAY_OPCODE")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    c.send_event(
+        false,
+        tray,
+        EventMask::NO_EVENT,
+        ClientMessageEvent::new(32, tray, opcode, [x11rb::CURRENT_TIME, 0, icon, 0, 0]),
+    )
+    .unwrap();
+    c.flush().unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        if c.query_tree(icon).unwrap().reply().unwrap().parent == tray {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "icon was not reparented into the tray"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let info = c
+        .intern_atom(false, b"_XEMBED_INFO")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let values = c
+        .get_property(false, icon, info, AtomEnum::ANY, 0, 2)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .value32()
+        .unwrap()
+        .collect::<Vec<_>>();
+    assert_eq!(values, vec![0, 1], "embedded icon needs _XEMBED_INFO");
+    // Another manager taking the tray selection must not kill a healthy bar.
+    let rival = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        rival,
+        root,
+        0,
+        0,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_ONLY,
+        0,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    c.set_selection_owner(rival, tray_selection, x11rb::CURRENT_TIME)
+        .unwrap();
+    c.flush().unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    while c
+        .get_selection_owner(tray_selection)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .owner
+        != rival
+    {
+        assert!(
+            Instant::now() < until,
+            "rival tray did not take the selection"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        bar.0.try_wait().unwrap().is_none(),
+        "losing the tray selection terminated the bar"
+    );
+    drop(bar);
+    std::fs::remove_dir_all(directory).unwrap();
+}

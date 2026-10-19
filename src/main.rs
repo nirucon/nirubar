@@ -989,11 +989,24 @@ impl Bar {
                         break;
                     }
                 }
-                Event::SelectionClear(_) => {
-                    if let Some(t) = &self.tray {
-                        t.release(&self.c);
+                Event::SelectionClear(e) => {
+                    // Losing the tray is not fatal: another tray may take over
+                    // while the bar itself remains useful. Only losing our own
+                    // singleton selection ends this bar.
+                    let tray_lost = self
+                        .tray
+                        .as_ref()
+                        .is_some_and(|t| t.selection == e.selection);
+                    if tray_lost {
+                        if let Some(t) = &self.tray {
+                            t.release(&self.c);
+                        }
+                        self.tray = None;
+                        self.last_frame.clear();
+                        self.draw()?;
+                    } else {
+                        break;
                     }
-                    break;
                 }
                 _ => (),
             }
