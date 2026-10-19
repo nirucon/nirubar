@@ -1326,6 +1326,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         } else {
             plain.notifications
         },
+        music: if ok(nerd.music) {
+            nerd.music
+        } else {
+            plain.music
+        },
     }
 }
 

@@ -137,12 +137,6 @@ impl Bar {
             .clone()
             .unwrap_or_else(crate::av::VolumeIcons::plain)
     }
-
-    pub fn media_icons(&self) -> crate::av::MediaIcons {
-        self.media_icons
-            .clone()
-            .unwrap_or_else(crate::av::MediaIcons::plain)
-    }
 }
 
 impl Default for Config {

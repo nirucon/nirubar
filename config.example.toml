@@ -35,6 +35,12 @@ bar_height = 28
 # Share of the screen width given to the master column (0.1 to 0.9).
 master_ratio = 0.55
 
+# NIRUPI compatibility profile. When true, the old NIRUPI helper shortcuts
+# (power/theme menus, DND, caffeine, keyboard/touchpad toggles, SSH, clipboard,
+# recording and suspend) are added. They only work when NIRUPI's helper scripts
+# are installed; a standalone NIRU desktop leaves this off.
+nirupi_compat = false
+
 # ── Programs ────────────────────────────────────────────────────────────────
 # Commands are argument lists, never passed through a shell.
 terminal = ["kitty"]
@@ -59,8 +65,8 @@ font_size = 15.0
 # says why). At the top level, not under [bar]: NIRUWM reads this file too and
 # refuses fields it does not know, so a setting only the bar uses still has to
 # be somewhere both accept.
-weather_latitude = 0.0
-weather_longitude = 0.0
+weather_latitude = 58.22
+weather_longitude = 11.93
 
 [wallpaper]
 enabled = false
@@ -89,6 +95,13 @@ shuffle_on_start = true
 # `profiles` overrides one screen by its RandR name (see `xrandr --listmonitors`
 # or `niructl monitors`). Use it when a screen should have named workspaces, a
 # different count, or be the one that holds focus at login.
+[nightlight]
+# Manual night light, applied by `niructl nightlight on` / Super+N.
+# 0,0 means no location; manual temperature still works.
+latitude = 58.22
+longitude = 11.93
+temperature = 3400
+
 [monitors]
 workspaces = 9
 
@@ -178,6 +191,7 @@ tray = true
 #   inc_master, dec_master, inc_master_ratio, dec_master_ratio,
 #   toggle_float, toggle_fullscreen, swap_next, swap_prev,
 #   move_float left|right|up|down, resize_float dx dy,
+#   media_key NAME, brightness_step N, nightlight_toggle, dnd_toggle, idle_toggle,
 #   close, quit, reload, toggle_gaps, theme NAME,
 #   focusmon N, tagmon N   (multi-monitor, reserved)
 
@@ -200,6 +214,13 @@ action = "launcher"
 [[keys]]
 keys = "super+shift+p"
 action = "launcher_unified"
+
+# Remember every open window (workspace, screen, floating) so the next login
+# can start them again. Logging out saves too. Needs `restore_session = true`
+# at the top of the file to bring them back.
+[[keys]]
+keys = "super+shift+w"
+action = "save_session"
 
 [[keys]]
 keys = "super+w"

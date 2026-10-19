@@ -37,6 +37,8 @@ pub struct Icons {
     pub brightness: &'static str,
     /// The optional unread-indicator module.
     pub notifications: &'static str,
+    /// The media module's music note.
+    pub music: &'static str,
 }
 
 impl Icons {
@@ -64,6 +66,7 @@ impl Icons {
             uptime: "\u{f017}",  // nf-fa-clock_o
             brightness: "\u{f185}", // sun; brightness is a display property
             notifications: "\u{f0f3}", // nf-fa-bell
+            music: "\u{f001}",   // nf-fa-music
         }
     }
 
@@ -86,6 +89,7 @@ impl Icons {
             uptime: "up",
             brightness: "bri",
             notifications: "ntf",
+            music: "mus",
         }
     }
 }

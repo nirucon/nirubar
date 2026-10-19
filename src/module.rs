@@ -322,7 +322,7 @@ impl Module for Volume {
 /// where the text width is measured; the bar paints shapes over it.
 pub struct Media {
     sample: Sample<av::Media>,
-    pub icons: av::MediaIcons,
+    pub music: &'static str,
     /// Scrolls a long title instead of cutting it off.
     pub scroller: crate::scroll::Scroller,
     /// Where the track is, 0..=1, for the thin line under the title.
@@ -361,33 +361,13 @@ impl Module for Media {
         } else {
             full.clone()
         };
-        // The mark is a fixed-width placeholder here; the bar draws its
-        // shapes. A text glyph has a width only the font knows, so a scrolling
-        // title would jump as the mark changed or the font fell back.
-        let mark = if self.icons.playing_codes.is_empty() {
-            // Plain text: the ">" the font can draw.
-            if m.playing {
-                self.icons.playing
-            } else {
-                self.icons.paused
-            }
-        } else {
-            // One space where the bar paints its bars. Fixed width, whatever
-            // the font does with a glyph.
-            " "
-        };
-        format!("{mark} {window}")
+        format!("{} {window}", self.music)
     }
     fn scrolling(&self) -> bool {
         // Playback position is sampled once/second. Only moving text needs
         // the animation cadence; a short playing title can sleep too.
         self.scroller.moving()
     }
-    fn mark(&self) -> Option<av::MediaIcons> {
-        // Only when the font can draw shapes; otherwise the ">" stays text.
-        (!self.icons.playing_codes.is_empty()).then(|| self.icons.clone())
-    }
-
     fn progress(&self) -> Option<f32> {
         self.progress
     }
@@ -839,7 +819,7 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
             })),
             "media" => out.push(Box::new(Media {
                 sample: Sample::default(),
-                icons: cfg.media_icons(),
+                music: icons.music,
                 scroller: crate::scroll::Scroller::new(cfg.media_width),
                 progress: None,
             })),
