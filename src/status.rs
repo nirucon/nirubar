@@ -33,6 +33,8 @@ pub struct Icons {
     pub sun: &'static str,
     /// The `uptime` module: a clock face, distinct from the bar's own clock.
     pub uptime: &'static str,
+    /// The `brightness` module.
+    pub brightness: &'static str,
 }
 
 impl Icons {
@@ -58,6 +60,7 @@ impl Icons {
             cpu: "\u{f1fe}",     // nf-fa-area_chart
             sun: "\u{f185}",     // nf-fa-sun_o
             uptime: "\u{f017}",  // nf-fa-clock_o
+            brightness: "\u{f185}", // sun; brightness is a display property
         }
     }
 
@@ -78,8 +81,42 @@ impl Icons {
             cpu: "cpu",
             sun: "sun",
             uptime: "up",
+            brightness: "bri",
         }
     }
+}
+
+/// Backlight percentage from `/sys/class/backlight`, if a device exists.
+pub fn backlight_percent() -> Option<u32> {
+    backlight_in(Path::new("/sys/class/backlight"))
+}
+
+fn backlight_in(dir: &Path) -> Option<u32> {
+    let mut devices: Vec<_> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    devices.sort();
+    for device in devices {
+        let Some(actual) = std::fs::read_to_string(device.join("brightness"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let Some(max) = std::fs::read_to_string(device.join("max_brightness"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if max == 0 {
+            continue;
+        }
+        return Some(((actual.saturating_mul(100) + max / 2) / max).min(100) as u32);
+    }
+    None
 }
 
 /// Battery reading, or `None` on a machine without a battery (a desktop).
@@ -218,6 +255,16 @@ mod tests {
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn backlight_percentage_reads_the_first_device() {
+        let dir = std::env::temp_dir().join(format!("nirubar-backlight-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("intel_backlight")).unwrap();
+        std::fs::write(dir.join("intel_backlight/brightness"), "9600\n").unwrap();
+        std::fs::write(dir.join("intel_backlight/max_brightness"), "19200\n").unwrap();
+        assert_eq!(backlight_in(&dir), Some(50));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

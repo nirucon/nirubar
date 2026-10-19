@@ -585,6 +585,44 @@ impl Module for Pulse {
     }
 }
 
+/// Laptop backlight level. Hidden automatically on machines without one.
+pub struct Brightness {
+    pub icons: status::Icons,
+}
+
+impl Module for Brightness {
+    fn name(&self) -> &'static str {
+        "brightness"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        match status::backlight_percent() {
+            Some(percent) => format!("{} {percent}%", self.icons.brightness),
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Brightness".into(),
+            match status::backlight_percent() {
+                Some(percent) => vec![
+                    format!("{percent}%"),
+                    String::new(),
+                    "laptop keys change the backlight".to_string(),
+                    "Super+N toggles night light".to_string(),
+                ],
+                None => vec![
+                    "no backlight device".to_string(),
+                    String::new(),
+                    "desktop monitors may use hardware buttons".to_string(),
+                ],
+            },
+        ))
+    }
+}
+
 /// When the sun rises and sets, from `latitude` and `longitude`.
 pub struct Sun {
     pub latitude: f64,
@@ -663,6 +701,7 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
             })),
             "pulse" => out.push(Box::new(Pulse::new(cfg.graph_width, icons))),
             "uptime" => out.push(Box::new(Uptime { icons })),
+            "brightness" => out.push(Box::new(Brightness { icons })),
             "sun" => out.push(Box::new(Sun {
                 latitude: full.weather_latitude,
                 longitude: full.weather_longitude,
@@ -783,6 +822,7 @@ mod tests {
                         | "pulse"
                         | "uptime"
                         | "sun"
+                        | "brightness"
                 ),
                 "example config names an unknown module {name:?}"
             );

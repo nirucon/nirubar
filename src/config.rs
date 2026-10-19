@@ -38,6 +38,8 @@ pub struct Config {
     /// NIRUWM-only monitor settings. Opaque here for the same reason as keys:
     /// the bar must accept the shared file whatever the window manager stores.
     pub monitors: toml::Value,
+    /// NIRUWM/niructl night-light settings; accepted but not used by the bar.
+    pub nightlight: toml::Value,
     /// NIRUWM-only scratchpad settings.
     pub scratchpad: toml::Value,
     /// NIRUWM-only window rules.
@@ -161,6 +163,7 @@ impl Default for Config {
             keys: Vec::new(),
             wallpaper: toml::Value::Table(Default::default()),
             monitors: toml::Value::Table(Default::default()),
+            nightlight: toml::Value::Table(Default::default()),
             scratchpad: toml::Value::Table(Default::default()),
             rules: Vec::new(),
         }

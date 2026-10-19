@@ -1287,6 +1287,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         } else {
             plain.uptime
         },
+        brightness: if ok(nerd.brightness) {
+            nerd.brightness
+        } else {
+            plain.brightness
+        },
     }
 }
 

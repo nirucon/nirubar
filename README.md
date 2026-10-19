@@ -33,7 +33,7 @@ niructl reload
 niructl restart-bar
 ```
 
-**0.17.0:** one bar per monitor on a shared X screen, with a global EWMH desktop
+**0.17.1:** adds a laptop `brightness` module and accepts shared `[nightlight]` settings. **0.17.0:** one bar per monitor on a shared X screen, with a global EWMH desktop
 contract from niruwm, monitor-local workspace cells and global workspace commands.
 **0.16.11:** corrected XEmbed tray embedding (mapped manager, real `_XEMBED`
 notification) and a tray selection loss no longer terminates the bar. Also includes

@@ -16,6 +16,7 @@ Modules, configured in one line each:
 | `network` | wired or wireless icon while a link is up |
 | `battery` | charge and a charging bolt, laptops only |
 | `volume` | level with an icon, or a mute icon; click for information |
+| `brightness` | laptop backlight percentage; hidden without a backlight device |
 | `media` | what is playing, `artist - title`, scrolling when it is long, with a thin progress line under it |
 | `updates` | available package upgrades; click for the detail and the command |
 | `pulse` | cpu and memory, click for a graph of the last minute |
