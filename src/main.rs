@@ -12,6 +12,7 @@ mod av;
 mod config;
 mod module;
 mod popup;
+mod probe;
 mod pulse;
 mod render;
 mod scroll;
@@ -28,6 +29,70 @@ struct Monitor {
     x: i16,
     y: i16,
     w: u16,
+    name: Option<String>,
+}
+
+impl Monitor {
+    fn key(&self) -> String {
+        match &self.name {
+            Some(name) if !name.is_empty() => sanitize(name),
+            _ => format!("{}_{}_{}", self.x, self.y, self.w),
+        }
+    }
+
+    fn matches(&self, line: &str) -> bool {
+        let mut fields = line.split('\t');
+        let Some(name) = fields.next() else {
+            return false;
+        };
+        let (Some(x), Some(y), Some(w)) = (fields.next(), fields.next(), fields.next()) else {
+            return false;
+        };
+        self.name.as_deref().map(|n| n == name).unwrap_or(false)
+            || (self.name.is_none()
+                && x.parse::<i16>() == Ok(self.x)
+                && y.parse::<i16>() == Ok(self.y)
+                && w.parse::<u16>() == Ok(self.w))
+    }
+}
+
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// State published by niruwm for one output in `_NIRUWM_MONITORS`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MonitorLayout {
+    offset: u32,
+    count: usize,
+    active: u32,
+}
+
+fn parse_monitor_layout(text: &str, monitor: &Option<Monitor>) -> Option<MonitorLayout> {
+    let monitor = monitor.as_ref()?;
+    for line in text.lines() {
+        if !monitor.matches(line) {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 7 {
+            continue;
+        }
+        return Some(MonitorLayout {
+            offset: fields[4].parse().ok()?,
+            count: fields[5].parse::<usize>().ok()?.max(1),
+            active: fields[6].parse().ok()?,
+        });
+    }
+    None
 }
 
 /// Read `--monitor X,Y,W` from the command line.
@@ -41,13 +106,17 @@ fn parse_monitor(args: &[String]) -> Result<Option<Monitor>> {
     };
     let value = args.get(pos + 1).ok_or("--monitor needs X,Y,W")?;
     let parts: Vec<&str> = value.split(',').collect();
-    if parts.len() != 3 {
-        return Err("--monitor needs X,Y,W".into());
+    if parts.len() != 3 && parts.len() != 4 {
+        return Err("--monitor needs X,Y,W or X,Y,W,NAME".into());
     }
     Ok(Some(Monitor {
         x: parts[0].parse()?,
         y: parts[1].parse()?,
         w: parts[2].parse()?,
+        name: parts
+            .get(3)
+            .filter(|n| !n.is_empty())
+            .map(|n| n.to_string()),
     }))
 }
 use module::{Module, Side, Workspaces};
@@ -175,10 +244,15 @@ struct Bar {
     /// Where this bar sits, for the strut and for placing popups.
     bar_x: i16,
     bar_y: i16,
+    monitor: Option<Monitor>,
     /// System tray, when enabled.
     tray: Option<tray::Tray>,
     modules: Vec<Box<dyn Module>>,
     workspaces: Workspaces,
+    /// True when the running WM published `_NIRUWM_MONITORS`.
+    monitor_managed: bool,
+    /// Selection that makes this bar unique for its monitor.
+    selection: Atom,
     /// Hit boxes from the last frame: where each module and workspace cell is.
     placed: Vec<Placed>,
     cells: i16,
@@ -246,6 +320,9 @@ impl Bar {
             "_NET_CLIENT_LIST",
             "_NET_WM_DESKTOP",
             "_NET_ACTIVE_WINDOW",
+            "_NET_DESKTOP_NAMES",
+            "_NIRUWM_MONITORS",
+            "_NIRUWM_COMMAND",
             "_NIRUBAR_SELECTION",
             "_NIRUBAR_REDRAW",
             "_NIRU_CONFIG_SERIAL",
@@ -254,9 +331,21 @@ impl Bar {
             atoms.insert(n, c.intern_atom(false, n.as_bytes())?.reply()?.atom);
         }
 
-        let selection = atoms["_NIRUBAR_SELECTION"];
+        // One bar per monitor, but they share the X screen. The legacy
+        // selection is kept as a best-effort "a bar is present" marker.
+        let monitor_key = monitor
+            .as_ref()
+            .map(Monitor::key)
+            .unwrap_or_else(|| "screen".into());
+        let selection = c
+            .intern_atom(
+                false,
+                format!("_NIRUBAR_SELECTION_{monitor_key}").as_bytes(),
+            )?
+            .reply()?
+            .atom;
         if c.get_selection_owner(selection)?.reply()?.owner != 0 {
-            return Err("NIRUBAR is already running on this X screen".into());
+            return Err(format!("NIRUBAR is already running on monitor {monitor_key}").into());
         }
 
         let win = c.generate_id()?;
@@ -311,6 +400,10 @@ impl Bar {
         )?;
         set_strut(&c, win, &atoms, cfg.bar_height, width, bar_x, bar_y == 0)?;
         c.set_selection_owner(win, selection, x11rb::CURRENT_TIME)?;
+        let legacy = atoms["_NIRUBAR_SELECTION"];
+        if c.get_selection_owner(legacy)?.reply()?.owner == 0 {
+            c.set_selection_owner(win, legacy, x11rb::CURRENT_TIME)?;
+        }
         c.change_window_attributes(
             root,
             // Only property and structure events. Selecting BUTTON_PRESS here
@@ -362,10 +455,13 @@ impl Bar {
             last_frame: String::new(),
             bar_x,
             bar_y,
+            monitor,
             icons,
             tray,
             modules,
             rendered: Vec::new(),
+            monitor_managed: false,
+            selection,
             workspaces,
             placed: Vec::new(),
             cells,
@@ -377,20 +473,80 @@ impl Bar {
 
     /// Collect the EWMH state the bar displays.
     fn snapshot(&mut self) {
-        let tag = self
+        let layout_text = self
+            .c
+            .get_property(
+                false,
+                self.root,
+                self.atom("_NIRUWM_MONITORS"),
+                self.atom("UTF8_STRING"),
+                0,
+                4096,
+            )
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .map(|r| String::from_utf8_lossy(&r.value).to_string())
+            .unwrap_or_default();
+        let layout = parse_monitor_layout(&layout_text, &self.monitor);
+        self.monitor_managed = layout.is_some();
+        let fallback_active = self
             .values(self.root, "_NET_CURRENT_DESKTOP")
             .first()
             .copied()
             .unwrap_or(0);
-        let mut occupied = [false; 9];
-        for w in self.values(self.root, "_NET_CLIENT_LIST") {
+        let (offset, count, active) = layout.map(|l| (l.offset, l.count, l.active)).unwrap_or((
+            0,
+            self.workspaces.names.len().max(1),
+            fallback_active,
+        ));
+
+        let names = layout.and_then(|_| {
+            let reply = self
+                .c
+                .get_property(
+                    false,
+                    self.root,
+                    self.atom("_NET_DESKTOP_NAMES"),
+                    self.atom("UTF8_STRING"),
+                    0,
+                    (count * 256) as u32,
+                )
+                .ok()?
+                .reply()
+                .ok()?;
+            let all: Vec<String> = reply
+                .value
+                .split(|b| *b == 0)
+                .filter(|v| !v.is_empty())
+                .map(|v| String::from_utf8_lossy(v).to_string())
+                .collect();
+            let start = offset as usize;
+            all.get(start..start + count).map(|s| s.to_vec())
+        });
+
+        let mut occupied = vec![false; count];
+        let clients = self
+            .c
+            .get_property(
+                false,
+                self.root,
+                self.atom("_NET_CLIENT_LIST"),
+                AtomEnum::WINDOW,
+                0,
+                4096,
+            )
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .and_then(|r| r.value32().map(|v| v.collect::<Vec<_>>()))
+            .unwrap_or_default();
+        for w in clients {
             if let Some(t) = self.values(w, "_NET_WM_DESKTOP").first() {
-                if *t < 9 {
-                    occupied[*t as usize] = true;
+                if *t >= offset && *t < offset + count as u32 {
+                    occupied[(*t - offset) as usize] = true;
                 }
             }
         }
-        self.workspaces.update(tag, occupied);
+        self.workspaces.update(offset, active, names, occupied);
     }
 
     fn title(&mut self) -> String {
@@ -474,7 +630,7 @@ impl Bar {
         let cell = self.cells;
         let show_workspaces = self.cfg.bar.modules.iter().any(|m| m == "workspaces");
         if show_workspaces {
-            for i in 0..9usize {
+            for i in 0..self.workspaces.names.len() {
                 let x = (i as i16) * cell;
                 let active = i == self.workspaces.active as usize;
                 if active {
@@ -492,7 +648,7 @@ impl Bar {
                 }
                 let (colour, cell_bg) = if active {
                     (fg, border)
-                } else if self.workspaces.occupied[i] {
+                } else if self.workspaces.occupied.get(i).copied().unwrap_or(false) {
                     (fg, bg)
                 } else {
                     (muted, bg)
@@ -612,7 +768,7 @@ impl Bar {
             String::new()
         };
         if !title.is_empty() {
-            let start = self.cells * 9;
+            let start = self.cells * self.workspaces.names.len() as i16;
             let end = x - self.renderer.advance * 2;
             if end > start {
                 self.renderer
@@ -716,9 +872,13 @@ impl Bar {
     /// With a panel open, the same module toggles it and any other spot
     /// closes it; a click on a different module then opens that one.
     fn click(&mut self, x: i16) -> Result<()> {
-        if self.cfg.bar.modules.iter().any(|m| m == "workspaces") && x < self.cells * 9 {
+        if self.cfg.bar.modules.iter().any(|m| m == "workspaces")
+            && x < self.cells * self.workspaces.names.len() as i16
+        {
             self.close_popup()?;
-            let tag = (x / self.cells).clamp(0, 8) as u32;
+            let tag = (x / self.cells)
+                .clamp(0, self.workspaces.names.len().saturating_sub(1) as i16)
+                as u32;
             return self.select_workspace(tag);
         }
         if !self.cfg.bar.popups {
@@ -764,16 +924,23 @@ impl Bar {
     }
 
     fn select_workspace(&mut self, tag: u32) -> Result<()> {
+        let global = self.workspaces.offset + tag;
+        let atom = if self.monitor_managed {
+            // Monitor-targeted command; the WM resolves the global desktop.
+            self.atom("_NIRUWM_COMMAND")
+        } else {
+            self.atom("_NET_CURRENT_DESKTOP")
+        };
+        let data = if self.monitor_managed {
+            [9, global, 0, 0, 0]
+        } else {
+            [global, x11rb::CURRENT_TIME, 0, 0, 0]
+        };
         self.c.send_event(
             false,
             self.root,
             EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
-            ClientMessageEvent::new(
-                32,
-                self.root,
-                self.atom("_NET_CURRENT_DESKTOP"),
-                [tag, x11rb::CURRENT_TIME, 0, 0, 0],
-            ),
+            ClientMessageEvent::new(32, self.root, atom, data),
         )?;
         self.c.flush()?;
         self.last_frame.clear();
@@ -1004,9 +1171,11 @@ impl Bar {
                         self.tray = None;
                         self.last_frame.clear();
                         self.draw()?;
-                    } else {
+                    } else if e.selection == self.selection {
+                        // Another bar legitimately took over this monitor slot.
                         break;
                     }
+                    // Best-effort legacy marker: losing it is harmless.
                 }
                 _ => (),
             }
@@ -1164,6 +1333,48 @@ mod tests {
         let args = vec!["--monitor".to_string(), "10,20,800".to_string()];
         let m = super::parse_monitor(&args).unwrap().unwrap();
         assert_eq!((m.x, m.y, m.w), (10, 20, 800));
+    }
+
+    #[test]
+    fn monitor_argument_accepts_an_output_name() {
+        let args = vec!["--monitor".to_string(), "10,20,800,eDP-1".to_string()];
+        let m = super::parse_monitor(&args).unwrap().unwrap();
+        assert_eq!(m.name.as_deref(), Some("eDP-1"));
+        assert_eq!(m.key(), "eDP-1");
+    }
+
+    #[test]
+    fn monitor_layout_selects_the_bar_output() {
+        let text = "left\t0\t0\t800\t0\t3\t1\nright\t800\t0\t800\t3\t2\t0\n";
+        let left = Some(super::Monitor {
+            x: 0,
+            y: 0,
+            w: 800,
+            name: Some("left".into()),
+        });
+        let right = Some(super::Monitor {
+            x: 800,
+            y: 0,
+            w: 800,
+            name: Some("right".into()),
+        });
+        assert_eq!(
+            super::parse_monitor_layout(text, &left),
+            Some(super::MonitorLayout {
+                offset: 0,
+                count: 3,
+                active: 1
+            })
+        );
+        assert_eq!(
+            super::parse_monitor_layout(text, &right),
+            Some(super::MonitorLayout {
+                offset: 3,
+                count: 2,
+                active: 0
+            })
+        );
+        assert_eq!(super::parse_monitor_layout(text, &None), None);
     }
 
     #[test]

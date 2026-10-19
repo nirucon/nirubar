@@ -10,7 +10,6 @@
 
 use std::{
     path::PathBuf,
-    process::Command,
     time::{Duration, SystemTime},
 };
 
@@ -80,12 +79,13 @@ pub fn query() -> Option<usize> {
     if !which(program) {
         return None;
     }
-    let out = Command::new(program)
-        .args(args)
-        .env("LC_ALL", "C")
-        .env("LANG", "C")
-        .output()
-        .ok()?;
+    let out = crate::probe::run(
+        program,
+        args,
+        &[("LC_ALL", "C"), ("LANG", "C")],
+        Duration::from_secs(4),
+        256 * 1024,
+    )?;
     // `pacman -Qu` exits non-zero with no output when nothing is to be done;
     // a failed query with a diagnostic is different and must not show "0".
     let text = String::from_utf8_lossy(&out.stdout);

@@ -33,13 +33,14 @@ niructl reload
 niructl restart-bar
 ```
 
+**0.17.0:** one bar per monitor on a shared X screen, with a global EWMH desktop
+contract from niruwm, monitor-local workspace cells and global workspace commands.
 **0.16.11:** corrected XEmbed tray embedding (mapped manager, real `_XEMBED`
 notification) and a tray selection loss no longer terminates the bar. Also includes
 fixed-cadence load sampling, correct ALSA parsing, locale-stable/failure-aware
 update queries, target-correct filesystem bindings, popup/reload pixmap cleanup and
 information-only volume/media clicks. Playback and volume use explicit player
-controls/media keys. Per-monitor bars, improved panels, weather and fixed-cadence
-background probes remain in the [roadmap](https://github.com/nirucon/nirux/blob/main/ROADMAP.md).
+controls/media keys. Improved panels and weather remain in the [roadmap](https://github.com/nirucon/nirux/blob/main/ROADMAP.md).
 
 [Code audit](https://github.com/nirucon/nirux/blob/main/AUDIT.md) · [X11 tests](tests/x11.rs)
 

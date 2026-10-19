@@ -380,10 +380,13 @@ fn active_interfaces() -> Vec<(String, Link)> {
 fn interface_address(iface: &str) -> Option<String> {
     // `getifaddrs` through /proc is awkward; using `ip` is portable across the
     // three supported distributions and only runs when the popup is opened.
-    let out = std::process::Command::new("ip")
-        .args(["-4", "-o", "addr", "show", "dev", iface])
-        .output()
-        .ok()?;
+    let out = crate::probe::run(
+        "ip",
+        &["-4", "-o", "addr", "show", "dev", iface],
+        &[],
+        std::time::Duration::from_secs(1),
+        64 * 1024,
+    )?;
     if !out.status.success() {
         return None;
     }
@@ -397,10 +400,13 @@ fn interface_address(iface: &str) -> Option<String> {
 /// SSID from the wireless interface, without NetworkManager.
 fn wifi_ssid(iface: &str) -> Option<String> {
     // iw is the standard tool for cfg80211; fall back to nothing.
-    let out = std::process::Command::new("iw")
-        .args(["dev", iface, "link"])
-        .output()
-        .ok()?;
+    let out = crate::probe::run(
+        "iw",
+        &["dev", iface, "link"],
+        &[],
+        std::time::Duration::from_secs(1),
+        64 * 1024,
+    )?;
     if !out.status.success() {
         return None;
     }

@@ -10,9 +10,15 @@
 
 use std::process::Command;
 
-/// Run a command and return trimmed stdout, or `None`.
+/// Run a bounded command and return trimmed stdout, or `None`.
 fn run(program: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(program).args(args).output().ok()?;
+    let out = crate::probe::run(
+        program,
+        args,
+        &[],
+        std::time::Duration::from_secs(2),
+        64 * 1024,
+    )?;
     if !out.status.success() {
         return None;
     }

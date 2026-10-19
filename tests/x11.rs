@@ -592,3 +592,160 @@ fn tray_embeds_icons_and_survives_selection_loss() {
     drop(bar);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated X server, font and xdotool"]
+fn one_bar_per_monitor_shares_a_screen_and_uses_global_desktops() {
+    let directory = std::env::temp_dir().join(format!("nirubar-monitors-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "[bar]\nmodules = [\"workspaces\", \"clock\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    // Stand in for niruwm: publish the monitor contract and receive commands.
+    c.change_window_attributes(
+        root,
+        &ChangeWindowAttributesAux::new()
+            .event_mask(EventMask::SUBSTRUCTURE_REDIRECT | EventMask::STRUCTURE_NOTIFY),
+    )
+    .unwrap()
+    .check()
+    .unwrap();
+    let monitors = c
+        .intern_atom(false, b"_NIRUWM_MONITORS")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let names = c
+        .intern_atom(false, b"_NET_DESKTOP_NAMES")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let utf8 = c
+        .intern_atom(false, b"UTF8_STRING")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let layout = "left\t0\t0\t640\t0\t3\t1\nright\t640\t0\t640\t3\t2\t0\n";
+    c.change_property8(PropMode::REPLACE, root, monitors, utf8, layout.as_bytes())
+        .unwrap();
+    c.change_property8(PropMode::REPLACE, root, names, utf8, b"a\0b\0c\0d\0e\0")
+        .unwrap();
+    c.flush().unwrap();
+
+    let start = |key: &str| {
+        Process(
+            Command::new(env!("CARGO_BIN_EXE_nirubar"))
+                .env("XDG_CONFIG_HOME", &directory)
+                .args([
+                    "--monitor",
+                    if key == "left" {
+                        "0,0,640,left"
+                    } else {
+                        "640,0,640,right"
+                    },
+                ])
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let _left = start("left");
+    let _right = start("right");
+    let selection = |key: &str| {
+        c.intern_atom(false, format!("_NIRUBAR_SELECTION_{key}").as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom
+    };
+    let left_sel = selection("left");
+    let right_sel = selection("right");
+    let until = Instant::now() + Duration::from_secs(5);
+    let (mut left, mut right) = (0, 0);
+    while left == 0 || right == 0 {
+        left = c
+            .get_selection_owner(left_sel)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .owner;
+        right = c
+            .get_selection_owner(right_sel)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .owner;
+        assert!(Instant::now() < until,
+            "both monitor bars did not start: left_owner={left} right_owner={right} left_sel={left_sel} right_sel={right_sel} left_alive={} right_alive={} logs={:?}/{:?}",
+            std::path::Path::new(&format!("/proc/{}", _left.0.id())).exists(),
+            std::path::Path::new(&format!("/proc/{}", _right.0.id())).exists(),
+            std::fs::read_to_string(directory.join("left.log")).unwrap_or_default(),
+            std::fs::read_to_string(directory.join("right.log")).unwrap_or_default());
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_ne!(left, right);
+    assert_eq!(c.get_geometry(left).unwrap().reply().unwrap().width, 640);
+    assert_eq!(c.get_geometry(right).unwrap().reply().unwrap().width, 640);
+    // A second bar for the same monitor is still refused.
+    let duplicate = Command::new(env!("CARGO_BIN_EXE_nirubar"))
+        .env("XDG_CONFIG_HOME", &directory)
+        .args(["--monitor", "0,0,640,left"])
+        .output()
+        .unwrap();
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("already running on monitor"));
+
+    // Click the second workspace cell of the right monitor: global desktop 4.
+    c.send_event(
+        false,
+        right,
+        EventMask::BUTTON_PRESS,
+        ButtonPressEvent {
+            response_type: BUTTON_PRESS_EVENT,
+            detail: 1,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root,
+            event: right,
+            child: 0,
+            root_x: 675,
+            root_y: 10,
+            event_x: 35,
+            event_y: 10,
+            state: KeyButMask::default(),
+            same_screen: true,
+        },
+    )
+    .unwrap();
+    c.flush().unwrap();
+    let command = c
+        .intern_atom(false, b"_NIRUWM_COMMAND")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let until = Instant::now() + Duration::from_secs(2);
+    let mut saw = false;
+    while !saw {
+        while let Some(event) = c.poll_for_event().unwrap() {
+            if let x11rb::protocol::Event::ClientMessage(e) = event {
+                if e.type_ == command && e.data.as_data32()[0] == 9 {
+                    assert_eq!(e.data.as_data32()[1], 4, "click used a monitor-local tag");
+                    saw = true;
+                }
+            }
+        }
+        assert!(
+            Instant::now() < until,
+            "monitor workspace click sent no global command"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}

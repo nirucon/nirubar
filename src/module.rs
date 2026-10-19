@@ -52,29 +52,55 @@ pub trait Module {
 /// each cell as a block.
 pub struct Workspaces {
     pub names: Vec<String>,
+    /// Active workspace local to this monitor.
     pub active: u32,
-    pub occupied: [bool; 9],
+    pub occupied: Vec<bool>,
+    /// First global EWMH desktop owned by this monitor.
+    pub offset: u32,
 }
 
 impl Workspaces {
     pub fn new(cfg: &config::Bar) -> Self {
         let mut names = cfg.tags.clone();
-        names.resize(9, String::new());
+        // Standalone use keeps the historical nine cells; a running WM
+        // replaces both names and count from `_NIRUWM_MONITORS`.
+        while names.len() < 9 {
+            names.push((names.len() + 1).to_string());
+        }
         for (i, n) in names.iter_mut().enumerate() {
             if n.is_empty() {
                 *n = (i + 1).to_string();
             }
         }
+        let occupied = vec![false; names.len()];
         Self {
             names,
             active: 0,
-            occupied: [false; 9],
+            occupied,
+            offset: 0,
         }
     }
 
-    pub fn update(&mut self, active: u32, occupied: [bool; 9]) {
-        self.active = active;
-        self.occupied = occupied;
+    /// Apply the WM's monitor-local state. Names are optional so a standalone
+    /// bar without a WM keeps its configured labels.
+    pub fn update(
+        &mut self,
+        offset: u32,
+        active: u32,
+        names: Option<Vec<String>>,
+        occupied: Vec<bool>,
+    ) {
+        self.offset = offset;
+        if let Some(names) = names {
+            if !names.is_empty() {
+                self.names = names;
+            }
+        }
+        let count = self.names.len();
+        self.active = active.min(count.saturating_sub(1) as u32);
+        self.occupied.clear();
+        self.occupied.extend(occupied);
+        self.occupied.resize(count, false);
     }
 }
 
@@ -441,53 +467,80 @@ impl Module for Uptime {
     }
 }
 
-/// A small graph of CPU and memory, drawn with block characters.
-pub struct Pulse {
-    previous: crate::pulse::CpuCounters,
+#[derive(Default)]
+struct PulseState {
     samples: Vec<crate::pulse::Sample>,
+    latest: crate::pulse::Sample,
+}
+
+/// A small graph of CPU and memory, drawn with block characters.
+///
+/// Sampling runs on one bounded worker thread: `/proc`, statvfs and filesystem
+/// scans never execute inside rendering or input handling.
+pub struct Pulse {
+    state: std::sync::Arc<std::sync::Mutex<PulseState>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
     width: usize,
     pub icons: status::Icons,
-    last_sample: std::time::Instant,
-    sample: crate::pulse::Sample,
 }
 
 impl Pulse {
     pub fn new(width: usize, icons: status::Icons) -> Self {
+        let state = std::sync::Arc::new(std::sync::Mutex::new(PulseState::default()));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_state = state.clone();
+        let worker_stop = stop.clone();
+        let worker = std::thread::Builder::new()
+            .name("nirubar-load".into())
+            .spawn(move || {
+                let mut previous = crate::pulse::CpuCounters::read().unwrap_or_default();
+                while !worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let now = crate::pulse::CpuCounters::read().unwrap_or_default();
+                    let sample = crate::pulse::sample(&now, &previous);
+                    previous = now;
+                    if let Ok(mut state) = worker_state.lock() {
+                        state.latest = sample;
+                        state.samples.push(sample);
+                        if state.samples.len() > 240 {
+                            state.samples.remove(0);
+                        }
+                    }
+                    // Sleep in small steps so Drop does not wait a full second.
+                    for _ in 0..20 {
+                        if worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
+            })
+            .ok();
         Self {
-            previous: crate::pulse::CpuCounters::read().unwrap_or_default(),
-            samples: Vec::new(),
+            state,
+            stop,
+            worker,
             width: width.clamp(6, 60),
             icons,
-            last_sample: std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_secs(2))
-                .unwrap_or_else(std::time::Instant::now),
-            sample: crate::pulse::Sample::default(),
         }
     }
 
-    /// Sample at most once a second, independent of how often the bar repaints.
-    fn update(&mut self) {
-        if self.last_sample.elapsed() >= std::time::Duration::from_secs(1) {
-            self.sample = self.take();
-            self.last_sample = std::time::Instant::now();
-        }
+    fn latest(&self) -> crate::pulse::Sample {
+        self.state.lock().map(|s| s.latest).unwrap_or_default()
     }
 
     #[cfg(test)]
     fn sample_count(&self) -> usize {
-        self.samples.len()
+        self.state.lock().map(|s| s.samples.len()).unwrap_or(0)
     }
+}
 
-    fn take(&mut self) -> crate::pulse::Sample {
-        let now = crate::pulse::CpuCounters::read().unwrap_or_default();
-        let sample = crate::pulse::sample(&now, &self.previous);
-        self.previous = now;
-        self.samples.push(sample);
-        // A minute of history is enough to see a spike; more is a statistic.
-        if self.samples.len() > 240 {
-            self.samples.remove(0);
+impl Drop for Pulse {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
-        sample
     }
 }
 
@@ -499,13 +552,20 @@ impl Module for Pulse {
         Side::Right
     }
     fn render(&mut self) -> String {
-        self.update();
-        format!("{} {}", self.icons.cpu, crate::pulse::summary(self.sample))
+        format!(
+            "{} {}",
+            self.icons.cpu,
+            crate::pulse::summary(self.latest())
+        )
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        self.update();
-        let sample = self.sample;
-        let rows = crate::pulse::graph_rows(&self.samples, self.width.min(40));
+        let sample = self.latest();
+        let samples = self
+            .state
+            .lock()
+            .map(|s| s.samples.clone())
+            .unwrap_or_default();
+        let rows = crate::pulse::graph_rows(&samples, self.width.min(40));
         Some((
             "Load".into(),
             vec![
@@ -790,12 +850,12 @@ mod tests {
     #[test]
     fn pulse_samples_once_per_second_not_once_per_repaint() {
         let mut pulse = Pulse::new(10, status::Icons::plain());
+        let before = pulse.sample_count();
         for _ in 0..50 {
             let _ = pulse.render();
         }
-        assert_eq!(
-            pulse.sample_count(),
-            1,
+        assert!(
+            pulse.sample_count() <= before + 1,
             "fast repaints multiplied /proc and filesystem samples"
         );
     }
@@ -806,6 +866,22 @@ mod tests {
         let ws = Workspaces::new(&cfg);
         assert_eq!(ws.names[0], "1");
         assert_eq!(ws.names[8], "9");
+    }
+
+    #[test]
+    fn monitor_workspaces_are_not_hardcoded_to_nine() {
+        let cfg = config::Bar::default();
+        let mut ws = Workspaces::new(&cfg);
+        ws.update(
+            3,
+            1,
+            Some(vec!["web".into(), "code".into()]),
+            vec![true, false],
+        );
+        assert_eq!(ws.offset, 3);
+        assert_eq!(ws.active, 1);
+        assert_eq!(ws.names, vec!["web", "code"]);
+        assert_eq!(ws.occupied, vec![true, false]);
     }
 
     #[test]
