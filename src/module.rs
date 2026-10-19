@@ -632,11 +632,11 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
             chunk
                 .iter()
                 .map(|c| match c {
-                    Some(d) => format!("{d:>2}"),
-                    None => "  ".to_string(),
+                    Some(d) => format!("{d:>3}"),
+                    None => "   ".to_string(),
                 })
                 .collect::<Vec<_>>()
-                .join("  "),
+                .join(" "),
         );
     }
     rows
@@ -758,11 +758,11 @@ mod tests {
 
     #[test]
     fn calendar_has_full_weeks() {
-        // Seven cells per row, two spaces between them, two characters each:
-        // 7 * 2 + 6 * 2 = 26 characters.
+        // Seven cells per row, one space between them, three characters each:
+        // 7 * 3 + 6 = 27 characters, matching the Mon..Sun header.
         for m in 1..=12 {
             for r in month_grid(2026, m) {
-                assert_eq!(r.chars().count(), 26, "row {:?} in month {m}", r);
+                assert_eq!(r.chars().count(), 27, "row {:?} in month {m}", r);
             }
         }
     }

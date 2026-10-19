@@ -294,13 +294,13 @@ impl Popup {
     }
 }
 
-/// Calendar for the current month, Monday first.
+/// Calendar for the current month, Monday first, English short weekdays.
 pub fn calendar(date_format: &str) -> (String, Vec<String>) {
     let now = Local::now();
     let title = format!("{} {:04}", month_name(now.month()), now.year());
     let mut lines = vec![format!("today: {}", now.format(date_format))];
     lines.push(String::new());
-    lines.push("mo  tu  we  th  fr  sa  su".to_string());
+    lines.push("Mon Tue Wed Thu Fri Sat Sun".to_string());
     lines.extend(crate::module::month_grid(now.year(), now.month()));
     (title, lines)
 }
@@ -331,7 +331,7 @@ mod tests {
     fn calendar_title_has_a_month_name() {
         let (title, lines) = calendar("%Y-%m-%d");
         assert!(title.contains(&Local::now().year().to_string()));
-        assert!(lines.iter().any(|l| l.starts_with("mo")));
+        assert!(lines.iter().any(|l| l.starts_with("Mon")));
     }
 
     #[test]
