@@ -447,6 +447,8 @@ pub struct Pulse {
     samples: Vec<crate::pulse::Sample>,
     width: usize,
     pub icons: status::Icons,
+    last_sample: std::time::Instant,
+    sample: crate::pulse::Sample,
 }
 
 impl Pulse {
@@ -456,7 +458,24 @@ impl Pulse {
             samples: Vec::new(),
             width: width.clamp(6, 60),
             icons,
+            last_sample: std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(2))
+                .unwrap_or_else(std::time::Instant::now),
+            sample: crate::pulse::Sample::default(),
         }
+    }
+
+    /// Sample at most once a second, independent of how often the bar repaints.
+    fn update(&mut self) {
+        if self.last_sample.elapsed() >= std::time::Duration::from_secs(1) {
+            self.sample = self.take();
+            self.last_sample = std::time::Instant::now();
+        }
+    }
+
+    #[cfg(test)]
+    fn sample_count(&self) -> usize {
+        self.samples.len()
     }
 
     fn take(&mut self) -> crate::pulse::Sample {
@@ -480,11 +499,12 @@ impl Module for Pulse {
         Side::Right
     }
     fn render(&mut self) -> String {
-        let sample = self.take();
-        format!("{} {}", self.icons.cpu, crate::pulse::summary(sample))
+        self.update();
+        format!("{} {}", self.icons.cpu, crate::pulse::summary(self.sample))
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let sample = self.samples.last().copied().unwrap_or_default();
+        self.update();
+        let sample = self.sample;
         let rows = crate::pulse::graph_rows(&self.samples, self.width.min(40));
         Some((
             "Load".into(),
@@ -765,6 +785,19 @@ mod tests {
                 assert_eq!(r.chars().count(), 27, "row {:?} in month {m}", r);
             }
         }
+    }
+
+    #[test]
+    fn pulse_samples_once_per_second_not_once_per_repaint() {
+        let mut pulse = Pulse::new(10, status::Icons::plain());
+        for _ in 0..50 {
+            let _ = pulse.render();
+        }
+        assert_eq!(
+            pulse.sample_count(),
+            1,
+            "fast repaints multiplied /proc and filesystem samples"
+        );
     }
 
     #[test]

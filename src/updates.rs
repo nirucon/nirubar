@@ -80,10 +80,18 @@ pub fn query() -> Option<usize> {
     if !which(program) {
         return None;
     }
-    let out = Command::new(program).args(args).output().ok()?;
-    // `xbps-install -un` and `pacman -Qu` exit non-zero when nothing is to be
-    // done; `apt` always succeeds. Neither is an error here.
+    let out = Command::new(program)
+        .args(args)
+        .env("LC_ALL", "C")
+        .env("LANG", "C")
+        .output()
+        .ok()?;
+    // `pacman -Qu` exits non-zero with no output when nothing is to be done;
+    // a failed query with a diagnostic is different and must not show "0".
     let text = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() && text.trim().is_empty() && !out.stderr.is_empty() {
+        return None;
+    }
     let count = match manager {
         Manager::Apt => text
             .lines()

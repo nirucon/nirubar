@@ -24,6 +24,16 @@ fn run(program: &str, args: &[&str]) -> Option<String> {
     }
 }
 
+/// Parse the first `[NN%]` from `amixer get` output.
+///
+/// A plain `split('[')` followed by `ends_with("%]")` failed on the real
+/// `"[45%] [on]"` line, where the first segment also contains `"[on]"`.
+fn parse_amixer_percent(text: &str) -> Option<u32> {
+    text.split('[')
+        .skip(1)
+        .find_map(|part| part.split("%]").next()?.trim().parse::<u32>().ok())
+}
+
 fn which(program: &str) -> bool {
     std::env::var("PATH")
         .map(|p| {
@@ -65,12 +75,7 @@ impl Volume {
         }
         if which("amixer") {
             if let Some(text) = run("amixer", &["get", "Master"]) {
-                // "[45%] [on]" or "[45%] [off]"
-                let percent = text
-                    .split('[')
-                    .find(|p| p.ends_with("%]"))
-                    .map(|p| p.trim_end_matches("%]"))
-                    .and_then(|p| p.parse::<u32>().ok())?;
+                let percent = parse_amixer_percent(&text)?;
                 let muted = text.contains("[off]");
                 return Some(Self { percent, muted });
             }
@@ -441,6 +446,13 @@ mod tests {
         // A font that draws nothing: every icon comes from the plain set.
         let icons = volume_icons(|_| false, true);
         assert!(icons.high.is_ascii());
+    }
+
+    #[test]
+    fn amixer_output_parses_real_world_lines() {
+        assert_eq!(parse_amixer_percent("[45%] [on]"), Some(45));
+        assert_eq!(parse_amixer_percent("[100%] [off]"), Some(100));
+        assert_eq!(parse_amixer_percent("no level"), None);
     }
 
     #[test]

@@ -98,7 +98,7 @@ halfway between them, rather than a `|` character, which was as loud as the
 text it separated.
 
 `pulse` draws cpu, memory and the fullest filesystem as block characters.
-Its sampling currently follows redraws; fixed-cadence sampling is planned.
+It samples at most once per second regardless of animation/repaint rate.
 `uptime` adds two numbers in its panel that the rest of the bar does not show:
 memory in use and the fullest filesystem.
 
