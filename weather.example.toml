@@ -1,0 +1,10 @@
+# NIRUBAR weather settings.
+# Location: ~/.config/nirubar/config.toml (or $XDG_CONFIG_HOME/nirubar/).
+# Add "weather" to [bar] modules in the shared niruwm config to show it.
+
+[weather]
+location = "Ljungskile"
+latitude = 58.22
+longitude = 11.93
+# Refresh interval in minutes. 30 is the default; stale data stays visible.
+refresh_minutes = 30

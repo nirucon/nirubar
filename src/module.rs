@@ -4,7 +4,7 @@
 //! A module produces text (and optionally a popup with more detail) and knows
 //! its own width, so adding one later does not touch the layout code.
 
-use crate::{ambient, av, config, status, updates};
+use crate::{ambient, av, config, status, updates, weather};
 use chrono::Datelike;
 
 /// Where a module sits on the bar.
@@ -624,6 +624,36 @@ impl Module for Brightness {
 }
 
 /// When the sun rises and sets, from `latitude` and `longitude`.
+pub struct WeatherModule {
+    weather: weather::Weather,
+}
+
+impl WeatherModule {
+    pub fn new(full: &config::Config) -> Self {
+        Self {
+            weather: weather::Weather::new(weather::settings(
+                full.weather_latitude,
+                full.weather_longitude,
+            )),
+        }
+    }
+}
+
+impl Module for WeatherModule {
+    fn name(&self) -> &'static str {
+        "weather"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.weather.summary()
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some(self.weather.panel())
+    }
+}
+
 pub struct Sun {
     pub latitude: f64,
     pub longitude: f64,
@@ -702,6 +732,7 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
             "pulse" => out.push(Box::new(Pulse::new(cfg.graph_width, icons))),
             "uptime" => out.push(Box::new(Uptime { icons })),
             "brightness" => out.push(Box::new(Brightness { icons })),
+            "weather" => out.push(Box::new(WeatherModule::new(full))),
             "sun" => out.push(Box::new(Sun {
                 latitude: full.weather_latitude,
                 longitude: full.weather_longitude,
@@ -822,6 +853,7 @@ mod tests {
                         | "pulse"
                         | "uptime"
                         | "sun"
+                        | "weather"
                         | "brightness"
                 ),
                 "example config names an unknown module {name:?}"
@@ -835,9 +867,10 @@ mod tests {
             "pulse".into(),
             "uptime".into(),
             "sun".into(),
+            "weather".into(),
             "clock".into(),
         ];
-        assert_eq!(build(&all, status::Icons::plain()).len(), 4);
+        assert_eq!(build(&all, status::Icons::plain()).len(), 5);
     }
 
     #[test]

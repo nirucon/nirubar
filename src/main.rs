@@ -19,6 +19,7 @@ mod scroll;
 mod status;
 mod tray;
 mod updates;
+mod weather;
 
 use config::{Config, Result, Theme};
 use libc::{poll, pollfd as PollFd, read as libc_read, write as libc_write};

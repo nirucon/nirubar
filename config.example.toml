@@ -117,6 +117,8 @@ enabled = true
 #
 # `volume` and `media` need wpctl (or amixer) and playerctl; `updates` needs
 # the package manager it finds. Each says what is missing when clicked.
+# Add "weather" (and optionally "sun") to enable the information panels.
+# Weather settings live in ~/.config/nirubar/config.toml; see weather.example.toml.
 modules = ["workspaces", "media", "volume", "brightness", "network", "updates", "battery", "clock"]
 # Workspace labels. Shown instead of 1..9. Fewer than nine entries is fine:
 # the rest keep their number. Glyphs and words both work.
