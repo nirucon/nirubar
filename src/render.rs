@@ -425,7 +425,11 @@ fn split(colour: u32) -> (u32, u32, u32) {
 /// plain-text labels, so this never prevents the bar from starting.
 fn load_fallback() -> Option<FontArc> {
     if let Ok(out) = std::process::Command::new("fc-match")
-        .args(["-f", "%{file}", "Symbols Nerd Font Mono,Symbols Nerd Font"])
+        .args([
+            "-f",
+            "%{file}",
+            "Symbols Nerd Font Mono,Symbols Nerd Font,Font Awesome 6 Free,Font Awesome,FontAwesome",
+        ])
         .output()
     {
         if out.status.success() {
@@ -442,6 +446,8 @@ fn load_fallback() -> Option<FontArc> {
     for p in [
         "/usr/share/fonts/NerdFonts/ttf/symbols/SymbolsNerdFontMono-Regular.ttf",
         "/usr/share/fonts/NerdFonts/ttf/symbols/SymbolsNerdFont-Regular.ttf",
+        "/usr/share/fonts/truetype/font-awesome/fontawesome-webfont.ttf",
+        "/usr/share/fonts/font-awesome/fontawesome-webfont.ttf",
     ] {
         if let Ok(bytes) = std::fs::read(p) {
             if let Ok(font) = FontArc::try_from_vec(bytes) {
