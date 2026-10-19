@@ -35,6 +35,8 @@ pub struct Icons {
     pub uptime: &'static str,
     /// The `brightness` module.
     pub brightness: &'static str,
+    /// The optional unread-indicator module.
+    pub notifications: &'static str,
 }
 
 impl Icons {
@@ -61,6 +63,7 @@ impl Icons {
             sun: "\u{f185}",     // nf-fa-sun_o
             uptime: "\u{f017}",  // nf-fa-clock_o
             brightness: "\u{f185}", // sun; brightness is a display property
+            notifications: "\u{f0f3}", // nf-fa-bell
         }
     }
 
@@ -82,6 +85,7 @@ impl Icons {
             sun: "sun",
             uptime: "up",
             brightness: "bri",
+            notifications: "ntf",
         }
     }
 }

@@ -624,6 +624,91 @@ impl Module for Brightness {
 }
 
 /// When the sun rises and sets, from `latitude` and `longitude`.
+pub struct Notifications {
+    pub icons: status::Icons,
+    sample: Sample<usize>,
+}
+
+fn notification_count() -> Option<usize> {
+    let out = crate::probe::run(
+        "nirunotify",
+        &["--count"],
+        &[],
+        std::time::Duration::from_secs(1),
+        64,
+    )?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+fn notification_history() -> Vec<String> {
+    let Some(out) = crate::probe::run(
+        "nirunotify",
+        &["--history"],
+        &[],
+        std::time::Duration::from_secs(1),
+        65536,
+    ) else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .take(10)
+        .map(|line| {
+            let mut fields = line.splitn(4, '\t');
+            let _id = fields.next();
+            let app = fields.next().unwrap_or("");
+            let summary = fields.next().unwrap_or("");
+            let body = fields.next().unwrap_or("");
+            if body.is_empty() {
+                format!("{app}: {summary}")
+            } else {
+                format!("{app}: {summary} — {body}")
+            }
+        })
+        .collect()
+}
+
+impl Notifications {
+    pub fn new(icons: status::Icons) -> Self {
+        Self {
+            icons,
+            sample: Sample::default(),
+        }
+    }
+}
+
+impl Module for Notifications {
+    fn name(&self) -> &'static str {
+        "notifications"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        match self.sample.get(notification_count) {
+            Some(0) | None => String::new(),
+            Some(n) => format!("{} {n}", self.icons.notifications),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let history = notification_history();
+        let mut lines = if history.is_empty() {
+            vec!["no notifications".to_string()]
+        } else {
+            history
+        };
+        lines.push(String::new());
+        lines.push("nirunotify --dnd toggle".to_string());
+        Some(("Notifications".into(), lines))
+    }
+}
+
 pub struct WeatherModule {
     weather: weather::Weather,
 }
@@ -733,6 +818,7 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
             "uptime" => out.push(Box::new(Uptime { icons })),
             "brightness" => out.push(Box::new(Brightness { icons })),
             "weather" => out.push(Box::new(WeatherModule::new(full))),
+            "notifications" => out.push(Box::new(Notifications::new(icons))),
             "sun" => out.push(Box::new(Sun {
                 latitude: full.weather_latitude,
                 longitude: full.weather_longitude,
@@ -854,6 +940,7 @@ mod tests {
                         | "uptime"
                         | "sun"
                         | "weather"
+                        | "notifications"
                         | "brightness"
                 ),
                 "example config names an unknown module {name:?}"
@@ -868,9 +955,10 @@ mod tests {
             "uptime".into(),
             "sun".into(),
             "weather".into(),
+            "notifications".into(),
             "clock".into(),
         ];
-        assert_eq!(build(&all, status::Icons::plain()).len(), 5);
+        assert_eq!(build(&all, status::Icons::plain()).len(), 6);
     }
 
     #[test]
