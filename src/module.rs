@@ -242,9 +242,6 @@ impl Module for Volume {
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        // Clicking toggles mute: the most useful thing a volume icon can do.
-        av::Volume::toggle_mute();
-        self.sample.checked = None;
         let lines = match av::Volume::read() {
             Some(v) => vec![
                 if v.muted {
@@ -252,8 +249,6 @@ impl Module for Volume {
                 } else {
                     format!("{}%", v.percent)
                 },
-                String::new(),
-                "click to mute or unmute".to_string(),
                 String::new(),
                 "media keys: volume up, down, mute".to_string(),
             ],
@@ -342,9 +337,6 @@ impl Module for Media {
         self.progress
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        // Clicking plays or pauses.
-        av::Media::toggle();
-        self.sample.checked = None;
         let lines = match av::Media::read() {
             Some(m) => vec![
                 m.title.clone(),
@@ -355,7 +347,7 @@ impl Module for Media {
                 } else {
                     "paused".to_string()
                 },
-                "click to play or pause".to_string(),
+                "use player controls or media keys for playback".to_string(),
             ],
             None => vec![
                 "no player running".to_string(),

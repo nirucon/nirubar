@@ -74,14 +74,20 @@ impl Renderer {
             bar_height: height,
             ..Config::default()
         };
-        let mut r = Self::new(c, root, &cfg, width)?;
-        // Point every draw at the window instead of the pixmap.
-        r.back = target;
-        r.direct = true;
-        Ok(r)
+        Self::create(c, root, &cfg, width, Some(target))
     }
 
     pub fn new(c: &RustConnection, root: Window, cfg: &Config, width: u16) -> Result<Self> {
+        Self::create(c, root, cfg, width, None)
+    }
+
+    fn create(
+        c: &RustConnection,
+        root: Window,
+        cfg: &Config,
+        width: u16,
+        target: Option<Window>,
+    ) -> Result<Self> {
         let font = load_font(cfg)?;
         let depth = c.get_geometry(root)?.reply()?.depth;
         if ![24, 32].contains(&depth)
@@ -97,8 +103,14 @@ impl Renderer {
         let advance = scaled.h_advance(font.glyph_id('M')).ceil() as i16;
         let line_height = scaled.height().ceil() as i16;
         let ascent = scaled.ascent();
-        let back = c.generate_id()?;
-        c.create_pixmap(depth, back, root, width.max(1), cfg.bar_height)?;
+        let back = match target {
+            Some(window) => window,
+            None => {
+                let pixmap = c.generate_id()?;
+                c.create_pixmap(depth, pixmap, root, width.max(1), cfg.bar_height)?;
+                pixmap
+            }
+        };
         Ok(Self {
             font,
             size: cfg.font_size,
@@ -111,8 +123,16 @@ impl Renderer {
             back_width: width.max(1),
             height: cfg.bar_height,
             masks: HashMap::new(),
-            direct: false,
+            direct: target.is_some(),
         })
+    }
+
+    /// Release owned server storage before replacing a renderer on this connection.
+    pub fn release(&self, c: &RustConnection) -> Result<()> {
+        if !self.direct {
+            c.free_pixmap(self.back)?;
+        }
+        Ok(())
     }
 
     /// Resize the backing pixmap when the bar width or height changes.

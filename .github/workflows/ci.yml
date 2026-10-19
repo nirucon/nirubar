@@ -12,8 +12,9 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
-      - run: sudo apt-get update && sudo apt-get install -y xvfb xfonts-base
-      - run: xvfb-run -a cargo test --locked --test x11 -- --ignored --test-threads=1
+      - run: sh tests/install-smoke.sh
+      - run: sudo apt-get update && sudo apt-get install -y xvfb xfonts-base fonts-dejavu-core xdotool
+      - run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' cargo test --locked --test x11 -- --ignored --test-threads=1
       - name: Bound probes while media is scrolling
         run: sh tests/resource-check.sh "$PWD/target/release/nirubar"
 

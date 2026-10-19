@@ -786,7 +786,10 @@ impl Bar {
     fn reload(&mut self) -> Result<()> {
         let cfg = Config::load()?;
         let theme = Theme::load(&cfg.theme)?;
-        self.renderer = render::Renderer::new(&self.c, self.root, &cfg, self.width)?;
+        let renderer = render::Renderer::new(&self.c, self.root, &cfg, self.width)?;
+        self.close_popup()?;
+        self.renderer.release(&self.c)?;
+        self.renderer = renderer;
         self.c.configure_window(
             self.win,
             &ConfigureWindowAux::new().height(u32::from(cfg.bar_height)),
