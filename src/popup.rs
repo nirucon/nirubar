@@ -36,6 +36,12 @@ pub struct Popup {
     y: i16,
     width: u16,
     height: u16,
+    title: String,
+    lines: Vec<String>,
+    font_size: f32,
+    font_path: Option<String>,
+    /// Focus owner before the panel took focus; restored when it closes.
+    previous_focus: (Window, InputFocus),
 }
 
 impl Popup {
@@ -49,6 +55,10 @@ impl Popup {
         font_size: f32,
         font_path: Option<&str>,
         module: usize,
+        bar_x: i16,
+        bar_y: i16,
+        bar_width: u16,
+        bar_window: Window,
         origin_x: i16,
         title: &str,
         lines: &[String],
@@ -57,14 +67,16 @@ impl Popup {
         let line_height = (font_size * 1.5).ceil() as u16;
         let width: u16 = 340;
         let height = line_height * (lines.len() as u16 + 2) + 14;
-        // Keep the panel on screen: one for the rightmost module would
-        // otherwise be clipped at the edge and look empty.
-        let screen_width = c.setup().roots[0].width_in_pixels;
-        let x = origin_x
-            .min(i16::try_from(screen_width.saturating_sub(width)).unwrap_or(0))
-            .max(0);
-        let y = bar_height as i16;
+        // Root coordinates, clamped inside the bar's physical monitor.
+        let max_x = i32::from(bar_x) + i32::from(bar_width) - i32::from(width);
+        let x = (i32::from(bar_x) + i32::from(origin_x))
+            .clamp(i32::from(bar_x), max_x.max(i32::from(bar_x))) as i16;
+        let root_geometry = c.get_geometry(root)?.reply()?;
+        let max_y = i32::from(root_geometry.height) - i32::from(height);
+        let y = (i32::from(bar_y) + i32::from(bar_height)).min(max_y.max(0)) as i16;
+        let previous_focus = c.get_input_focus()?.reply()?;
 
+        let screen_width = c.setup().roots[0].width_in_pixels;
         let screen_height = c.setup().roots[0].height_in_pixels;
         let win = c.generate_id()?;
         let gc = c.generate_id()?;
@@ -82,13 +94,18 @@ impl Popup {
             screen_width,
             screen_height,
             0,
-            WindowClass::INPUT_OUTPUT,
+            WindowClass::INPUT_ONLY,
             0,
             &CreateWindowAux::new()
                 .override_redirect(1)
                 .event_mask(EventMask::BUTTON_PRESS),
         )?;
         c.map_window(catch)?;
+        // The input-only catcher never paints, and the bar stays clickable above it.
+        c.configure_window(
+            bar_window,
+            &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+        )?;
         let bg = Theme::pixel(&theme.background)?;
         c.create_window(
             0,
@@ -133,8 +150,9 @@ impl Popup {
                 .ok()
                 .and_then(|cookie| cookie.check().ok());
         }
-        c.set_input_focus(InputFocus::PARENT, win, x11rb::CURRENT_TIME)?;
+        // Map before focusing: a focus request on an unmapped window is ignored.
         c.map_window(win)?;
+        c.set_input_focus(InputFocus::PARENT, win, x11rb::CURRENT_TIME)?;
         c.flush()?;
 
         // The panel must be above the catch window.
@@ -150,6 +168,11 @@ impl Popup {
             y,
             width,
             height,
+            title: title.to_string(),
+            lines: lines.to_vec(),
+            font_size,
+            font_path: font_path.map(str::to_string),
+            previous_focus: (previous_focus.focus, previous_focus.revert_to),
         };
         popup.paint(c, root, theme, font_size, font_path, title, lines)?;
         Ok(popup)
@@ -192,6 +215,19 @@ impl Popup {
         Ok(())
     }
 
+    /// Repaint retained content after an Expose without losing the panel.
+    pub fn repaint(&self, c: &RustConnection, root: Window, theme: &Theme) -> Result<()> {
+        self.paint(
+            c,
+            root,
+            theme,
+            self.font_size,
+            self.font_path.as_deref(),
+            &self.title,
+            &self.lines,
+        )
+    }
+
     /// True when a pointer position is inside the panel.
     fn contains(&self, x: i16, y: i16) -> bool {
         x >= self.x
@@ -218,6 +254,10 @@ impl Popup {
         c.destroy_window(self.win)?;
         c.destroy_window(self.catch)?;
         c.free_gc(self.gc)?;
+        let (window, revert) = self.previous_focus;
+        if window > 1 {
+            let _ = c.set_input_focus(revert, window, x11rb::CURRENT_TIME);
+        }
         c.flush()?;
         Ok(())
     }

@@ -33,7 +33,7 @@ niructl reload
 niructl restart-bar
 ```
 
-**0.16.7:** target-correct filesystem bindings, popup/reload pixmap cleanup and
+**0.16.8:** target-correct filesystem bindings, popup/reload pixmap cleanup and
 information-only volume/media clicks. Playback and volume use explicit player
 controls/media keys. Per-monitor bars, improved panels, weather and fixed-cadence
 background probes remain in the [roadmap](https://github.com/nirucon/nirux/blob/main/ROADMAP.md).

@@ -750,6 +750,10 @@ impl Bar {
                 self.cfg.font_size,
                 self.cfg.font_path.as_deref(),
                 index,
+                self.bar_x,
+                self.bar_y,
+                self.width,
+                self.win,
                 left,
                 &title,
                 &lines,
@@ -874,6 +878,10 @@ impl Bar {
                 // Escape is grabbed at the root, so it arrives with the root as
                 // its window, not the panel's. A click inside the panel has the
                 // panel as its window. Both belong to the open panel.
+                if event_is_from(&event, p.window()) && matches!(event, Event::Expose(_)) {
+                    p.repaint(&self.c, self.root, &self.theme)?;
+                    continue;
+                }
                 if event_is_from(&event, p.window())
                     || event_is_from(&event, p.catch_window())
                     || event_is_from(&event, self.root) && is_dismiss_key(&event)

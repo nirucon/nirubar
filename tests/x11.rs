@@ -176,6 +176,124 @@ fn popup_and_reload_cycles_release_server_pixmaps() {
     );
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated X server, font and xdotool"]
+fn popup_uses_monitor_coordinates_focus_and_restores_focus() {
+    let directory = std::env::temp_dir().join(format!("nirubar-popup-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "[bar]\nmodules = [\"clock\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .args(["--monitor", "800,100,800"])
+            .spawn()
+            .unwrap(),
+    );
+    let selection = c
+        .intern_atom(false, b"_NIRUBAR_SELECTION")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut win = 0;
+    while win == 0 {
+        win = c
+            .get_selection_owner(selection)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .owner;
+        assert!(Instant::now() < until, "bar did not start");
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(100));
+    let spy = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        spy,
+        root,
+        0,
+        0,
+        10,
+        10,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    c.map_window(spy).unwrap();
+    c.set_input_focus(InputFocus::PARENT, spy, x11rb::CURRENT_TIME)
+        .unwrap();
+    let baseline = c.query_tree(root).unwrap().reply().unwrap().children.len();
+    c.send_event(
+        false,
+        win,
+        EventMask::BUTTON_PRESS,
+        ButtonPressEvent {
+            response_type: BUTTON_PRESS_EVENT,
+            detail: 1,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root,
+            event: win,
+            child: 0,
+            root_x: 1540,
+            root_y: 110,
+            event_x: 740,
+            event_y: 10,
+            state: KeyButMask::default(),
+            same_screen: true,
+        },
+    )
+    .unwrap();
+    c.flush().unwrap();
+    let mut focused = spy;
+    let until = Instant::now() + Duration::from_secs(5);
+    while focused == spy || focused == 0 || focused == root {
+        focused = c.get_input_focus().unwrap().reply().unwrap().focus;
+        assert!(Instant::now() < until, "popup never received focus");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let geometry = c.get_geometry(focused).unwrap().reply().unwrap();
+    assert_eq!(geometry.width, 340);
+    assert!(
+        geometry.x >= 800 && geometry.x + 340 <= 1600,
+        "popup escaped its monitor: {geometry:?}"
+    );
+    assert!(
+        geometry.y >= 100,
+        "popup used screen, not bar, coordinates: {geometry:?}"
+    );
+    assert!(Command::new("xdotool")
+        .args(["key", "Escape"])
+        .status()
+        .unwrap()
+        .success());
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        if c.query_tree(root).unwrap().reply().unwrap().children.len() == baseline {
+            break;
+        }
+        assert!(Instant::now() < until, "popup did not close");
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        c.get_input_focus().unwrap().reply().unwrap().focus,
+        spy,
+        "popup did not restore the previous focus"
+    );
+    drop(bar);
+    std::fs::remove_dir_all(directory).unwrap();
+}
 #[test]
 #[ignore = "requires isolated X server and a TrueType font"]
 fn dock_strut_render_and_singleton() {
