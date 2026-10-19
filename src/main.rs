@@ -20,6 +20,7 @@ mod tray;
 mod updates;
 
 use config::{Config, Result, Theme};
+use libc::{poll, pollfd as PollFd, read as libc_read, write as libc_write};
 
 /// Which monitor this bar belongs to, read with `--monitor`.
 #[derive(Clone, Debug)]
@@ -61,17 +62,6 @@ use x11rb::{
 /// Horizontal space reserved per drawn module, in characters of padding.
 const MODULE_PAD: i16 = 2;
 
-#[repr(C)]
-struct PollFd {
-    fd: i32,
-    events: i16,
-    revents: i16,
-}
-
-extern "C" {
-    fn poll(fds: *mut PollFd, nfds: u64, timeout: i32) -> i32;
-}
-
 /// A pipe whose readable end becomes ready when a signal arrives.
 static EXIT_PIPE: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
 
@@ -86,27 +76,23 @@ extern "C" fn on_exit_signal(_sig: i32) {
     }
 }
 
-extern "C" {
-    fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
-    #[link_name = "write"]
-    fn libc_write(fd: i32, buf: *const std::ffi::c_void, count: usize) -> isize;
-    fn pipe(fds: *mut i32) -> i32;
-}
-
-const SIGINT: i32 = 2;
-const SIGTERM: i32 = 15;
-
 /// Create the signal pipe. Returns (read, write).
 fn install_exit_signal() -> Result<(i32, i32)> {
     let mut fds = [0i32; 2];
     // SAFETY: `fds` is a valid two-element array.
-    if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
         return Err("cannot create the signal pipe".into());
     }
     let _ = EXIT_PIPE.set((fds[0], fds[1]));
     unsafe {
-        signal(SIGTERM, on_exit_signal);
-        signal(SIGINT, on_exit_signal);
+        libc::signal(
+            libc::SIGTERM,
+            on_exit_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGINT,
+            on_exit_signal as *const () as libc::sighandler_t,
+        );
     }
     Ok((fds[0], fds[1]))
 }
@@ -129,11 +115,6 @@ fn exit_requested(read_fd: i32) -> bool {
         return true;
     }
     false
-}
-
-extern "C" {
-    #[link_name = "read"]
-    fn libc_read(fd: i32, buf: *mut std::ffi::c_void, count: usize) -> isize;
 }
 
 /// Wait for either the X socket or the exit pipe.

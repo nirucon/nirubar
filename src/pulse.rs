@@ -138,52 +138,29 @@ pub fn disk_percent() -> Option<u8> {
     Some(worst)
 }
 
+use libc::statvfs;
+type StatVfs = libc::statvfs;
+
 /// Used percentage of one mounted filesystem, using `statvfs`.
 fn filesystem_percent(path: &Path) -> Option<u8> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
     let c = CString::new(path.as_os_str().as_bytes()).ok()?;
-    // `statvfs` is in libc, which Rust already links on Linux. The struct is
-    // defined here rather than pulled in as a dependency.
-    #[repr(C)]
-    struct StatVfs {
-        block_size: u64,
-        fragment_size: u64,
-        blocks: u64,
-        free_blocks: u64,
-        available_blocks: u64,
-        files: u64,
-        free_files: u64,
-        available_files: u64,
-        filesystem_id: u64,
-        mount_flags: u64,
-        maximum_name_length: u64,
-    }
-    extern "C" {
-        fn statvfs(path: *const std::os::raw::c_char, buf: *mut StatVfs) -> std::os::raw::c_int;
-    }
-    let mut buf = StatVfs {
-        block_size: 0,
-        fragment_size: 0,
-        blocks: 0,
-        free_blocks: 0,
-        available_blocks: 0,
-        files: 0,
-        free_files: 0,
-        available_files: 0,
-        filesystem_id: 0,
-        mount_flags: 0,
-        maximum_name_length: 0,
-    };
+    let mut buf = std::mem::MaybeUninit::<StatVfs>::uninit();
     // SAFETY: `c` is a valid NUL-terminated path and `buf` points to a
     // correctly sized struct that lives for the call.
-    let rc = unsafe { statvfs(c.as_ptr(), &mut buf) };
-    if rc != 0 || buf.blocks == 0 {
+    let rc = unsafe { statvfs(c.as_ptr(), buf.as_mut_ptr()) };
+    if rc != 0 {
         return None;
     }
-    let used = buf.blocks.saturating_sub(buf.free_blocks);
-    Some(((used.saturating_mul(100)) / buf.blocks).min(100) as u8)
+    // SAFETY: a successful statvfs initializes the target-specific libc type.
+    let buf = unsafe { buf.assume_init() };
+    if buf.f_blocks == 0 {
+        return None;
+    }
+    let used = buf.f_blocks.saturating_sub(buf.f_bfree);
+    Some(((used.saturating_mul(100)) / buf.f_blocks).min(100) as u8)
 }
 
 /// Take one sample, given the counters read at the same moment.
@@ -221,6 +198,42 @@ pub fn summary(s: Sample) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filesystem_query_does_not_overwrite_adjacent_storage() {
+        // The old handwritten ABI omitted libc's reserved fields. Keep enough
+        // enclosing storage even for that broken declaration so the regression
+        // observes the overwrite without writing outside the allocation.
+        #[repr(C)]
+        struct Guarded {
+            stats: std::mem::MaybeUninit<StatVfs>,
+            guard: [u8; 64],
+        }
+        let mut storage = Guarded {
+            stats: std::mem::MaybeUninit::uninit(),
+            guard: [0xa5; 64],
+        };
+        let path = std::ffi::CString::new("/").unwrap();
+        // SAFETY: storage includes space for the target ABI and a trailing
+        // canary; the path is NUL terminated and both outlive the call.
+        assert_eq!(
+            unsafe { statvfs(path.as_ptr(), storage.stats.as_mut_ptr()) },
+            0
+        );
+        assert_eq!(
+            storage.guard, [0xa5; 64],
+            "filesystem ABI overwrote adjacent storage"
+        );
+    }
+
+    #[test]
+    fn filesystem_query_handles_present_and_missing_paths() {
+        assert!(filesystem_percent(Path::new("/")).is_some_and(|n| n <= 100));
+        assert_eq!(
+            filesystem_percent(Path::new("/proc/self/niru-missing-mount")),
+            None
+        );
+    }
 
     #[test]
     fn cpu_percentage_is_the_share_of_busy_time() {

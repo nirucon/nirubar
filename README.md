@@ -115,7 +115,10 @@ Check a file without applying it with `nirubar --check-config`.
 
 ## Status
 
-Version 0.16.5. Missing: per-monitor bars in this release.
+Version 0.16.6. Missing: per-monitor bars in this release.
+
+Filesystem statistics use target-correct libc bindings. Regression checks cover
+adjacent storage on glibc and the shipping musl target.
 
 Part of a personal desktop for the author's own use; others are welcome to try it.
 [Roadmap](https://github.com/nirucon/nirux/blob/main/ROADMAP.md).
