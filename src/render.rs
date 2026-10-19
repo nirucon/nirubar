@@ -29,6 +29,9 @@ struct Mask {
 
 pub struct Renderer {
     font: FontArc,
+    /// Icons-only font used when the text font lacks a glyph (Nerd Fonts
+    /// symbols package). Kept separate so the text remains the user's mono font.
+    fallback: Option<FontArc>,
     size: f32,
     /// Advance of one character cell. The bar is monospaced on purpose.
     pub advance: i16,
@@ -53,6 +56,10 @@ impl Renderer {
     /// `ab_glyph` reports glyph id 0 for characters the font does not cover.
     pub fn has_glyph(&self, ch: char) -> bool {
         self.font.glyph_id(ch).0 != 0
+            || self
+                .fallback
+                .as_ref()
+                .is_some_and(|f| f.glyph_id(ch).0 != 0)
     }
 
     /// A renderer that draws straight onto `target` with no backing pixmap.
@@ -89,6 +96,7 @@ impl Renderer {
         target: Option<Window>,
     ) -> Result<Self> {
         let font = load_font(cfg)?;
+        let fallback = load_fallback();
         let depth = c.get_geometry(root)?.reply()?.depth;
         if ![24, 32].contains(&depth)
             || !c
@@ -113,6 +121,7 @@ impl Renderer {
         };
         Ok(Self {
             font,
+            fallback,
             size: cfg.font_size,
             advance,
             line_height,
@@ -295,14 +304,21 @@ impl Renderer {
                 y: 0,
                 coverage: Vec::new(),
             };
-            let id = self.font.glyph_id(ch);
+            let (font, id) = if self.font.glyph_id(ch).0 != 0 {
+                (&self.font, self.font.glyph_id(ch))
+            } else {
+                match &self.fallback {
+                    Some(f) if f.glyph_id(ch).0 != 0 => (f, f.glyph_id(ch)),
+                    _ => (&self.font, self.font.glyph_id(ch)),
+                }
+            };
             // Rasterise on the baseline at (0, 0). `outline.draw` yields
             // coverage samples indexed from the glyph's own top-left corner,
             // while `px_bounds` says where that corner sits relative to the
             // pen. Mixing the two double-applies the offset and clips every
             // glyph; they are kept strictly separate here.
             let glyph = id.with_scale_and_position(self.size, point(0.0, 0.0));
-            if let Some(outline) = self.font.outline_glyph(glyph) {
+            if let Some(outline) = font.outline_glyph(glyph) {
                 let bounds = outline.px_bounds();
                 let w = bounds.width().ceil() as u16;
                 let h = bounds.height().ceil() as u16;
@@ -403,6 +419,37 @@ impl Renderer {
 
 fn split(colour: u32) -> (u32, u32, u32) {
     ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255)
+}
+
+/// An optional icons-only font. A missing symbols package just falls back to
+/// plain-text labels, so this never prevents the bar from starting.
+fn load_fallback() -> Option<FontArc> {
+    if let Ok(out) = std::process::Command::new("fc-match")
+        .args(["-f", "%{file}", "Symbols Nerd Font Mono,Symbols Nerd Font"])
+        .output()
+    {
+        if out.status.success() {
+            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !p.is_empty() {
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(font) = FontArc::try_from_vec(bytes) {
+                        return Some(font);
+                    }
+                }
+            }
+        }
+    }
+    for p in [
+        "/usr/share/fonts/NerdFonts/ttf/symbols/SymbolsNerdFontMono-Regular.ttf",
+        "/usr/share/fonts/NerdFonts/ttf/symbols/SymbolsNerdFont-Regular.ttf",
+    ] {
+        if let Ok(bytes) = std::fs::read(p) {
+            if let Ok(font) = FontArc::try_from_vec(bytes) {
+                return Some(font);
+            }
+        }
+    }
+    None
 }
 
 /// Find a monospaced font, and say which ones were tried when none is there.
