@@ -188,7 +188,6 @@ impl Default for Bar {
                 "volume".into(),
                 "brightness".into(),
                 "network".into(),
-                "updates".into(),
                 "battery".into(),
                 "clock".into(),
             ],
