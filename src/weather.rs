@@ -14,6 +14,9 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub struct Settings {
+    /// True when a location was deliberately configured. This keeps the valid
+    /// coordinates `0,0` distinct from "no location selected".
+    pub configured: bool,
     pub location: String,
     pub latitude: f64,
     pub longitude: f64,
@@ -97,6 +100,7 @@ fn now_secs() -> u64 {
 /// top-level coordinates. The own file is authoritative when it exists.
 pub fn settings(legacy_latitude: f64, legacy_longitude: f64) -> Settings {
     let mut settings = Settings {
+        configured: legacy_latitude != 0.0 || legacy_longitude != 0.0,
         location: String::new(),
         latitude: legacy_latitude,
         longitude: legacy_longitude,
@@ -116,6 +120,7 @@ pub fn settings(legacy_latitude: f64, legacy_longitude: f64) -> Settings {
     let Some(weather) = value.get("weather").and_then(|v| v.as_table()) else {
         return settings;
     };
+    settings.configured = true;
     if let Some(s) = weather.get("location").and_then(|v| v.as_str()) {
         settings.location = s.to_string();
     }
@@ -155,7 +160,7 @@ impl Weather {
     }
 
     fn enabled(&self) -> bool {
-        self.settings.latitude != 0.0 || self.settings.longitude != 0.0
+        self.settings.configured
     }
 
     fn load_cache(&mut self) {
@@ -461,6 +466,7 @@ mod tests {
         assert_eq!(api.current.temperature_2m, Some(9.4));
         assert_eq!(condition(3, true), "overcast");
         let settings = Settings {
+            configured: true,
             location: "Ljungskile".into(),
             latitude: 58.2,
             longitude: 11.9,
@@ -472,6 +478,30 @@ mod tests {
         let (_, lines) = weather.panel();
         assert!(lines.iter().any(|l| l.contains("Ljungskile")));
         assert!(lines.iter().any(|l| l.contains("sunrise")));
+    }
+
+    #[test]
+    fn configured_zero_coordinates_are_not_missing() {
+        let settings = Settings {
+            configured: true,
+            location: "gulf".into(),
+            latitude: 0.0,
+            longitude: 0.0,
+            refresh: Duration::from_secs(1800),
+        };
+        let mut weather = Weather::new(settings);
+        weather.loaded = true;
+        weather.cache = Some((
+            now_secs(),
+            Api {
+                current: Current {
+                    temperature_2m: Some(27.0),
+                    ..Current::default()
+                },
+                ..Api::default()
+            },
+        ));
+        assert!(weather.summary().contains("27"));
     }
 
     #[test]
