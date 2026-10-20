@@ -284,8 +284,176 @@ impl Config {
                 return Err(format!("bar.{name} must be a valid nonempty strftime format").into());
             }
         }
+        if self.bar.tags.len() > 9 {
+            return Err("bar.tags has more than nine entries".into());
+        }
+        for module in &self.bar.modules {
+            // NIRUWM owns the shaped-name rule; the bar owns which names exist.
+            // A future module must still be accepted by both programs.
+            if module.is_empty() || !module.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                return Err(format!("unknown bar module {module:?}").into());
+            }
+        }
+
+        let wallpaper: WallpaperValidation = self.wallpaper.clone().try_into()?;
+        if !["random", "fixed", "single"].contains(&wallpaper.mode.as_str()) {
+            return Err("wallpaper.mode must be random, fixed or single".into());
+        }
+        if !["fill", "fit", "stretch", "center"].contains(&wallpaper.scale.as_str()) {
+            return Err("wallpaper.scale must be fill, fit, stretch or center".into());
+        }
+        if wallpaper.rotation_minutes > 100_000 {
+            return Err("wallpaper.rotation_minutes is too large".into());
+        }
+
+        let monitors: MonitorsValidation = self.monitors.clone().try_into()?;
+        if monitors.workspaces == 0 || monitors.workspaces > 32 {
+            return Err("monitors.workspaces must be between 1 and 32".into());
+        }
+        for profile in &monitors.profiles {
+            if profile.name.is_empty() || profile.workspaces.is_empty() {
+                return Err("monitors.profiles entries need a name and workspaces".into());
+            }
+        }
+
+        let nightlight: NightlightValidation = self.nightlight.clone().try_into()?;
+        if !(-90.0..=90.0).contains(&nightlight.latitude)
+            || !(-180.0..=180.0).contains(&nightlight.longitude)
+            || !(1000..=10_000).contains(&nightlight.temperature)
+        {
+            return Err("nightlight latitude/longitude/temperature out of range".into());
+        }
+
+        let scratchpad: ScratchpadValidation = self.scratchpad.clone().try_into()?;
+        if !(0.1..=0.95).contains(&scratchpad.width) || !(0.1..=0.95).contains(&scratchpad.height) {
+            return Err("scratchpad.width and height must be between 0.1 and 0.95".into());
+        }
+        if scratchpad.command.is_empty() {
+            return Err("scratchpad.command must not be empty".into());
+        }
+        let names_a_class = scratchpad.command.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--class" | "-class" | "--app-id" | "-name" | "--name"
+            )
+        });
+        if !names_a_class {
+            return Err(
+                "scratchpad.command needs a window class, for example [\"kitty\", \"--class\", \"scratchpad\"]"
+                    .into(),
+            );
+        }
+
+        for value in &self.rules {
+            let rule: RuleValidation = value.clone().try_into()?;
+            if rule.class.is_empty() {
+                return Err("rules entries need a class".into());
+            }
+        }
         Ok(())
     }
+}
+
+/// Validation mirrors of NIRUWM's typed shared sections. NIRUBAR stores these
+/// sections as opaque TOML so it accepts settings it does not use, but it must
+/// reject the same invalid values as the window manager. Keep this in sync with
+/// `niruwm/src/config.rs`; the shared config fixture suite checks the contract.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct WallpaperValidation {
+    enabled: bool,
+    dir: String,
+    mode: String,
+    file: String,
+    rotation_minutes: u32,
+    scale: String,
+    files: Vec<String>,
+    shuffle_on_start: bool,
+}
+
+impl Default for WallpaperValidation {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dir: "~/Pictures/Wallpapers".into(),
+            mode: "random".into(),
+            file: String::new(),
+            rotation_minutes: 10,
+            scale: "fill".into(),
+            files: Vec::new(),
+            shuffle_on_start: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct MonitorsValidation {
+    workspaces: usize,
+    profiles: Vec<MonitorProfileValidation>,
+}
+
+impl Default for MonitorsValidation {
+    fn default() -> Self {
+        Self {
+            workspaces: 9,
+            profiles: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // fields enforce the shared TOML schema
+struct MonitorProfileValidation {
+    name: String,
+    workspaces: Vec<String>,
+    primary: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct NightlightValidation {
+    latitude: f64,
+    longitude: f64,
+    temperature: u32,
+}
+
+impl Default for NightlightValidation {
+    fn default() -> Self {
+        Self {
+            latitude: 0.0,
+            longitude: 0.0,
+            temperature: 3400,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ScratchpadValidation {
+    command: Vec<String>,
+    width: f32,
+    height: f32,
+}
+
+impl Default for ScratchpadValidation {
+    fn default() -> Self {
+        Self {
+            command: vec!["kitty".into(), "--class".into(), "scratchpad".into()],
+            width: 0.6,
+            height: 0.6,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // fields enforce the shared TOML schema
+struct RuleValidation {
+    class: String,
+    workspace: Option<u32>,
+    floating: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -457,6 +625,53 @@ action = "terminal"
         let mut c = Config::default();
         c.bar.cell_width = 4;
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn shared_invalid_fixtures_are_rejected_like_niruwm() {
+        for (name, text) in [
+            ("wallpaper mode", "[wallpaper]\nmode = \"bogus\"\n"),
+            ("wallpaper scale", "[wallpaper]\nscale = \"bogus\"\n"),
+            (
+                "wallpaper rotation",
+                "[wallpaper]\nrotation_minutes = 100001\n",
+            ),
+            ("monitor workspaces", "[monitors]\nworkspaces = 0\n"),
+            (
+                "monitor profile",
+                "[[monitors.profiles]]\nname = \"eDP-1\"\nworkspaces = []\nprimary = true\n",
+            ),
+            ("nightlight latitude", "[nightlight]\nlatitude = 91.0\n"),
+            (
+                "nightlight temperature",
+                "[nightlight]\ntemperature = 999\n",
+            ),
+            ("scratchpad width", "[scratchpad]\nwidth = 0.0\n"),
+            (
+                "scratchpad class",
+                "[scratchpad]\ncommand = [\"kitty\"]\n",
+            ),
+            ("rule class", "[[rules]]\nworkspace = 1\n"),
+            (
+                "bar tags",
+                "[bar]\ntags = [\"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\", \"10\"]\n",
+            ),
+            ("empty module", "[bar]\nmodules = [\"\"]\n"),
+            ("module shape", "[bar]\nmodules = [\"UP\"]\n"),
+            ("clock format", "[bar]\ndate_format = \"%Q\"\n"),
+        ] {
+            let rejected = match toml::from_str::<Config>(text) {
+                Ok(c) => c.validate().is_err(),
+                Err(_) => true,
+            };
+            assert!(rejected, "accepted invalid shared fixture: {name}");
+        }
+    }
+
+    #[test]
+    fn future_module_names_are_accepted() {
+        let c: Config = toml::from_str("[bar]\nmodules = [\"future_module\"]\n").unwrap();
+        assert!(c.validate().is_ok());
     }
 
     #[test]
