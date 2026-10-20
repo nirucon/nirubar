@@ -42,6 +42,8 @@ pub struct Config {
     /// NIRUWM-only wallpaper settings. Parsed as an opaque value for the same
     /// reason as `keys`: one shared file must be accepted by both programs.
     pub wallpaper: toml::Value,
+    /// NIRUWM-only login autostart entries; accepted opaquely here.
+    pub autostart: toml::Value,
     /// NIRUWM-only monitor settings. Opaque here for the same reason as keys:
     /// the bar must accept the shared file whatever the window manager stores.
     pub monitors: toml::Value,
@@ -169,6 +171,7 @@ impl Default for Config {
             bar: Bar::default(),
             keys: Vec::new(),
             wallpaper: toml::Value::Table(Default::default()),
+            autostart: toml::Value::Table(Default::default()),
             monitors: toml::Value::Table(Default::default()),
             nightlight: toml::Value::Table(Default::default()),
             brightness: toml::Value::Table(Default::default()),
