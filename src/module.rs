@@ -802,6 +802,14 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
     let cfg = &full.bar;
     let mut out: Vec<Box<dyn Module>> = Vec::new();
     for name in &cfg.modules {
+        // Visibility flags must remove the module and its click target, not
+        // merely paint an empty label that can still open a popup.
+        if matches!(name.as_str(), "battery") && !cfg.battery
+            || matches!(name.as_str(), "network") && !cfg.network
+            || matches!(name.as_str(), "clock") && !cfg.show_date && !cfg.show_time
+        {
+            continue;
+        }
         match name.as_str() {
             "clock" => out.push(Box::new(Clock::new(cfg))),
             "battery" => out.push(Box::new(Battery { icons })),
@@ -1096,5 +1104,27 @@ mod tests {
         assert_eq!(mods.len(), 2);
         assert_eq!(mods[0].name(), "clock");
         assert_eq!(mods[1].name(), "battery");
+    }
+
+    #[test]
+    fn disabled_status_modules_have_no_render_or_popup_targets() {
+        let mut cfg = config::Config::default();
+        cfg.bar.modules = vec![
+            "battery".into(),
+            "network".into(),
+            "clock".into(),
+            "volume".into(),
+        ];
+        cfg.bar.battery = false;
+        cfg.bar.network = false;
+        cfg.bar.show_date = false;
+        cfg.bar.show_time = false;
+        let modules = build(&cfg, status::Icons::plain());
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].name(), "volume");
+        cfg.bar.show_time = true;
+        let modules = build(&cfg, status::Icons::plain());
+        assert_eq!(modules.len(), 2);
+        assert_eq!(modules[0].name(), "clock");
     }
 }

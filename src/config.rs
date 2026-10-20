@@ -248,6 +248,8 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        use std::fmt::Write as _;
+
         if !(8.0..=40.0).contains(&self.font_size)
             || !(0.1..=0.9).contains(&self.master_ratio)
             || self.gap > 100
@@ -263,6 +265,24 @@ impl Config {
         }
         if self.bar.title_max > 512 {
             return Err("bar.title_max must be at most 512".into());
+        }
+        for (name, format) in [
+            ("date_format", &self.bar.date_format),
+            ("time_format", &self.bar.time_format),
+        ] {
+            // Token parsing alone accepts parse-only directives such as %#z.
+            // Exercise formatting through a fallible sink: to_string() would
+            // panic on fmt::Error instead of returning a config diagnostic.
+            if format.is_empty()
+                || write!(
+                    &mut String::new(),
+                    "{}",
+                    chrono::Local::now().format(format)
+                )
+                .is_err()
+            {
+                return Err(format!("bar.{name} must be a valid nonempty strftime format").into());
+            }
         }
         Ok(())
     }
@@ -437,5 +457,20 @@ action = "terminal"
         let mut c = Config::default();
         c.bar.cell_width = 4;
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn invalid_clock_formats_are_rejected_before_rendering() {
+        for bad in ["%", "%Q", "%#", "%#z", ""] {
+            let mut c = Config::default();
+            c.bar.time_format = bad.into();
+            assert!(c.validate().is_err(), "accepted time format {bad:?}");
+            c.bar.time_format = "%H:%M".into();
+            c.bar.date_format = bad.into();
+            assert!(c.validate().is_err(), "accepted date format {bad:?}");
+        }
+        let mut c = Config::default();
+        c.bar.time_format = "%H:%M %% %:z".into();
+        assert!(c.validate().is_ok());
     }
 }
