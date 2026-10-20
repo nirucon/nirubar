@@ -11,6 +11,13 @@ use std::{error::Error, fs, path::PathBuf};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+fn parse_clock(s: &str) -> Option<(u32, u32)> {
+    let (hour, minute) = s.trim().split_once(':')?;
+    let hour: u32 = hour.parse().ok()?;
+    let minute: u32 = minute.parse().ok()?;
+    (hour < 24 && minute < 60).then_some((hour, minute))
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -40,6 +47,8 @@ pub struct Config {
     pub monitors: toml::Value,
     /// NIRUWM/niructl night-light settings; accepted but not used by the bar.
     pub nightlight: toml::Value,
+    /// NIRUWM/niructl brightness device and step; accepted but not used here.
+    pub brightness: toml::Value,
     /// NIRUWM-only scratchpad settings.
     pub scratchpad: toml::Value,
     /// NIRUWM-only window rules.
@@ -162,6 +171,7 @@ impl Default for Config {
             wallpaper: toml::Value::Table(Default::default()),
             monitors: toml::Value::Table(Default::default()),
             nightlight: toml::Value::Table(Default::default()),
+            brightness: toml::Value::Table(Default::default()),
             scratchpad: toml::Value::Table(Default::default()),
             rules: Vec::new(),
         }
@@ -326,8 +336,15 @@ impl Config {
         if !(-90.0..=90.0).contains(&nightlight.latitude)
             || !(-180.0..=180.0).contains(&nightlight.longitude)
             || !(1000..=10_000).contains(&nightlight.temperature)
+            || !(1000..=10_000).contains(&nightlight.day_temperature)
         {
             return Err("nightlight latitude/longitude/temperature out of range".into());
+        }
+        if !matches!(nightlight.mode.as_str(), "manual" | "fixed" | "solar") {
+            return Err("nightlight.mode must be manual, fixed or solar".into());
+        }
+        if parse_clock(&nightlight.on).is_none() || parse_clock(&nightlight.off).is_none() {
+            return Err("nightlight.on/off must be HH:MM".into());
         }
 
         let scratchpad: ScratchpadValidation = self.scratchpad.clone().try_into()?;
@@ -547,6 +564,10 @@ struct NightlightValidation {
     latitude: f64,
     longitude: f64,
     temperature: u32,
+    mode: String,
+    on: String,
+    off: String,
+    day_temperature: u32,
 }
 
 impl Default for NightlightValidation {
@@ -555,6 +576,10 @@ impl Default for NightlightValidation {
             latitude: 0.0,
             longitude: 0.0,
             temperature: 3400,
+            mode: "manual".into(),
+            on: "20:00".into(),
+            off: "07:00".into(),
+            day_temperature: 6500,
         }
     }
 }

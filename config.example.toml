@@ -101,6 +101,14 @@ shuffle_on_start = true
 latitude = 58.22
 longitude = 11.93
 temperature = 3400
+mode = "manual"
+on = "20:00"
+off = "07:00"
+day_temperature = 6500
+
+[brightness]
+device = ""
+step = 5
 
 [monitors]
 workspaces = 9
