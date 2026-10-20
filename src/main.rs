@@ -10,6 +10,7 @@
 mod ambient;
 mod av;
 mod config;
+mod layout;
 mod module;
 mod popup;
 mod probe;
@@ -223,10 +224,30 @@ fn event_is_from(event: &Event, window: Window) -> bool {
 }
 
 /// One drawn module, with where it landed so a click can open its panel.
+#[derive(Clone, Copy)]
 struct Placed {
     index: usize,
     x: i16,
     width: i16,
+}
+
+/// Which optional module gives way first when the bar is narrow.
+fn module_priority(name: &str) -> i32 {
+    match name {
+        "clock" => 100,
+        "battery" => 90,
+        "network" => 85,
+        "volume" => 80,
+        "media" => 70,
+        "notifications" => 65,
+        "updates" => 60,
+        "brightness" => 55,
+        "weather" => 50,
+        "sun" => 45,
+        "pulse" => 40,
+        "uptime" => 30,
+        _ => 10,
+    }
 }
 
 struct Bar {
@@ -256,6 +277,10 @@ struct Bar {
     selection: Atom,
     /// Hit boxes from the last frame: where each module and workspace cell is.
     placed: Vec<Placed>,
+    /// Overflow indicator hit box, when low-priority modules were hidden.
+    overflow: Option<Placed>,
+    /// Summaries for hidden modules, used by the overflow panel.
+    hidden: Vec<String>,
     cells: i16,
     /// The one open panel, if any. Owned by the bar so clicks stay responsive.
     popup: Option<popup::Popup>,
@@ -465,6 +490,8 @@ impl Bar {
             selection,
             workspaces,
             placed: Vec::new(),
+            overflow: None,
+            hidden: Vec::new(),
             cells,
             popup: None,
             title_shown: None,
@@ -662,9 +689,16 @@ impl Bar {
         }
 
         // Right-aligned status modules, in config order. The tray takes the
-        // last stretch of the bar, so modules stop before it.
+        // last stretch of the bar, so modules stop before it. When the bar is
+        // narrow, low-priority modules are hidden and an overflow indicator
+        // keeps their summaries reachable. Workspace cells never move.
         let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0) as i16;
         let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10 - tray_width;
+        let workspace_width = if show_workspaces {
+            self.cells * self.workspaces.names.len() as i16
+        } else {
+            0
+        };
         let mut texts: Vec<(usize, String)> = Vec::new();
         let mut marks: Vec<Option<crate::av::MediaIcons>> = Vec::new();
         let mut progress: Vec<Option<f32>> = Vec::new();
@@ -682,51 +716,68 @@ impl Bar {
                 progress.push(m.progress());
             }
         }
-        let mut x = right_edge;
-        let mut placed: Vec<Placed> = Vec::new();
+        let gap = self.renderer.advance * MODULE_PAD;
+        let items: Vec<layout::Item> = texts
+            .iter()
+            .map(|(index, text)| layout::Item {
+                index: *index,
+                width: self.renderer.width(text),
+                priority: module_priority(self.modules[*index].name()),
+            })
+            .collect();
+        let overflow_width = self.renderer.width("+99");
+        let fit = layout::fit(workspace_width, right_edge, gap, overflow_width, &items);
+        let mut placements: Vec<Option<(i16, i16)>> = vec![None; texts.len()];
+        for placement in &fit.visible {
+            let slot = texts
+                .iter()
+                .position(|(index, _)| *index == placement.index);
+            if let Some(slot) = slot {
+                placements[slot] = Some((placement.x, placement.width));
+            }
+        }
+
         let separator = self.cfg.bar.separator.clone();
-        for (index, text) in texts.iter().rev() {
-            let w = self.renderer.width(text);
-            x -= w;
+        let mut placed: Vec<Placed> = Vec::new();
+        for (slot, (index, text)) in texts.iter().enumerate().rev() {
+            let Some((x, w)) = placements[slot] else {
+                continue;
+            };
             self.renderer
                 .text(&self.c, self.gc, x, text, fg, bg, right_edge)?;
             // The media module's mark is drawn, not typed: three bars of the
             // theme's foreground, sitting where its placeholder is.
-            let slot = texts.iter().position(|(i, _)| i == index);
-            if let Some(slot) = slot {
-                if let Some(bars) = marks.get(slot).and_then(|m| m.clone()) {
-                    self.draw_mark(x, bars, fg, bg)?;
-                }
-                // A hairline under the module: a faint track and a brighter
-                // part up to the position. It is the one thing in the bar that
-                // moves while music plays, so a resting title still feels alive.
-                if let Some(share) = progress.get(slot).copied().flatten() {
-                    let y = (self.height as i16) - 3;
+            if let Some(bars) = marks.get(slot).and_then(|m| m.clone()) {
+                self.draw_mark(x, bars, fg, bg)?;
+            }
+            // A hairline under the module: a faint track and a brighter part
+            // up to the position.
+            if let Some(share) = progress.get(slot).copied().flatten() {
+                let y = (self.height as i16) - 3;
+                self.renderer.fill(
+                    &self.c,
+                    self.gc,
+                    Rectangle {
+                        x,
+                        y,
+                        width: w.max(1) as u16,
+                        height: 1,
+                    },
+                    border,
+                )?;
+                let filled = (f32::from(w.max(1) as u16) * share).round() as u16;
+                if filled > 0 {
                     self.renderer.fill(
                         &self.c,
                         self.gc,
                         Rectangle {
                             x,
                             y,
-                            width: w.max(1) as u16,
+                            width: filled,
                             height: 1,
                         },
-                        border,
+                        muted,
                     )?;
-                    let filled = (f32::from(w.max(1) as u16) * share).round() as u16;
-                    if filled > 0 {
-                        self.renderer.fill(
-                            &self.c,
-                            self.gc,
-                            Rectangle {
-                                x,
-                                y,
-                                width: filled,
-                                height: 1,
-                            },
-                            muted,
-                        )?;
-                    }
                 }
             }
             placed.push(Placed {
@@ -734,19 +785,14 @@ impl Bar {
                 x,
                 width: w,
             });
-            let gap = self.renderer.advance * MODULE_PAD;
             if !separator.is_empty() && w > 0 && !text.starts_with(' ') {
-                // A hairline, not a character. A "|" is as loud as the text it
-                // separates and makes the bar read as one long string; a thin
-                // line in the active workspace's colour is a boundary, and
-                // boundaries stay quiet. It sits at the midpoint of the gap, so
-                // a module with a line on each side has the same space on both.
-                let line_x = x - gap;
+                // A hairline at the midpoint of the gap, so both sides have
+                // the same breathing room.
                 self.renderer.fill(
                     &self.c,
                     self.gc,
                     Rectangle {
-                        x: line_x,
+                        x: x - gap,
                         y: (self.height as i16) / 5,
                         width: 1,
                         height: (self.height / 2).max(4),
@@ -754,10 +800,38 @@ impl Bar {
                     border,
                 )?;
             }
-            x -= gap * 2;
         }
-        placed.reverse();
+        placed.sort_by_key(|p| p.x);
         self.placed = placed;
+
+        self.hidden = fit
+            .hidden
+            .iter()
+            .map(|slot| {
+                let (index, text) = &texts[*slot];
+                let name = self.modules[*index].name();
+                let text = text.trim();
+                if text.is_empty() {
+                    format!("{name}: (no data)")
+                } else {
+                    format!("{name}: {text}")
+                }
+            })
+            .collect();
+        self.overflow = fit.overflow.map(|(x, width)| {
+            let label = format!("+{}", self.hidden.len());
+            self.renderer
+                .text(&self.c, self.gc, x, &label, fg, bg, x + width)
+                .ok();
+            Placed {
+                index: usize::MAX,
+                x,
+                width,
+            }
+        });
+        if self.overflow.is_none() {
+            self.hidden.clear();
+        }
 
         // The window title, clipped to the space that is left.
         //
@@ -769,8 +843,15 @@ impl Bar {
             String::new()
         };
         if !title.is_empty() {
-            let start = self.cells * self.workspaces.names.len() as i16;
-            let end = x - self.renderer.advance * 2;
+            let first_x = self
+                .placed
+                .iter()
+                .map(|p| p.x)
+                .min()
+                .or_else(|| self.overflow.map(|p| p.x))
+                .unwrap_or(right_edge);
+            let start = workspace_width;
+            let end = first_x - gap * 2;
             if end > start {
                 self.renderer
                     .text(&self.c, self.gc, start, &title, muted, bg, end)?;
@@ -815,11 +896,15 @@ impl Bar {
             })
             .collect();
         let title = self.title();
+        let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0);
         // The module text is part of the key, and the media module's text
         // changes on every scroll step, so a title in motion asks for a redraw
-        // by itself. (The first version compared only the track, which does not
-        // change while it moves, and the title froze after one frame.)
-        format!("{tag}:{occupied:?}:{modules:?}:{progress:?}:{title}")
+        // by itself. Width and tray size take part because they decide which
+        // modules fit and whether the overflow indicator exists.
+        format!(
+            "{width}:{tray_width}:{tag}:{occupied:?}:{modules:?}:{progress:?}:{title}",
+            width = self.width
+        )
     }
 
     /// Draw the music mark as shapes, in the cell of its placeholder.
@@ -881,6 +966,35 @@ impl Bar {
                 .clamp(0, self.workspaces.names.len().saturating_sub(1) as i16)
                 as u32;
             return self.select_workspace(tag);
+        }
+        if let Some(overflow) = self.overflow {
+            if x >= overflow.x && x < overflow.x + overflow.width {
+                if let Some(open) = &self.popup {
+                    if open.module == usize::MAX {
+                        return self.close_popup();
+                    }
+                }
+                self.close_popup()?;
+                let lines = self.hidden.clone();
+                self.popup = Some(popup::Popup::open(
+                    &self.c,
+                    self.root,
+                    &self.theme,
+                    self.height,
+                    self.cfg.font_size,
+                    self.cfg.font_path.as_deref(),
+                    usize::MAX,
+                    self.bar_x,
+                    self.bar_y,
+                    self.width,
+                    self.win,
+                    overflow.x,
+                    "Hidden modules",
+                    &lines,
+                    self.cfg.bar.popup_timeout_seconds,
+                )?);
+                return Ok(());
+            }
         }
         if !self.cfg.bar.popups {
             return Ok(());

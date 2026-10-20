@@ -13,7 +13,8 @@ set -eu
 
 BINDIR="${1:?usage: config-agreement.sh BINDIR}"
 HERE="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-export HOME="$(mktemp -d)"
+HOME=$(mktemp -d)
+export HOME
 export XDG_CONFIG_HOME="$HOME/.config"
 mkdir -p "$XDG_CONFIG_HOME/niruwm/themes"
 cp "$HERE/config.example.toml" "$XDG_CONFIG_HOME/niruwm/config.toml"

@@ -30,6 +30,8 @@ niructl reload
 niructl restart-bar
 ```
 
+At narrow widths the workspace cells keep their configured width and the
+lowest-priority status modules collapse into a clickable `+N` overflow panel.
 Clicks open information; media/volume information does not pause or mute.
 Calendar: Monday first, ISO week numbers, Left/Right month navigation.
 One bar per monitor; one XEmbed tray per X screen.
