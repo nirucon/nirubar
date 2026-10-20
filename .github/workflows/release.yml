@@ -62,7 +62,6 @@ jobs:
             wait $pid 2>/dev/null || true
             wait $xvfb 2>/dev/null || true
           done
-          kill $pid
       - run: |
           version=$(awk -F '"' '/^version = / {print $2; exit}' Cargo.toml)
           echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
