@@ -13,8 +13,8 @@ Modules, configured in one line each:
 | Module | Shows |
 | --- | --- |
 | `workspaces` | nine cells, click one to switch |
-| `network` | wired or wireless icon while a link is up |
-| `battery` | charge and a charging bolt, laptops only |
+| `network` | wired or wireless icon; `!` means link up without a default route; click for link, route, interface and address |
+| `battery` | aggregated laptop packs; panel shows charge, state and remaining time when available |
 | `volume` | level with an icon, or a mute icon; click for info, scroll to change, right-click mute, middle-click mic mute |
 | `brightness` | laptop backlight percentage; hidden without a backlight device |
 | `media` | what is playing, `artist - title`, scrolling when it is long, with a thin progress line; right-click play/pause, scroll previous/next, middle-click next player |

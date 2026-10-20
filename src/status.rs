@@ -127,45 +127,148 @@ fn backlight_in(dir: &Path) -> Option<u32> {
     None
 }
 
+/// Aggregate state of every battery in the machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatteryState {
+    Charging,
+    Discharging,
+    Full,
+    /// One pack charges while another discharges.
+    Mixed,
+    Unknown,
+}
+
 /// Battery reading, or `None` on a machine without a battery (a desktop).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Battery {
     pub percent: u8,
     pub charging: bool,
+    pub state: BatteryState,
+    /// Number of battery packs aggregated into this reading.
+    pub count: usize,
+    /// Time to empty or full, when the kernel exposes a power/current rate.
+    /// `None` is deliberate: an absent estimate must not look like "0 min".
+    pub remaining_minutes: Option<u64>,
 }
 
-/// Find the first battery under `/sys/class/power_supply`.
+struct BatteryReading {
+    percent: Option<u8>,
+    status: String,
+    energy: Option<(f64, f64)>,
+    charge: Option<(f64, f64)>,
+    power: Option<f64>,
+    current: Option<f64>,
+}
+
+fn read_number(path: &Path) -> Option<f64> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+}
+
+fn battery_reading(path: &Path) -> Option<BatteryReading> {
+    let status = fs::read_to_string(path.join("status"))
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let percent = fs::read_to_string(path.join("capacity"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u8>().ok())
+        .map(|p| p.min(100));
+    let energy = read_number(&path.join("energy_now")).zip(read_number(&path.join("energy_full")));
+    let charge = read_number(&path.join("charge_now")).zip(read_number(&path.join("charge_full")));
+    if percent.is_none() && energy.is_none() && charge.is_none() {
+        // During boot some drivers expose a battery node with no reading yet.
+        return None;
+    }
+    Some(BatteryReading {
+        percent,
+        status,
+        energy,
+        charge,
+        power: read_number(&path.join("power_now")),
+        current: read_number(&path.join("current_now")),
+    })
+}
+
+/// Find and aggregate every battery under `/sys/class/power_supply`.
 ///
-/// Returns `None` when there is none, which is the desktop case: the bar then
-/// draws nothing at all rather than a misleading empty battery.
+/// A machine without batteries returns `None`, so the bar draws nothing rather
+/// than a misleading empty battery.
 pub fn battery() -> Option<Battery> {
     battery_in(Path::new("/sys/class/power_supply"))
 }
 
 fn battery_in(dir: &Path) -> Option<Battery> {
     let entries = fs::read_dir(dir).ok()?;
+    let mut readings = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        let kind = fs::read_to_string(path.join("type")).ok()?;
+        let kind = fs::read_to_string(path.join("type")).unwrap_or_default();
         if kind.trim() != "Battery" {
             continue;
         }
-        // A battery with no capacity reading (some drivers during boot) is
-        // treated as absent rather than shown as 0%.
-        let percent = fs::read_to_string(path.join("capacity"))
-            .ok()
-            .and_then(|s| s.trim().parse::<u8>().ok())?;
-        let status = fs::read_to_string(path.join("status"))
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
-        let charging = matches!(status.as_str(), "charging" | "full");
-        return Some(Battery {
-            percent: percent.min(100),
-            charging,
-        });
+        if let Some(reading) = battery_reading(&path) {
+            readings.push(reading);
+        }
     }
-    None
+    if readings.is_empty() {
+        return None;
+    }
+    let count = readings.len();
+    let weighted = |pairs: &[(f64, f64)]| -> Option<u8> {
+        let now: f64 = pairs.iter().map(|(now, _)| *now).sum();
+        let full: f64 = pairs.iter().map(|(_, full)| *full).sum();
+        (full > 0.0).then(|| (now / full * 100.0).round().clamp(0.0, 100.0) as u8)
+    };
+    let energy: Vec<(f64, f64)> = readings.iter().filter_map(|r| r.energy).collect();
+    let charge: Vec<(f64, f64)> = readings.iter().filter_map(|r| r.charge).collect();
+    let percent = if energy.len() == count {
+        weighted(&energy)
+    } else if charge.len() == count {
+        weighted(&charge)
+    } else {
+        let values: Vec<u8> = readings.iter().filter_map(|r| r.percent).collect();
+        (!values.is_empty()).then(|| {
+            (values.iter().map(|p| u32::from(*p)).sum::<u32>() / values.len() as u32) as u8
+        })
+    }?;
+    let charging = readings.iter().any(|r| r.status == "charging");
+    let discharging = readings.iter().any(|r| r.status == "discharging");
+    let full = readings
+        .iter()
+        .all(|r| matches!(r.status.as_str(), "full" | "not charging"));
+    let state = match (charging, discharging) {
+        (true, true) => BatteryState::Mixed,
+        (true, false) => BatteryState::Charging,
+        (false, true) => BatteryState::Discharging,
+        (false, false) if full => BatteryState::Full,
+        _ => BatteryState::Unknown,
+    };
+    let energy_now: f64 = energy.iter().map(|(now, _)| *now).sum();
+    let energy_full: f64 = energy.iter().map(|(_, full)| *full).sum();
+    let power: f64 = readings.iter().filter_map(|r| r.power).sum();
+    let charge_now: f64 = charge.iter().map(|(now, _)| *now).sum();
+    let current: f64 = readings.iter().filter_map(|r| r.current).sum();
+    let remaining_minutes = match state {
+        BatteryState::Discharging if power > 0.0 && energy_now > 0.0 => {
+            Some((energy_now / power * 60.0).round() as u64)
+        }
+        BatteryState::Discharging if current > 0.0 && charge_now > 0.0 => {
+            Some((charge_now / current * 60.0).round() as u64)
+        }
+        BatteryState::Charging if power > 0.0 && energy_full > energy_now => {
+            Some(((energy_full - energy_now) / power * 60.0).round() as u64)
+        }
+        _ => None,
+    };
+    Some(Battery {
+        percent,
+        charging: matches!(state, BatteryState::Charging | BatteryState::Full),
+        state,
+        count,
+        remaining_minutes,
+    })
 }
 
 /// Network state: `Wifi`, `Ethernet` or `None`.
@@ -175,47 +278,35 @@ pub enum Link {
     Ethernet,
 }
 
+/// Link, address and route are separate facts. A cable can be plugged in while
+/// DHCP has not assigned an address, or an address can exist without a default
+/// route; the bar must not call either of those "online".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetworkState {
+    pub link: Link,
+    /// A default route exists in the kernel, without asking NetworkManager.
+    pub route: bool,
+}
+
 /// Return the best active link, preferring a wired connection.
 ///
 /// Uses `/sys/class/net`: `operstate == "up"` and a carrier of 1 means the
 /// interface is connected. Wi-Fi is recognised by the presence of a
 /// `wireless` directory. Loopback and virtual bridges are ignored so a
 /// docker0 interface does not look like a network connection.
-pub fn network() -> Option<Link> {
-    let entries = fs::read_dir("/sys/class/net").ok()?;
-    let mut wired = false;
-    let mut wireless = false;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == "lo" || name.starts_with("docker") || name.starts_with("veth") {
-            continue;
-        }
-        let path = entry.path();
-        let state = fs::read_to_string(path.join("operstate"))
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let carrier = fs::read_to_string(path.join("carrier"))
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let up = state == "up" && (carrier.is_empty() || carrier == "1");
-        if !up {
-            continue;
-        }
-        if path.join("wireless").exists() {
-            wireless = true;
-        } else {
-            wired = true;
-        }
-    }
-    if wired {
-        Some(Link::Ethernet)
-    } else if wireless {
-        Some(Link::Wifi)
+pub fn network() -> Option<NetworkState> {
+    let ifaces = active_interfaces();
+    let link = if ifaces.iter().any(|(_, kind)| *kind == Link::Ethernet) {
+        Link::Ethernet
+    } else if ifaces.iter().any(|(_, kind)| *kind == Link::Wifi) {
+        Link::Wifi
     } else {
-        None
-    }
+        return None;
+    };
+    Some(NetworkState {
+        link,
+        route: default_route(),
+    })
 }
 
 /// Format the battery segment, e.g. ` 87%` or `+ 42%` while charging.
@@ -234,23 +325,62 @@ pub fn battery_text(b: &Battery, icons: &Icons) -> String {
     format!("{icon} {}%", b.percent)
 }
 
-/// Format the network segment, or an empty string when offline.
-pub fn network_text(link: Option<Link>, icons: &Icons, use_icons: bool) -> String {
-    match link {
-        Some(Link::Wifi) => if use_icons {
-            icons.wifi
-        } else {
-            icons.wifi_fallback
+/// Format the network segment, or an empty string when there is no link.
+///
+/// A link without a default route gets an explicit `!` suffix rather than the
+/// same icon as a routed connection.
+pub fn network_text(state: Option<NetworkState>, icons: &Icons, use_icons: bool) -> String {
+    let Some(state) = state else {
+        return String::new();
+    };
+    let icon = match state.link {
+        Link::Wifi => {
+            if use_icons {
+                icons.wifi
+            } else {
+                icons.wifi_fallback
+            }
         }
-        .to_string(),
-        Some(Link::Ethernet) => if use_icons {
-            icons.ethernet
-        } else {
-            icons.ethernet_fallback
+        Link::Ethernet => {
+            if use_icons {
+                icons.ethernet
+            } else {
+                icons.ethernet_fallback
+            }
         }
-        .to_string(),
-        None => String::new(),
+    };
+    if state.route {
+        icon.to_string()
+    } else {
+        format!("{icon} !")
     }
+}
+
+/// A default IPv4 route in `/proc/net/route` (destination 0.0.0.0 with the
+/// gateway flag), or a default IPv6 route. No NetworkManager or `ip` process.
+fn default_route() -> bool {
+    let v4 = fs::read_to_string("/proc/net/route").unwrap_or_default();
+    let v6 = fs::read_to_string("/proc/net/ipv6_route").unwrap_or_default();
+    default_route_from(&v4, &v6)
+}
+
+fn default_route_from(v4: &str, v6: &str) -> bool {
+    for line in v4.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() >= 4
+            && fields[1] == "00000000"
+            && u32::from_str_radix(fields[3], 16).is_ok_and(|flags| flags & 0x2 != 0)
+        {
+            return true;
+        }
+    }
+    for line in v6.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() >= 2 && fields[0].chars().all(|c| c == '0') && fields[1] == "00" {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -293,7 +423,10 @@ mod tests {
             battery_in(&dir),
             Some(Battery {
                 percent: 73,
-                charging: false
+                charging: false,
+                state: BatteryState::Discharging,
+                count: 1,
+                remaining_minutes: None,
             })
         );
         fs::write(bat.join("status"), "Charging\n").unwrap();
@@ -311,6 +444,84 @@ mod tests {
     }
 
     #[test]
+    fn multi_battery_uses_weighted_energy_and_reports_remaining() {
+        let dir = tmpdir("multibat");
+        for (name, capacity, now, full, power, status) in [
+            ("BAT0", "50", "30", "60", "10", "Discharging"),
+            ("BAT1", "75", "90", "120", "10", "Discharging"),
+        ] {
+            let bat = dir.join(name);
+            fs::create_dir_all(&bat).unwrap();
+            fs::write(bat.join("type"), "Battery\n").unwrap();
+            fs::write(bat.join("capacity"), format!("{capacity}\n")).unwrap();
+            fs::write(bat.join("energy_now"), format!("{now}\n")).unwrap();
+            fs::write(bat.join("energy_full"), format!("{full}\n")).unwrap();
+            fs::write(bat.join("power_now"), format!("{power}\n")).unwrap();
+            fs::write(bat.join("status"), format!("{status}\n")).unwrap();
+        }
+        let aggregate = battery_in(&dir).expect("two batteries aggregate");
+        assert_eq!(aggregate.percent, 67);
+        assert_eq!(aggregate.count, 2);
+        assert_eq!(aggregate.state, BatteryState::Discharging);
+        assert_eq!(aggregate.remaining_minutes, Some(360));
+    }
+
+    #[test]
+    fn absent_battery_estimate_stays_unavailable() {
+        let dir = tmpdir("noestimate");
+        let bat = dir.join("BAT0");
+        fs::create_dir_all(&bat).unwrap();
+        fs::write(bat.join("type"), "Battery\n").unwrap();
+        fs::write(bat.join("capacity"), "40\n").unwrap();
+        fs::write(bat.join("status"), "Discharging\n").unwrap();
+        let aggregate = battery_in(&dir).expect("one battery");
+        assert_eq!(aggregate.remaining_minutes, None);
+    }
+
+    #[test]
+    fn mixed_battery_states_are_not_reported_as_charging() {
+        let dir = tmpdir("mixedbat");
+        for (name, status) in [("BAT0", "Charging"), ("BAT1", "Discharging")] {
+            let bat = dir.join(name);
+            fs::create_dir_all(&bat).unwrap();
+            fs::write(bat.join("type"), "Battery\n").unwrap();
+            fs::write(bat.join("capacity"), "50\n").unwrap();
+            fs::write(bat.join("status"), format!("{status}\n")).unwrap();
+        }
+        let aggregate = battery_in(&dir).expect("two batteries");
+        assert_eq!(aggregate.state, BatteryState::Mixed);
+        assert!(!aggregate.charging);
+    }
+
+    #[test]
+    fn default_route_is_read_from_the_kernel_tables() {
+        let v4 = "Iface\tDestination\tGateway\tFlags\neth0\t00000000\t0102A8C0\t0003\n";
+        assert!(default_route_from(v4, ""));
+        let no_gateway = "Iface\tDestination\tGateway\tFlags\neth0\t00000000\t00000000\t0001\n";
+        assert!(!default_route_from(no_gateway, ""));
+        let v6 = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 eth0 00000000 00000001 00000000 00000003\n";
+        assert!(default_route_from("", v6));
+    }
+
+    #[test]
+    fn link_without_route_is_marked_not_online() {
+        let icons = Icons::plain();
+        let routed = NetworkState {
+            link: Link::Ethernet,
+            route: true,
+        };
+        let linked_only = NetworkState {
+            link: Link::Ethernet,
+            route: false,
+        };
+        assert_eq!(network_text(Some(routed), &icons, true), icons.ethernet);
+        assert_eq!(
+            network_text(Some(linked_only), &icons, true),
+            format!("{} !", icons.ethernet)
+        );
+    }
+
+    #[test]
     fn battery_icons_track_level() {
         let icons = Icons::nerd();
         let at = |p: u8, c: bool| {
@@ -318,6 +529,13 @@ mod tests {
                 &Battery {
                     percent: p,
                     charging: c,
+                    state: if c {
+                        BatteryState::Charging
+                    } else {
+                        BatteryState::Discharging
+                    },
+                    count: 1,
+                    remaining_minutes: None,
                 },
                 &icons,
             )
@@ -350,35 +568,38 @@ mod tests {
 pub fn battery_detail(b: &Battery) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("charge: {}%", b.percent));
-    if b.charging {
-        lines.push("state: charging".to_string());
-    } else {
-        lines.push("state: on battery".to_string());
+    lines.push(format!(
+        "state: {}",
+        match b.state {
+            BatteryState::Charging => "charging",
+            BatteryState::Discharging => "on battery",
+            BatteryState::Full => "full",
+            BatteryState::Mixed => "mixed (one pack charging, one discharging)",
+            BatteryState::Unknown => "unknown",
+        }
+    ));
+    if b.count > 1 {
+        lines.push(format!("batteries: {}", b.count));
     }
-    if let Some(name) = battery_name() {
-        lines.push(format!("device: {name}"));
-    }
+    lines.push(match b.remaining_minutes {
+        Some(minutes) => format!("remaining: {}h {:02}m", minutes / 60, minutes % 60),
+        None => "remaining: unavailable".to_string(),
+    });
     lines
 }
 
-fn battery_name() -> Option<String> {
-    let entries = std::fs::read_dir("/sys/class/power_supply").ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let kind = std::fs::read_to_string(path.join("type")).ok()?;
-        if kind.trim() == "Battery" {
-            return Some(entry.file_name().to_string_lossy().to_string());
-        }
-    }
-    None
-}
-
-/// Detail lines for the network popup: interface, address and link state.
-pub fn network_detail(link: Link) -> Vec<String> {
+/// Detail lines for the network popup: link, route, interface and address.
+pub fn network_detail(state: NetworkState) -> Vec<String> {
     let mut lines = Vec::new();
-    lines.push(match link {
+    lines.push(match state.link {
         Link::Wifi => "type: wireless".to_string(),
         Link::Ethernet => "type: wired".to_string(),
+    });
+    lines.push("link: up".to_string());
+    lines.push(if state.route {
+        "route: default present".to_string()
+    } else {
+        "route: no default route".to_string()
     });
     for (iface, kind) in active_interfaces() {
         lines.push(format!("interface: {iface}"));
@@ -497,6 +718,9 @@ mod detail_tests {
         let b = Battery {
             percent: 42,
             charging: true,
+            state: BatteryState::Charging,
+            count: 2,
+            remaining_minutes: Some(35),
         };
         let lines = battery_detail(&b);
         assert!(lines[0].contains("42%"));
@@ -505,7 +729,11 @@ mod detail_tests {
 
     #[test]
     fn network_detail_states_the_type() {
-        let lines = network_detail(Link::Wifi);
+        let lines = network_detail(NetworkState {
+            link: Link::Wifi,
+            route: true,
+        });
         assert!(lines[0].contains("wireless"));
+        assert!(lines.iter().any(|line| line.contains("default present")));
     }
 }
