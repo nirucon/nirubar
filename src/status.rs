@@ -26,8 +26,8 @@ pub struct Icons {
     pub ethernet_fallback: &'static str,
     /// Shown before the update count.
     pub updates: &'static str,
-    /// The `pulse` module: a small rising graph, in the same family as the
-    /// wifi and battery glyphs so the bar reads as one set.
+    /// The `pulse` module: a microchip, matching the wifi and battery glyph
+    /// family. A tiny area chart read as a coffee cup at bar size.
     pub cpu: &'static str,
     /// The `sun` module: sunrise and sunset.
     pub sun: &'static str,
@@ -61,7 +61,7 @@ impl Icons {
             wifi_fallback: "wifi",
             ethernet_fallback: "net",
             updates: "\u{f021}", // nf-fa-refresh, stable across Nerd Font versions
-            cpu: "\u{f1fe}",     // nf-fa-area_chart
+            cpu: "\u{f2db}",     // nf-fa-microchip
             sun: "\u{f185}",     // nf-fa-sun_o
             uptime: "\u{f017}",  // nf-fa-clock_o
             brightness: "\u{f185}", // sun; brightness is a display property
@@ -553,6 +553,12 @@ mod tests {
     fn offline_renders_nothing() {
         let icons = Icons::plain();
         assert_eq!(network_text(None, &icons, true), "");
+    }
+
+    #[test]
+    fn cpu_uses_the_microchip_not_a_tiny_chart() {
+        let glyph = Icons::nerd().cpu.chars().next().map(u32::from);
+        assert_eq!(glyph, Some(0xf2db));
     }
 
     #[test]
