@@ -374,6 +374,8 @@ pub struct Media {
     sample: Sample<av::Media>,
     /// Selected MPRIS player; None follows the active player.
     pub player: Option<String>,
+    /// Appearance contract: stop non-essential title movement.
+    pub reduced_motion: bool,
     pub music: &'static str,
     /// Scrolls a long title instead of cutting it off.
     pub scroller: crate::scroll::Scroller,
@@ -413,7 +415,7 @@ impl Module for Media {
         // Including them (as the first version did) made every frame look like
         // a new track: the position reset to the start and the title froze.
         self.scroller.observe(&full);
-        let window = if self.scroller.needs_scroll(&full) {
+        let window = if !self.reduced_motion && self.scroller.needs_scroll(&full) {
             self.scroller.frame(&full)
         } else {
             full.clone()
@@ -422,8 +424,8 @@ impl Module for Media {
     }
     fn scrolling(&self) -> bool {
         // Playback position is sampled once/second. Only moving text needs
-        // the animation cadence; a short playing title can sleep too.
-        self.scroller.moving()
+        // the animation cadence; reduced motion keeps it still.
+        !self.reduced_motion && self.scroller.moving()
     }
     fn progress(&self) -> Option<f32> {
         self.progress
@@ -932,6 +934,7 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
             "media" => out.push(Box::new(Media {
                 sample: Sample::default(),
                 player: None,
+                reduced_motion: config::appearance_reduced_motion(),
                 music: icons.music,
                 scroller: crate::scroll::Scroller::new(cfg.media_width),
                 progress: None,
@@ -1216,6 +1219,7 @@ mod tests {
         let mut media = Media {
             sample: Sample::default(),
             player: Some("mpv".into()),
+            reduced_motion: false,
             music: ">",
             scroller: crate::scroll::Scroller::new(10),
             progress: None,
