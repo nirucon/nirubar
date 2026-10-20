@@ -32,7 +32,9 @@ niructl restart-bar
 
 At narrow widths the workspace cells keep their configured width and the
 lowest-priority status modules collapse into a clickable `+N` overflow panel.
-Clicks open information; media/volume information does not pause or mute.
+Left-click opens information and never changes playback or mute. Media:
+right-click play/pause, scroll previous/next, middle-click next MPRIS player.
+Volume: right-click mute output, scroll volume, middle-click mute microphone.
 Calendar: Monday first, ISO week numbers, Left/Right month navigation.
 One bar per monitor; one XEmbed tray per X screen.
 

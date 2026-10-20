@@ -40,6 +40,31 @@ fn parse_amixer_percent(text: &str) -> Option<u32> {
         .find_map(|part| part.split("%]").next()?.trim().parse::<u32>().ok())
 }
 
+fn run_owned(program: &str, args: &[String]) -> Option<String> {
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run(program, &refs)
+}
+
+fn player_args(player: Option<&str>) -> Vec<String> {
+    match player {
+        Some(player) if !player.is_empty() => vec!["-p".into(), player.into()],
+        _ => Vec::new(),
+    }
+}
+
+fn player_query(player: Option<&str>, args: &[&str]) -> Option<String> {
+    let mut full = player_args(player);
+    full.extend(args.iter().map(|arg| (*arg).to_string()));
+    run_owned("playerctl", &full)
+}
+
+/// Command that performs a media action for the selected player.
+pub fn player_command(player: Option<&str>, action: &str) -> (String, Vec<String>) {
+    let mut args = player_args(player);
+    args.push(action.into());
+    ("playerctl".into(), args)
+}
+
 fn which(program: &str) -> bool {
     std::env::var("PATH")
         .map(|p| {
@@ -125,6 +150,78 @@ impl Volume {
         false
     }
 
+    /// Command form for a scroll-wheel step, using the same provider as read().
+    pub fn step_command(delta: i32) -> Option<(String, Vec<String>)> {
+        let arg = if delta > 0 {
+            format!("{delta}%+")
+        } else {
+            format!("{}%-", -delta)
+        };
+        if which("wpctl") {
+            return Some((
+                "wpctl".into(),
+                vec!["set-volume".into(), "@DEFAULT_AUDIO_SINK@".into(), arg],
+            ));
+        }
+        if which("amixer") {
+            return Some((
+                "amixer".into(),
+                vec![
+                    "-q".into(),
+                    "set".into(),
+                    "Master".into(),
+                    arg,
+                    "unmute".into(),
+                ],
+            ));
+        }
+        None
+    }
+
+    /// Command form for output mute.
+    pub fn mute_command() -> Option<(String, Vec<String>)> {
+        if which("wpctl") {
+            return Some((
+                "wpctl".into(),
+                vec![
+                    "set-mute".into(),
+                    "@DEFAULT_AUDIO_SINK@".into(),
+                    "toggle".into(),
+                ],
+            ));
+        }
+        if which("amixer") {
+            return Some((
+                "amixer".into(),
+                vec!["-q".into(), "set".into(), "Master".into(), "toggle".into()],
+            ));
+        }
+        None
+    }
+
+    /// Command form for microphone mute. PipeWire exposes a source node; plain
+    /// ALSA without wpctl has no portable equivalent, so the action is disabled.
+    pub fn mic_mute_command() -> Option<(String, Vec<String>)> {
+        which("wpctl").then(|| {
+            (
+                "wpctl".into(),
+                vec![
+                    "set-mute".into(),
+                    "@DEFAULT_AUDIO_SOURCE@".into(),
+                    "toggle".into(),
+                ],
+            )
+        })
+    }
+
+    /// Whether the default microphone is muted, when PipeWire can report it.
+    pub fn mic_muted() -> Option<bool> {
+        which("wpctl")
+            .then(|| run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SOURCE@"]))
+            .flatten()
+            .map(|text| text.contains("[MUTED]"))
+    }
+
     #[allow(dead_code)] // used by NIRUWM's media keys through handle_key
     pub fn toggle_mute() -> bool {
         if which("wpctl") {
@@ -206,18 +303,17 @@ impl Media {
     /// `playerctl` is a tiny, widely packaged tool that speaks the standard
     /// MPRIS D-Bus interface. Going through D-Bus directly would mean a
     /// dependency on a D-Bus crate and reimplementing what it already does.
-    pub fn read() -> Option<Self> {
+    /// Read a specific MPRIS player, or the active one when `player` is None.
+    pub fn read_player(player: Option<&str>) -> Option<Self> {
         if !which("playerctl") {
             return None;
         }
-        let playing = run("playerctl", &["status"]).as_deref() == Some("Playing");
-        let artist = run("playerctl", &["metadata", "artist"]).unwrap_or_default();
-        let title = run("playerctl", &["metadata", "title"])?;
-        // Position and length are asked for once: two separate calls would be
-        // two more processes, and `playerctl` prints both in one query.
-        let position = run("playerctl", &["position"]).and_then(|p| {
+        let playing = player_query(player, &["status"]).as_deref() == Some("Playing");
+        let artist = player_query(player, &["metadata", "artist"]).unwrap_or_default();
+        let title = player_query(player, &["metadata", "title"])?;
+        let position = player_query(player, &["position"]).and_then(|p| {
             let pos: f64 = p.parse().ok()?;
-            let len = run("playerctl", &["metadata", "mpris:length"])
+            let len = player_query(player, &["metadata", "mpris:length"])
                 .and_then(|l| l.parse::<f64>().ok())
                 .map(|us| us / 1_000_000.0)?;
             (len > 1.0).then_some((pos.max(0.0) as u64, len as u64))
@@ -228,6 +324,19 @@ impl Media {
             playing,
             position,
         })
+    }
+
+    /// Names of every MPRIS player on the session bus.
+    pub fn players() -> Vec<String> {
+        run("playerctl", &["-l"])
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// One line, clipped to `width` characters: `artist - title`.
@@ -462,10 +571,25 @@ mod tests {
     }
 
     #[test]
+    fn player_commands_select_a_player_when_requested() {
+        assert_eq!(
+            player_command(None, "next"),
+            ("playerctl".into(), vec!["next".into()])
+        );
+        assert_eq!(
+            player_command(Some("mpv"), "previous"),
+            (
+                "playerctl".into(),
+                vec!["-p".into(), "mpv".into(), "previous".into()]
+            )
+        );
+    }
+
+    #[test]
     fn status_is_not_required_for_the_bar_to_run() {
         // Reading volume and media must never panic or block the bar when the
         // tools are missing; they simply return nothing.
         let _ = Volume::read();
-        let _ = Media::read();
+        let _ = Media::read_player(None);
     }
 }

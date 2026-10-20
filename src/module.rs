@@ -16,6 +16,33 @@ pub enum Side {
     Right,
 }
 
+/// A non-reading input on a module. Left click still opens the information
+/// panel; these are the deliberate controls that can change playback or audio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Input {
+    Right,
+    Middle,
+    ScrollUp,
+    ScrollDown,
+}
+
+/// A command requested by a module after an explicit input.
+pub struct Control {
+    /// Coalescing key: the same control cannot run twice concurrently.
+    pub key: String,
+    /// Program and arguments, or None when the provider is unavailable.
+    pub command: Option<(String, Vec<String>)>,
+}
+
+impl Control {
+    fn run(key: &str, command: Option<(String, Vec<String>)>) -> Self {
+        Self {
+            key: key.into(),
+            command,
+        }
+    }
+}
+
 /// One piece of the bar.
 pub trait Module {
     /// Stable name used in the config.
@@ -50,6 +77,11 @@ pub trait Module {
     /// content changed and should be reopened.
     fn popup_navigate(&mut self, _delta: i32) -> bool {
         false
+    }
+    /// Convert an explicit non-left input into a bounded helper command.
+    /// Reading a panel never reaches this method.
+    fn control(&mut self, _input: Input) -> Option<Control> {
+        None
     }
 }
 
@@ -304,8 +336,18 @@ impl Module for Volume {
                 } else {
                     format!("{}%", v.percent)
                 },
+                format!(
+                    "microphone: {}",
+                    match av::Volume::mic_muted() {
+                        Some(true) => "muted",
+                        Some(false) => "on",
+                        None => "unknown",
+                    }
+                ),
                 String::new(),
-                "media keys: volume up, down, mute".to_string(),
+                "scroll: volume up/down".to_string(),
+                "right-click: mute output".to_string(),
+                "middle-click: mute microphone".to_string(),
             ],
             None => vec![
                 "no audio server answers".to_string(),
@@ -316,12 +358,22 @@ impl Module for Volume {
         };
         Some(("Volume".into(), lines))
     }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Right => Some(Control::run("volume-mute", av::Volume::mute_command())),
+            Input::Middle => Some(Control::run("mic-mute", av::Volume::mic_mute_command())),
+            Input::ScrollUp => Some(Control::run("volume-up", av::Volume::step_command(5))),
+            Input::ScrollDown => Some(Control::run("volume-down", av::Volume::step_command(-5))),
+        }
+    }
 }
 
 /// Placeholder for the drawn music mark. The em space keeps the layout honest
 /// where the text width is measured; the bar paints shapes over it.
 pub struct Media {
     sample: Sample<av::Media>,
+    /// Selected MPRIS player; None follows the active player.
+    pub player: Option<String>,
     pub music: &'static str,
     /// Scrolls a long title instead of cutting it off.
     pub scroller: crate::scroll::Scroller,
@@ -340,7 +392,12 @@ impl Module for Media {
         Side::Right
     }
     fn render(&mut self) -> String {
-        let Some(m) = self.sample.get(av::Media::read).cloned() else {
+        let player = self.player.clone();
+        let Some(m) = self
+            .sample
+            .get(|| av::Media::read_player(player.as_deref()))
+            .cloned()
+        else {
             // Nothing plays: let the next track start from its beginning, and
             // stop asking the bar to repaint.
             self.scroller.observe("");
@@ -372,7 +429,9 @@ impl Module for Media {
         self.progress
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let lines = match av::Media::read() {
+        let players = av::Media::players();
+        let player = self.player.as_deref();
+        let lines = match av::Media::read_player(player) {
             Some(m) => vec![
                 m.title.clone(),
                 m.artist.clone(),
@@ -382,15 +441,60 @@ impl Module for Media {
                 } else {
                     "paused".to_string()
                 },
-                "use player controls or media keys for playback".to_string(),
+                format!("player: {}", self.player.as_deref().unwrap_or("active")),
+                String::new(),
+                "right-click: play/pause".to_string(),
+                "scroll: previous / next track".to_string(),
+                "middle-click: next MPRIS player".to_string(),
             ],
             None => vec![
                 "no player running".to_string(),
                 String::new(),
                 "a player must support MPRIS, for example mpv, VLC or Firefox".to_string(),
+                "install playerctl to expose player controls".to_string(),
             ],
         };
+        if !players.is_empty() {
+            let mut lines = lines;
+            lines.push(String::new());
+            lines.push(format!("players: {}", players.join(", ")));
+            return Some(("Media".into(), lines));
+        }
         Some(("Media".into(), lines))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        let player = self.player.as_deref();
+        match input {
+            Input::Right => Some(Control::run(
+                "media-playpause",
+                Some(av::player_command(player, "play-pause")),
+            )),
+            Input::ScrollUp => Some(Control::run(
+                "media-previous",
+                Some(av::player_command(player, "previous")),
+            )),
+            Input::ScrollDown => Some(Control::run(
+                "media-next",
+                Some(av::player_command(player, "next")),
+            )),
+            Input::Middle => {
+                let players = av::Media::players();
+                if players.is_empty() {
+                    return None;
+                }
+                let next = match self.player.as_deref() {
+                    Some(current) => players
+                        .iter()
+                        .position(|player| player == current)
+                        .map(|index| (index + 1) % players.len())
+                        .unwrap_or(0),
+                    None => 0,
+                };
+                self.player = Some(players[next].clone());
+                // Player selection changes what the next render reads.
+                Some(Control::run("media-player", None))
+            }
+        }
     }
 }
 
@@ -827,6 +931,7 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
             })),
             "media" => out.push(Box::new(Media {
                 sample: Sample::default(),
+                player: None,
                 music: icons.music,
                 scroller: crate::scroll::Scroller::new(cfg.media_width),
                 progress: None,
@@ -1104,6 +1209,60 @@ mod tests {
         assert_eq!(mods.len(), 2);
         assert_eq!(mods[0].name(), "clock");
         assert_eq!(mods[1].name(), "battery");
+    }
+
+    #[test]
+    fn media_controls_are_explicit_and_player_aware() {
+        let mut media = Media {
+            sample: Sample::default(),
+            player: Some("mpv".into()),
+            music: ">",
+            scroller: crate::scroll::Scroller::new(10),
+            progress: None,
+        };
+        let right = media.control(Input::Right).and_then(|c| c.command);
+        assert_eq!(
+            right,
+            Some((
+                "playerctl".into(),
+                vec!["-p".into(), "mpv".into(), "play-pause".into()]
+            ))
+        );
+        let up = media.control(Input::ScrollUp).and_then(|c| c.command);
+        assert_eq!(
+            up,
+            Some((
+                "playerctl".into(),
+                vec!["-p".into(), "mpv".into(), "previous".into()]
+            ))
+        );
+        let down = media.control(Input::ScrollDown).and_then(|c| c.command);
+        assert_eq!(
+            down,
+            Some((
+                "playerctl".into(),
+                vec!["-p".into(), "mpv".into(), "next".into()]
+            ))
+        );
+    }
+
+    #[test]
+    fn volume_controls_exist_even_when_the_provider_is_missing() {
+        let mut volume = Volume {
+            icons: crate::av::VolumeIcons::plain(),
+            sample: Sample::default(),
+        };
+        for input in [
+            Input::Right,
+            Input::Middle,
+            Input::ScrollUp,
+            Input::ScrollDown,
+        ] {
+            assert!(
+                volume.control(input).is_some(),
+                "control mapping is missing for {input:?}"
+            );
+        }
     }
 
     #[test]

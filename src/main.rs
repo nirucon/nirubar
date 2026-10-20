@@ -10,6 +10,7 @@
 mod ambient;
 mod av;
 mod config;
+mod helpers;
 mod layout;
 mod module;
 mod popup;
@@ -279,6 +280,8 @@ struct Bar {
     placed: Vec<Placed>,
     /// Overflow indicator hit box, when low-priority modules were hidden.
     overflow: Option<Placed>,
+    /// Bounded media/audio controls; reading a panel never uses this.
+    helpers: helpers::HelperPool,
     /// Summaries for hidden modules, used by the overflow panel.
     hidden: Vec<String>,
     cells: i16,
@@ -492,6 +495,7 @@ impl Bar {
             placed: Vec::new(),
             overflow: None,
             hidden: Vec::new(),
+            helpers: helpers::HelperPool::new(4),
             cells,
             popup: None,
             title_shown: None,
@@ -868,6 +872,7 @@ impl Bar {
     }
 
     fn draw(&mut self) -> Result<()> {
+        self.helpers.reap();
         self.snapshot();
         let frame = self.frame_key();
         if frame == self.last_frame {
@@ -949,6 +954,28 @@ impl Bar {
             )?;
         }
         let _ = bars;
+        Ok(())
+    }
+
+    /// Run an explicit non-left control on the module under the pointer.
+    fn control(&mut self, x: i16, input: module::Input) -> Result<()> {
+        let Some(index) = self
+            .placed
+            .iter()
+            .find(|p| x >= p.x && x < p.x + p.width)
+            .map(|p| p.index)
+        else {
+            return Ok(());
+        };
+        let Some(control) = self.modules.get_mut(index).and_then(|m| m.control(input)) else {
+            return Ok(());
+        };
+        if let Some((program, args)) = control.command {
+            self.helpers.spawn(&control.key, &program, &args);
+        }
+        // Player selection has no command but changes what the next read uses.
+        self.last_frame.clear();
+        self.draw()?;
         Ok(())
     }
 
@@ -1213,6 +1240,19 @@ impl Bar {
                     }
                 }
                 Event::ButtonPress(e) => {
+                    let control = match e.detail {
+                        2 => Some(module::Input::Middle),
+                        3 => Some(module::Input::Right),
+                        4 => Some(module::Input::ScrollUp),
+                        5 => Some(module::Input::ScrollDown),
+                        _ => None,
+                    };
+                    if let Some(input) = control {
+                        if e.event_x >= 0 {
+                            self.control(e.event_x, input)?;
+                        }
+                        continue;
+                    }
                     if let Some(p) = self.popup.take() {
                         // Clicking the bar under a panel toggles or replaces it.
                         let same_module = self

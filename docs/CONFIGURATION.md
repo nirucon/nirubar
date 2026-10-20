@@ -15,9 +15,9 @@ Modules, configured in one line each:
 | `workspaces` | nine cells, click one to switch |
 | `network` | wired or wireless icon while a link is up |
 | `battery` | charge and a charging bolt, laptops only |
-| `volume` | level with an icon, or a mute icon; click for information |
+| `volume` | level with an icon, or a mute icon; click for info, scroll to change, right-click mute, middle-click mic mute |
 | `brightness` | laptop backlight percentage; hidden without a backlight device |
-| `media` | what is playing, `artist - title`, scrolling when it is long, with a thin progress line under it |
+| `media` | what is playing, `artist - title`, scrolling when it is long, with a thin progress line; right-click play/pause, scroll previous/next, middle-click next player |
 | `updates` | available package upgrades; click for the detail and the command |
 | `pulse` | cpu and memory, click for a graph of the last minute |
 | `uptime` | how long the machine has been on |
@@ -28,8 +28,9 @@ A system tray is on by default: applications that show a tray icon appear at
 the right end of the bar.
 
 Click a module for a panel: a month calendar, network name and address,
-battery detail. One panel is open at a time and it closes on a click on the
-same module, a click anywhere else, Escape, or after
+battery detail. Reading a panel never changes playback or mute; only the
+explicit right/middle/scroll controls do. One panel is open at a time and it
+closes on a click on the same module, a click anywhere else, Escape, or after
 `popup_timeout_seconds`.
 
 ## How it works
