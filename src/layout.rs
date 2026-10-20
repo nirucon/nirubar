@@ -40,13 +40,9 @@ pub(crate) fn fit(left: i16, right: i16, gap: i16, overflow_width: i16, items: &
     let cost = |width: i16| width.max(0) + gap.max(0) * 2;
     let total: i16 = items.iter().map(|item| cost(item.width)).sum();
     if total <= available {
+        let visible = (0..items.len()).collect::<Vec<_>>();
         return Fit {
-            visible: place(
-                items.iter().map(|item| item.index).collect(),
-                items,
-                right,
-                gap,
-            ),
+            visible: place(&visible, items, right, gap),
             hidden: Vec::new(),
             overflow: None,
         };
@@ -78,12 +74,7 @@ pub(crate) fn fit(left: i16, right: i16, gap: i16, overflow_width: i16, items: &
     }
     hidden.sort_unstable();
     let modules_right = right - reserve;
-    let visible = place(
-        visible.iter().map(|slot| items[*slot].index).collect(),
-        items,
-        modules_right,
-        gap,
-    );
+    let visible = place(&visible, items, modules_right, gap);
     let overflow = if hidden.is_empty() {
         None
     } else {
@@ -96,22 +87,14 @@ pub(crate) fn fit(left: i16, right: i16, gap: i16, overflow_width: i16, items: &
     }
 }
 
-fn place(indexes: Vec<usize>, items: &[Item], right: i16, gap: i16) -> Vec<Placement> {
+fn place(slots: &[usize], items: &[Item], right: i16, gap: i16) -> Vec<Placement> {
     let mut x = right;
-    let mut placements = Vec::with_capacity(indexes.len());
-    let mut by_index: Vec<Option<&Item>> = vec![None; items.len()];
-    for item in items {
-        if item.index < by_index.len() {
-            by_index[item.index] = Some(item);
-        }
-    }
-    for index in indexes.iter().rev() {
-        let Some(item) = by_index.get(*index).and_then(|item| *item) else {
-            continue;
-        };
+    let mut placements = Vec::with_capacity(slots.len());
+    for slot in slots.iter().rev() {
+        let item = &items[*slot];
         x -= item.width.max(0);
         placements.push(Placement {
-            index: *index,
+            index: item.index,
             x,
             width: item.width.max(0),
         });
@@ -212,5 +195,37 @@ mod tests {
             "clock/highest priority stayed visible"
         );
         assert!(!visible.contains(&3), "lowest priority was hidden first");
+    }
+
+    #[test]
+    fn sparse_module_indexes_keep_the_clock_visible() {
+        // Empty modules are omitted before layout, so indexes can have gaps.
+        // The old by-index table dropped anything beyond the item count.
+        let sparse = vec![
+            Item {
+                index: 0,
+                width: 50,
+                priority: 70,
+            },
+            Item {
+                index: 3,
+                width: 50,
+                priority: 85,
+            },
+            Item {
+                index: 5,
+                width: 60,
+                priority: 90,
+            },
+            Item {
+                index: 6,
+                width: 80,
+                priority: 100,
+            },
+        ];
+        let fit = fit(270, 1910, 10, 30, &sparse);
+        let visible: Vec<usize> = fit.visible.iter().map(|p| p.index).collect();
+        assert!(visible.contains(&6), "clock index 6 must be placed");
+        assert_eq!(fit.visible.len(), 4);
     }
 }
