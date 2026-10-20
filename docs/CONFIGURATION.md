@@ -21,7 +21,8 @@ Modules, configured in one line each:
 | `updates` | available package upgrades; click for the detail and the command |
 | `pulse` | cpu and memory, click for a graph of the last minute |
 | `uptime` | how long the machine has been on |
-| `sun` | sunrise and sunset for your latitude |
+| `sun` | sunrise and sunset for your latitude; panel shows daylight progress |
+| `weather` | cached temperature, condition and next-hour rain chance; panel has an eight-hour rain timeline and daylight progress |
 | `clock` | date and time |
 
 A system tray is on by default: applications that show a tray icon appear at

@@ -272,7 +272,12 @@ impl Weather {
             return "weather --".into();
         };
         let condition = condition(api.current.weather_code.unwrap_or(0), true);
-        format!("{condition} {:.0}°", temp)
+        let rain = next_precipitation_probability(api);
+        if rain >= 20.0 {
+            format!("{condition} {:.0}° {rain:.0}%", temp)
+        } else {
+            format!("{condition} {:.0}°", temp)
+        }
     }
 
     pub fn panel(&mut self) -> (String, Vec<String>) {
@@ -320,6 +325,16 @@ impl Weather {
             }
             if let Some(p) = c.precipitation {
                 lines.push(format!("precipitation {p:.1} mm"));
+            }
+            lines.push(precipitation_timeline(
+                api,
+                8,
+                chrono::Local::now().naive_local(),
+            ));
+            if let (Some(rise), Some(set)) = (api.daily.sunrise.first(), api.daily.sunset.first()) {
+                lines.push(daylight_line(rise, set, local_now_minutes()));
+            } else {
+                lines.push("daylight: no sunrise or sunset today".into());
             }
             lines.push(String::new());
             lines.push("next hours".into());
@@ -382,6 +397,83 @@ impl Weather {
         }
         ("Weather".into(), lines)
     }
+}
+
+fn parse_clock(value: &str) -> Option<u32> {
+    let clock = value.split('T').nth(1).unwrap_or(value);
+    let (hour, minute) = clock.split_once(':')?;
+    let hour: u32 = hour.parse().ok()?;
+    let minute: u32 = minute.parse().ok()?;
+    Some(hour * 60 + minute)
+}
+
+fn local_now_minutes() -> u32 {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    now.hour() * 60 + now.minute()
+}
+
+fn next_precipitation_probability(api: &Api) -> f64 {
+    let now = chrono::Local::now().naive_local();
+    api.hourly
+        .time
+        .iter()
+        .enumerate()
+        .find_map(|(index, time)| {
+            let parsed = chrono::NaiveDateTime::parse_from_str(time, "%Y-%m-%dT%H:%M").ok()?;
+            (parsed >= now).then(|| {
+                api.hourly
+                    .precipitation_probability
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(0.0)
+            })
+        })
+        .unwrap_or(0.0)
+}
+
+fn precipitation_timeline(api: &Api, hours: usize, now: chrono::NaiveDateTime) -> String {
+    let mut values = Vec::new();
+    for (index, time) in api.hourly.time.iter().enumerate() {
+        let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(time, "%Y-%m-%dT%H:%M") else {
+            continue;
+        };
+        if parsed < now {
+            continue;
+        }
+        let probability = api
+            .hourly
+            .precipitation_probability
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or(0.0);
+        values.push(format!("{probability:.0}"));
+        if values.len() == hours {
+            break;
+        }
+    }
+    if values.is_empty() {
+        "rain next hours: no forecast".into()
+    } else {
+        format!("rain next {}h: {}%", values.len(), values.join(" "))
+    }
+}
+
+pub(crate) fn daylight_line(sunrise: &str, sunset: &str, now: u32) -> String {
+    let (Some(rise), Some(set)) = (parse_clock(sunrise), parse_clock(sunset)) else {
+        return "daylight: no sunrise or sunset today".into();
+    };
+    if set <= rise {
+        return "daylight: no sunrise or sunset today".into();
+    }
+    let length = set - rise;
+    let elapsed = now.saturating_sub(rise).min(length);
+    let filled = ((u64::from(elapsed) * 10) / u64::from(length)) as usize;
+    let bar = format!("{}{}", "#".repeat(filled), "-".repeat(10 - filled));
+    let left = length.saturating_sub(elapsed);
+    format!("daylight: [{bar}] {}h {:02}m left", left / 60, left % 60)
 }
 
 fn fetch(latitude: f64, longitude: f64) -> Result<Api, String> {
@@ -481,6 +573,27 @@ mod tests {
     }
 
     #[test]
+    fn daylight_and_precipitation_timeline_use_the_cache() {
+        let api: Api = serde_json::from_str(FIXTURE).unwrap();
+        let daylight = daylight_line("2026-10-19T07:44", "2026-10-19T17:31", 12 * 60);
+        assert!(daylight.contains("["), "{daylight}");
+        assert!(daylight.contains("left"), "{daylight}");
+        let now =
+            chrono::NaiveDateTime::parse_from_str("2026-10-19T13:00", "%Y-%m-%dT%H:%M").unwrap();
+        let rain = precipitation_timeline(&api, 8, now);
+        assert!(rain.contains("rain next"), "{rain}");
+        assert!(rain.contains('%'), "{rain}");
+    }
+
+    #[test]
+    fn polar_and_missing_days_do_not_invent_daylight() {
+        assert!(daylight_line("", "", 12 * 60).contains("no sunrise"));
+        assert!(
+            daylight_line("2026-10-19T12:00", "2026-10-19T12:00", 12 * 60).contains("no sunrise")
+        );
+    }
+
+    #[test]
     fn configured_zero_coordinates_are_not_missing() {
         let settings = Settings {
             configured: true,
@@ -502,6 +615,26 @@ mod tests {
             },
         ));
         assert!(weather.summary().contains("27"));
+    }
+
+    #[test]
+    fn stale_cache_remains_visible_and_marked() {
+        let api: Api = serde_json::from_str(FIXTURE).unwrap();
+        let settings = Settings {
+            configured: true,
+            location: "Ljungskile".into(),
+            latitude: 58.2,
+            longitude: 11.9,
+            refresh: Duration::from_secs(1800),
+        };
+        let mut weather = Weather::new(settings);
+        weather.loaded = true;
+        weather.cache = Some((now_secs().saturating_sub(7200), api));
+        weather.error = Some("offline".into());
+        weather.last_try = Some(Instant::now());
+        let (_, lines) = weather.panel();
+        assert!(lines.iter().any(|line| line.contains("stale")));
+        assert!(lines.iter().any(|line| line.contains("rain next")));
     }
 
     #[test]

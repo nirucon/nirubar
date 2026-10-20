@@ -35,7 +35,8 @@ lowest-priority status modules collapse into a clickable `+N` overflow panel.
 Battery packs are aggregated (weighted by energy when available) and remaining
 time is shown only when the kernel reports a power rate. A network icon with
 `!` means the link is up but no default route exists; the panel separates link,
-route and address.
+route and address. The optional weather cell adds the next-hour rain chance, and
+its panel shows a cached eight-hour rain timeline and daylight progress.
 Left-click opens information and never changes playback or mute. Media:
 right-click play/pause, scroll previous/next, middle-click next MPRIS player.
 Volume: right-click mute output, scroll volume, middle-click mute microphone.

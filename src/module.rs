@@ -884,12 +884,17 @@ impl Module for Sun {
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         let lines = match ambient::sun_times(self.latitude, self.longitude) {
-            Some((rise, set)) => vec![
-                format!("sunrise {rise}"),
-                format!("sunset  {set}"),
-                String::new(),
-                format!("at {:.1}, {:.1}", self.latitude, self.longitude),
-            ],
+            Some((rise, set)) => {
+                use chrono::Timelike;
+                let now = chrono::Local::now();
+                vec![
+                    format!("sunrise {rise}"),
+                    format!("sunset  {set}"),
+                    weather::daylight_line(&rise, &set, now.hour() * 60 + now.minute()),
+                    String::new(),
+                    format!("at {:.1}, {:.1}", self.latitude, self.longitude),
+                ]
+            }
             None => vec![
                 "no sunrise or sunset today".to_string(),
                 String::new(),
