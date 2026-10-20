@@ -321,6 +321,9 @@ impl Config {
         if wallpaper.rotation_minutes > 100_000 {
             return Err("wallpaper.rotation_minutes is too large".into());
         }
+        if wallpaper.follow_theme && wallpaper.theme_dir.trim().is_empty() {
+            return Err("wallpaper.theme_dir must not be empty when follow_theme is true".into());
+        }
 
         let monitors: MonitorsValidation = self.monitors.clone().try_into()?;
         if monitors.workspaces == 0 || monitors.workspaces > 32 {
@@ -516,6 +519,8 @@ struct WallpaperValidation {
     scale: String,
     files: Vec<String>,
     shuffle_on_start: bool,
+    follow_theme: bool,
+    theme_dir: String,
 }
 
 impl Default for WallpaperValidation {
@@ -529,6 +534,8 @@ impl Default for WallpaperValidation {
             scale: "fill".into(),
             files: Vec::new(),
             shuffle_on_start: true,
+            follow_theme: true,
+            theme_dir: "~/Pictures/Wallpapers/NIRU".into(),
         }
     }
 }
