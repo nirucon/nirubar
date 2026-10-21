@@ -1127,6 +1127,7 @@ mod tests {
                         | "weather"
                         | "notifications"
                         | "brightness"
+                        | "display"
                 ),
                 "example config names an unknown module {name:?}"
             );
