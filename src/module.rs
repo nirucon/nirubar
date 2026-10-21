@@ -401,6 +401,45 @@ pub struct Volume {
     sample: Sample<av::Volume>,
 }
 
+pub struct Bluetooth {
+    pub icons: status::Icons,
+    monitor: crate::bluetooth::Monitor,
+}
+
+impl Module for Bluetooth {
+    fn name(&self) -> &'static str {
+        "bluetooth"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::bluetooth::text(&self.monitor.snapshot(), self.icons.bluetooth)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Bluetooth".into(),
+            crate::bluetooth::detail(&self.monitor.snapshot()),
+        ))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Right => Some(Control::run(
+                "bluetooth-power",
+                Some((
+                    "niructl".into(),
+                    vec!["bluetooth".into(), "power".into(), "toggle".into()],
+                )),
+            )),
+            Input::Middle => Some(Control::run(
+                "bluetooth-selector",
+                Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
+            )),
+            _ => None,
+        }
+    }
+}
+
 pub struct Microphone {
     monitor: crate::microphone::Monitor,
     visibility: String,
@@ -1069,6 +1108,10 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
                 icons: cfg.volume_icons(),
                 sample: Sample::default(),
             })),
+            "bluetooth" => out.push(Box::new(Bluetooth {
+                icons,
+                monitor: crate::bluetooth::Monitor::new(),
+            })),
             "microphone" => out.push(Box::new(Microphone {
                 monitor: crate::microphone::Monitor::new(),
                 visibility: cfg.microphone_visibility.clone(),
@@ -1215,6 +1258,7 @@ mod tests {
                         | "brightness"
                         | "display"
                         | "microphone"
+                        | "bluetooth"
                         | "mode"
                 ),
                 "example config names an unknown module {name:?}"

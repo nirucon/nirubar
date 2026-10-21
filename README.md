@@ -1,7 +1,7 @@
 # NIRUBAR
 
 Small native X11 status bar with monitor-local workspaces, calendar, network,
-battery, audio/media, brightness, a multi-display count, work-mode countdown and optional weather,
+battery, audio/media, brightness, a multi-display count, work-mode countdown, microphone/Bluetooth status and optional weather,
 notifications, load and update panels. Four NIRU themes plus custom themes.
 
 ## Install
@@ -37,6 +37,16 @@ Requires the suite's `niructl audio mic-status` / `mic-level` commands and
 WirePlumber (`wpctl`). A single bounded worker polls every two seconds; the
 X11 render/input thread never waits for the audio provider. Gain is the
 configured input level, not a live sound meter.
+
+### Bluetooth (optional)
+
+Add `"bluetooth"` to `[bar] modules`. The module is hidden when no adapter
+exists; otherwise it shows off, on, or the connected device. Its panel lists
+paired devices and battery only when BlueZ reports it. Right click toggles the
+adapter, middle click opens `nirulauncher --bluetooth` for keyboard
+connect/disconnect/power controls. Requires BlueZ (`bluetoothctl`, installed by
+NIRUX) and the distro Bluetooth service. Reading status/panel never pairs or
+connects; unknown battery is shown as unknown, not 0%.
 
 Shared config: `~/.config/niruwm/config.toml` (XDG respected).
 Weather: `~/.config/nirubar/config.toml`; weather is opt-in.

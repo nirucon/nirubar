@@ -9,6 +9,7 @@
 
 mod ambient;
 mod av;
+mod bluetooth;
 mod config;
 mod helpers;
 mod layout;
@@ -240,6 +241,7 @@ fn module_priority(name: &str) -> i32 {
         "battery" => 90,
         "network" => 85,
         "volume" => 80,
+        "bluetooth" => 84,
         "microphone" => 82,
         "media" => 70,
         "notifications" => 65,
@@ -1483,6 +1485,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             plain.display
         },
         mode: if ok(nerd.mode) { nerd.mode } else { plain.mode },
+        bluetooth: if ok(nerd.bluetooth) {
+            nerd.bluetooth
+        } else {
+            plain.bluetooth
+        },
         notifications: if ok(nerd.notifications) {
             nerd.notifications
         } else {

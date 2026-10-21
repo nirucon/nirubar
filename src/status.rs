@@ -39,6 +39,8 @@ pub struct Icons {
     pub display: &'static str,
     /// The work-mode countdown module.
     pub mode: &'static str,
+    /// The optional Bluetooth module.
+    pub bluetooth: &'static str,
     /// The optional unread-indicator module.
     pub notifications: &'static str,
     /// The media module's music note.
@@ -71,6 +73,7 @@ impl Icons {
             brightness: "\u{f185}", // sun; brightness is a display property
             display: "\u{f108}", // nf-fa-desktop
             mode: "\u{f017}",    // clock face
+            bluetooth: "\u{f293}", // nf-fa-bluetooth
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
         }
@@ -96,6 +99,7 @@ impl Icons {
             brightness: "bri",
             display: "disp",
             mode: "mode",
+            bluetooth: "bt",
             notifications: "ntf",
             music: "mus",
         }

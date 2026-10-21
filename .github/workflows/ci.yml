@@ -19,6 +19,8 @@ jobs:
         run: sh tests/theme-colors.sh "$PWD/target/release/nirubar"
       - name: Microphone status and controls (fake provider)
         run: xvfb-run -a sh tests/microphone-smoke.sh "$PWD/target/release/nirubar"
+      - name: Bluetooth status and controls (fake provider)
+        run: xvfb-run -a sh tests/bluetooth-smoke.sh "$PWD/target/release/nirubar"
       - name: Bound probes while media is scrolling
         run: sh tests/resource-check.sh "$PWD/target/release/nirubar"
 
