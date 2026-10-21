@@ -819,7 +819,7 @@ impl Module for Notifications {
             history
         };
         lines.push(String::new());
-        lines.push("nirunotify --dnd toggle".to_string());
+        lines.push("niructl dnd toggle".to_string());
         Some(("Notifications".into(), lines))
     }
 }
