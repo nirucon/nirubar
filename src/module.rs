@@ -324,12 +324,20 @@ impl Module for Display {
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         self.refresh();
-        match &self.outputs {
-            Some(outputs) => Some(("Displays".into(), status::display_detail(outputs))),
-            None => Some((
-                "Displays".into(),
-                vec!["display information unavailable (xrandr)".to_string()],
+        let mut lines = match &self.outputs {
+            Some(outputs) => status::display_detail(outputs),
+            None => vec!["display information unavailable (xrandr)".to_string()],
+        };
+        lines.extend([String::new(), "middle-click: display profiles".into()]);
+        Some(("Displays".into(), lines))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Middle => Some(Control::run(
+                "display-profiles",
+                Some(("nirulauncher".into(), vec!["--displays".into()])),
             )),
+            _ => None,
         }
     }
 }

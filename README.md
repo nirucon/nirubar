@@ -38,6 +38,12 @@ WirePlumber (`wpctl`). A single bounded worker polls every two seconds; the
 X11 render/input thread never waits for the audio provider. Gain is the
 configured input level, not a live sound meter.
 
+### Display profiles
+
+The display panel (middle click) opens `nirulauncher --displays`, which lists
+saved `niructl display` profiles. Apply a profile with preview/keep/revert;
+reading the panel does not change the layout.
+
 ### Bluetooth (optional)
 
 Add `"bluetooth"` to `[bar] modules`. The module is hidden when no adapter
