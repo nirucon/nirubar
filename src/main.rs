@@ -16,6 +16,7 @@ mod layout;
 mod microphone;
 mod module;
 mod popup;
+mod powerprofile;
 mod probe;
 mod pulse;
 mod render;
@@ -242,6 +243,7 @@ fn module_priority(name: &str) -> i32 {
         "network" => 85,
         "volume" => 80,
         "bluetooth" => 84,
+        "powerprofile" => 83,
         "microphone" => 82,
         "media" => 70,
         "notifications" => 65,
@@ -1489,6 +1491,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.bluetooth
         } else {
             plain.bluetooth
+        },
+        powerprofile: if ok(nerd.powerprofile) {
+            nerd.powerprofile
+        } else {
+            plain.powerprofile
         },
         notifications: if ok(nerd.notifications) {
             nerd.notifications

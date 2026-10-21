@@ -41,6 +41,8 @@ pub struct Icons {
     pub mode: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
+    /// The optional power-profile module.
+    pub powerprofile: &'static str,
     /// The optional unread-indicator module.
     pub notifications: &'static str,
     /// The media module's music note.
@@ -74,6 +76,7 @@ impl Icons {
             display: "\u{f108}", // nf-fa-desktop
             mode: "\u{f017}",    // clock face
             bluetooth: "\u{f293}", // nf-fa-bluetooth
+            powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
         }
@@ -100,6 +103,7 @@ impl Icons {
             display: "disp",
             mode: "mode",
             bluetooth: "bt",
+            powerprofile: "pwr",
             notifications: "ntf",
             music: "mus",
         }

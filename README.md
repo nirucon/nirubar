@@ -38,6 +38,15 @@ WirePlumber (`wpctl`). A single bounded worker polls every two seconds; the
 X11 render/input thread never waits for the audio provider. Gain is the
 configured input level, not a live sound meter.
 
+### Power profile (optional)
+
+Add `"powerprofile"` to `[bar] modules`. It is hidden when no provider/profile
+is available; otherwise it shows the active profile. The panel lists the
+available profiles and AC/battery source. Right click advances to the next
+profile; middle click opens `nirulauncher --power`. Requires
+`power-profiles-daemon`/`powerprofilesctl`, installed by NIRUX. Reading the
+panel never changes the profile; unsupported profiles are rejected.
+
 ### Display profiles
 
 The display panel (middle click) opens `nirulauncher --displays`, which lists

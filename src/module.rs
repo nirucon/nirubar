@@ -409,6 +409,42 @@ pub struct Volume {
     sample: Sample<av::Volume>,
 }
 
+pub struct PowerProfile {
+    pub icons: status::Icons,
+    monitor: crate::powerprofile::Monitor,
+}
+
+impl Module for PowerProfile {
+    fn name(&self) -> &'static str {
+        "powerprofile"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::powerprofile::text(&self.monitor.snapshot(), self.icons.powerprofile)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Power profile".into(),
+            crate::powerprofile::detail(&self.monitor.snapshot()),
+        ))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Right => Some(Control::run(
+                "powerprofile-next",
+                Some(("niructl".into(), vec!["powerprofile".into(), "next".into()])),
+            )),
+            Input::Middle => Some(Control::run(
+                "powerprofile-selector",
+                Some(("nirulauncher".into(), vec!["--power".into()])),
+            )),
+            _ => None,
+        }
+    }
+}
+
 pub struct Bluetooth {
     pub icons: status::Icons,
     monitor: crate::bluetooth::Monitor,
@@ -1116,6 +1152,10 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
                 icons: cfg.volume_icons(),
                 sample: Sample::default(),
             })),
+            "powerprofile" => out.push(Box::new(PowerProfile {
+                icons,
+                monitor: crate::powerprofile::Monitor::new(),
+            })),
             "bluetooth" => out.push(Box::new(Bluetooth {
                 icons,
                 monitor: crate::bluetooth::Monitor::new(),
@@ -1267,6 +1307,7 @@ mod tests {
                         | "display"
                         | "microphone"
                         | "bluetooth"
+                        | "powerprofile"
                         | "mode"
                 ),
                 "example config names an unknown module {name:?}"
