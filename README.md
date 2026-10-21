@@ -1,14 +1,15 @@
 # NIRUBAR
 
-Small native X11 status bar with monitor-local workspaces, calendar, network,
-battery, audio/media, brightness, a multi-display count, work-mode countdown, microphone/Bluetooth status and optional weather,
-notifications, load and update panels. Four NIRU themes plus custom themes.
+Native X11 status bar for the NIRU desktop: monitor-local workspaces, calendar,
+network, battery, audio/media, brightness, microphone, Bluetooth, power profile,
+weather, notifications, load, updates and a system tray.
+
+Part of the [NIRUX suite](https://github.com/nirucon/nirux): [NIRUWM](https://github.com/nirucon/niruwm) · [NIRUBAR](https://github.com/nirucon/nirubar) · [NIRUSCREENSAVER](https://github.com/nirucon/niruscreensaver) · [NIRULOCK](https://github.com/nirucon/nirulock) · [NIRULAUNCHER](https://github.com/nirucon/nirulauncher) · [NIRUNOTIFY](https://github.com/nirucon/nirunotify) · [NIRUSHOT](https://github.com/nirucon/nirushot).
 
 ## Install
 
-Use [NIRUX](https://github.com/nirucon/nirux#install) for prebuilt installation
-and dependencies on **Void glibc, Debian and Arch Linux** (x86_64/glibc).
-Standalone source installation needs Rust 1.75+, a C linker and a monospace font:
+Use [NIRUX](https://github.com/nirucon/nirux#install) for the complete desktop
+and dependencies. Standalone:
 
 ```sh
 git clone https://github.com/nirucon/nirubar
@@ -17,54 +18,26 @@ cd nirubar
 ```
 
 Prefix: `NIRUBAR_PREFIX` (default `~/.local`). Existing settings are preserved.
-Maintain NIRUX-owned installations with `nirux update`.
+NIRUX-owned installations are maintained with `nirux update`.
+
+## Use
+
+NIRUWM starts the bar at login; it can also run on its own. It reserves screen
+space with an X11 strut and redraws only when displayed values change. System
+values come from `/sys`, so no daemon or NetworkManager is required.
+
+- One bar per monitor and one XEmbed tray per X screen.
+- Left click opens information; right click and scroll perform the explicit
+  playback, mute or volume actions shown by each module.
+- Middle click opens the keyboard-first detail view where one exists.
+- One panel is open at a time. Escape or a click elsewhere closes it.
+- Narrow layouts collapse lower-priority modules into a clickable `+N` panel.
 
 ## Configure
 
-### Microphone (optional)
-
-Add `"microphone"` to `[bar] modules` in the shared config. Set
-`microphone_visibility = "always"` (default), or `"muted"` to hide a healthy
-unmuted input. Missing input/provider remains visible. The label shows
-`mic mute`, input gain, `mic none` or `mic --`; unmuted never means recording.
-
-- Left click: selected input, gain and mute information; no setting changes.
-- Right click: toggle mute. Scroll: adjust input gain, preserving mute.
-- Middle click: `nirulauncher --microphone` for keyboard source selection,
-  mute and gain controls. The same commands are in Super+Shift+P.
-
-Requires the suite's `niructl audio mic-status` / `mic-level` commands and
-WirePlumber (`wpctl`). A single bounded worker polls every two seconds; the
-X11 render/input thread never waits for the audio provider. Gain is the
-configured input level, not a live sound meter.
-
-### Power profile (optional)
-
-Add `"powerprofile"` to `[bar] modules`. It is hidden when no provider/profile
-is available; otherwise it shows the active profile. The panel lists the
-available profiles and AC/battery source. Right click advances to the next
-profile; middle click opens `nirulauncher --power`. Requires
-`power-profiles-daemon`/`powerprofilesctl`, installed by NIRUX. Reading the
-panel never changes the profile; unsupported profiles are rejected.
-
-### Display profiles
-
-The display panel (middle click) opens `nirulauncher --displays`, which lists
-saved `niructl display` profiles. Apply a profile with preview/keep/revert;
-reading the panel does not change the layout.
-
-### Bluetooth (optional)
-
-Add `"bluetooth"` to `[bar] modules`. The module is hidden when no adapter
-exists; otherwise it shows off, on, or the connected device. Its panel lists
-paired devices and battery only when BlueZ reports it. Right click toggles the
-adapter, middle click opens `nirulauncher --bluetooth` for keyboard
-connect/disconnect/power controls. Requires BlueZ (`bluetoothctl`, installed by
-NIRUX) and the distro Bluetooth service. Reading status/panel never pairs or
-connects; unknown battery is shown as unknown, not 0%.
-
-Shared config: `~/.config/niruwm/config.toml` (XDG respected).
-Weather: `~/.config/nirubar/config.toml`; weather is opt-in.
+Shared settings live in `~/.config/niruwm/config.toml`. Weather is opt-in in
+`~/.config/nirubar/config.toml`. Start from [config.example.toml](config.example.toml)
+and see [configuration](docs/CONFIGURATION.md) for modules, panels and settings.
 
 ```sh
 nirubar --check-config
@@ -72,21 +45,16 @@ niructl reload
 niructl restart-bar
 ```
 
-At narrow widths the workspace cells keep their configured width and the
-lowest-priority status modules collapse into a clickable `+N` overflow panel.
-Battery packs are aggregated (weighted by energy when available) and remaining
-time is shown only when the kernel reports a power rate. A network icon with
-`!` means the link is up but no default route exists; the panel separates link,
-route and address. The optional weather cell adds the next-hour rain chance, and
-its panel shows a cached eight-hour rain timeline and daylight progress.
-Left-click opens information and never changes playback or mute. Media:
-right-click play/pause, scroll previous/next, middle-click next MPRIS player.
-Volume: right-click mute output, scroll volume, middle-click mute microphone.
-Calendar: Monday first, ISO week numbers, Left/Right month navigation.
-One bar per monitor; one XEmbed tray per X screen.
+Themes: Niru Noir, Nord, Satie, Carl Larsson and custom themes. Colours and font
+come from the shared NIRUWM appearance.
 
-[Configuration](docs/CONFIGURATION.md) · [Example](config.example.toml) ·
-[Roadmap](https://github.com/nirucon/nirux/blob/main/ROADMAP.md) ·
-[X11 tests](tests/x11.rs)
+## Development
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+sh tests/config-agreement.sh
+```
 
 MIT. Copyright 2026 Nicklas Rudolfsson.
