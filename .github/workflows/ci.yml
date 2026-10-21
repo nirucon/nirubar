@@ -13,7 +13,7 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --release --locked
       - run: sh tests/install-smoke.sh
-      - run: sudo apt-get update && sudo apt-get install -y xvfb xfonts-base fonts-dejavu-core xdotool x11-apps imagemagick
+      - run: sudo apt-get update && sudo apt-get install -y xvfb xfonts-base fonts-dejavu-core xdotool x11-apps x11-utils imagemagick
       - run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' cargo test --locked --test x11 -- --ignored --test-threads=1
       - name: Exact rendered theme colours
         run: sh tests/theme-colors.sh "$PWD/target/release/nirubar"
