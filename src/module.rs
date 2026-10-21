@@ -245,6 +245,49 @@ impl Module for Battery {
     }
 }
 
+pub struct WorkMode {
+    pub icons: status::Icons,
+}
+
+impl Module for WorkMode {
+    fn name(&self) -> &'static str {
+        "mode"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        match status::mode_status() {
+            Some((name, seconds)) => {
+                format!("{} {} {}m", self.icons.mode, name, seconds.div_ceil(60))
+            }
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        match status::mode_status() {
+            Some((name, seconds)) => Some((
+                "Work mode".into(),
+                vec![
+                    format!("mode: {name}"),
+                    format!("remaining: {} min", seconds.div_ceil(60)),
+                    String::new(),
+                    "niructl mode stop".to_string(),
+                ],
+            )),
+            None => Some((
+                "Work mode".into(),
+                vec![
+                    "no active work mode".to_string(),
+                    String::new(),
+                    "niructl mode focus".to_string(),
+                    "niructl mode presentation".to_string(),
+                ],
+            )),
+        }
+    }
+}
+
 pub struct Display {
     pub icons: status::Icons,
     checked: Option<std::time::Instant>,
@@ -975,6 +1018,7 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
                 checked: None,
                 outputs: None,
             })),
+            "mode" => out.push(Box::new(WorkMode { icons })),
             "network" => out.push(Box::new(Network {
                 icons,
                 use_icons: cfg.icons,
@@ -1128,6 +1172,7 @@ mod tests {
                         | "notifications"
                         | "brightness"
                         | "display"
+                        | "mode"
                 ),
                 "example config names an unknown module {name:?}"
             );

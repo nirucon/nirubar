@@ -44,6 +44,8 @@ pub struct Config {
     pub wallpaper: toml::Value,
     /// NIRUWM-only login autostart entries; accepted opaquely here.
     pub autostart: toml::Value,
+    /// NIRUWM/niructl launcher recipes; accepted opaquely here.
+    pub recipes: toml::Value,
     /// NIRUWM-only monitor settings. Opaque here for the same reason as keys:
     /// the bar must accept the shared file whatever the window manager stores.
     pub monitors: toml::Value,
@@ -172,6 +174,7 @@ impl Default for Config {
             keys: Vec::new(),
             wallpaper: toml::Value::Table(Default::default()),
             autostart: toml::Value::Table(Default::default()),
+            recipes: toml::Value::Array(Default::default()),
             monitors: toml::Value::Table(Default::default()),
             nightlight: toml::Value::Table(Default::default()),
             brightness: toml::Value::Table(Default::default()),

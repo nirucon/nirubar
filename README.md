@@ -1,7 +1,7 @@
 # NIRUBAR
 
 Small native X11 status bar with monitor-local workspaces, calendar, network,
-battery, audio/media, brightness, a multi-display count and optional weather,
+battery, audio/media, brightness, a multi-display count, work-mode countdown and optional weather,
 notifications, load and update panels. Four NIRU themes plus custom themes.
 
 ## Install

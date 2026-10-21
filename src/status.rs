@@ -37,6 +37,8 @@ pub struct Icons {
     pub brightness: &'static str,
     /// The optional display-count module.
     pub display: &'static str,
+    /// The work-mode countdown module.
+    pub mode: &'static str,
     /// The optional unread-indicator module.
     pub notifications: &'static str,
     /// The media module's music note.
@@ -68,6 +70,7 @@ impl Icons {
             uptime: "\u{f017}",  // nf-fa-clock_o
             brightness: "\u{f185}", // sun; brightness is a display property
             display: "\u{f108}", // nf-fa-desktop
+            mode: "\u{f017}",    // clock face
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
         }
@@ -92,6 +95,7 @@ impl Icons {
             uptime: "up",
             brightness: "bri",
             display: "disp",
+            mode: "mode",
             notifications: "ntf",
             music: "mus",
         }
@@ -580,6 +584,24 @@ mod tests {
     }
 
     #[test]
+    fn mode_parser_accepts_active_state() {
+        let text = "name=focus\nexpiry=9999999999\ntoken=x\n";
+        let mut name = None;
+        let mut expiry = None;
+        for line in text.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                match key {
+                    "name" => name = Some(value.to_string()),
+                    "expiry" => expiry = value.parse::<u64>().ok(),
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(name.as_deref(), Some("focus"));
+        assert!(expiry.is_some_and(|expiry| expiry > 0));
+    }
+
+    #[test]
     fn plain_fallbacks_are_not_glyphs() {
         let icons = Icons::plain();
         assert!(icons.wifi.is_ascii());
@@ -660,6 +682,34 @@ pub fn display_detail(outputs: &[DisplayOutput]) -> Vec<String> {
             )
         })
         .collect()
+}
+
+/// Active work mode and the seconds left, read from the shared state file.
+pub fn mode_status() -> Option<(String, u64)> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".local/state")
+        });
+    let text = std::fs::read_to_string(base.join("niruwm/mode")).ok()?;
+    let mut name = None;
+    let mut expiry = None;
+    for line in text.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            match key {
+                "name" => name = Some(value.to_string()),
+                "expiry" => expiry = value.parse::<u64>().ok(),
+                _ => {}
+            }
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let expiry = expiry?;
+    (expiry > now).then(|| (name.unwrap_or_else(|| "mode".into()), expiry - now))
 }
 
 /// Detail lines for the battery popup.

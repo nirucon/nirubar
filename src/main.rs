@@ -1480,6 +1480,7 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         } else {
             plain.display
         },
+        mode: if ok(nerd.mode) { nerd.mode } else { plain.mode },
         notifications: if ok(nerd.notifications) {
             nerd.notifications
         } else {
