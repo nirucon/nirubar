@@ -1475,6 +1475,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         } else {
             plain.brightness
         },
+        display: if ok(nerd.display) {
+            nerd.display
+        } else {
+            plain.display
+        },
         notifications: if ok(nerd.notifications) {
             nerd.notifications
         } else {

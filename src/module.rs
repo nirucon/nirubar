@@ -245,6 +245,52 @@ impl Module for Battery {
     }
 }
 
+pub struct Display {
+    pub icons: status::Icons,
+    checked: Option<std::time::Instant>,
+    outputs: Option<Vec<status::DisplayOutput>>,
+}
+
+impl Display {
+    fn refresh(&mut self) {
+        let now = std::time::Instant::now();
+        if self
+            .checked
+            .map(|then| now.duration_since(then).as_secs() >= 5)
+            .unwrap_or(true)
+        {
+            self.checked = Some(now);
+            self.outputs = status::display_outputs();
+        }
+    }
+}
+
+impl Module for Display {
+    fn name(&self) -> &'static str {
+        "display"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.refresh();
+        match &self.outputs {
+            Some(outputs) => status::display_text(outputs, self.icons.display),
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        self.refresh();
+        match &self.outputs {
+            Some(outputs) => Some(("Displays".into(), status::display_detail(outputs))),
+            None => Some((
+                "Displays".into(),
+                vec!["display information unavailable (xrandr)".to_string()],
+            )),
+        }
+    }
+}
+
 pub struct Network {
     pub icons: status::Icons,
     pub use_icons: bool,
@@ -924,6 +970,11 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
         match name.as_str() {
             "clock" => out.push(Box::new(Clock::new(cfg))),
             "battery" => out.push(Box::new(Battery { icons })),
+            "display" => out.push(Box::new(Display {
+                icons,
+                checked: None,
+                outputs: None,
+            })),
             "network" => out.push(Box::new(Network {
                 icons,
                 use_icons: cfg.icons,

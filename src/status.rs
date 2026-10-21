@@ -35,6 +35,8 @@ pub struct Icons {
     pub uptime: &'static str,
     /// The `brightness` module.
     pub brightness: &'static str,
+    /// The optional display-count module.
+    pub display: &'static str,
     /// The optional unread-indicator module.
     pub notifications: &'static str,
     /// The media module's music note.
@@ -65,6 +67,7 @@ impl Icons {
             sun: "\u{f185}",     // nf-fa-sun_o
             uptime: "\u{f017}",  // nf-fa-clock_o
             brightness: "\u{f185}", // sun; brightness is a display property
+            display: "\u{f108}", // nf-fa-desktop
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
         }
@@ -88,6 +91,7 @@ impl Icons {
             sun: "sun",
             uptime: "up",
             brightness: "bri",
+            display: "disp",
             notifications: "ntf",
             music: "mus",
         }
@@ -562,12 +566,100 @@ mod tests {
     }
 
     #[test]
+    fn parses_display_outputs_and_primary() {
+        let text = "Screen 0: minimum 8 x 8, current 3840 x 1080, maximum 32767 x 32767\neDP-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 293mm x 165mm\nHDMI-1 connected 1920x1080+1920+0 (normal left inverted right x axis y axis) 527mm x 296mm\nDP-1 disconnected (normal left inverted right x axis y axis)\n";
+        let outputs = display_outputs_from(text);
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].name, "eDP-1");
+        assert_eq!(outputs[0].resolution, "1920x1080");
+        assert!(outputs[0].primary);
+        assert_eq!(outputs[1].name, "HDMI-1");
+        assert!(!outputs[1].primary);
+        assert_eq!(display_text(&outputs, "D"), "D 2");
+        assert_eq!(display_detail(&outputs)[0], "eDP-1: 1920x1080 (primary)");
+    }
+
+    #[test]
     fn plain_fallbacks_are_not_glyphs() {
         let icons = Icons::plain();
         assert!(icons.wifi.is_ascii());
         assert!(icons.ethernet.is_ascii());
         assert!(icons.battery_full.is_ascii());
     }
+}
+
+/// A connected RandR output. Resolution is the current mode geometry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisplayOutput {
+    pub name: String,
+    pub resolution: String,
+    pub primary: bool,
+}
+
+fn display_outputs_from(text: &str) -> Vec<DisplayOutput> {
+    let mut outputs = Vec::new();
+    for line in text.lines() {
+        if !line.contains(" connected") {
+            continue;
+        }
+        let mut words = line.split_whitespace();
+        let Some(name) = words.next() else { continue };
+        let primary = line.contains(" primary ");
+        let resolution = line
+            .split_whitespace()
+            .find(|word| word.contains('x') && word.contains('+'))
+            .and_then(|word| word.split('+').next())
+            .unwrap_or("?")
+            .to_string();
+        outputs.push(DisplayOutput {
+            name: name.to_string(),
+            resolution,
+            primary,
+        });
+    }
+    outputs
+}
+
+/// Connected outputs through xrandr. The bar samples this at a slower cadence
+/// than battery/network: hotplug is rare and output enumeration is not free.
+pub fn display_outputs() -> Option<Vec<DisplayOutput>> {
+    let out = crate::probe::run(
+        "xrandr",
+        &["--query"],
+        &[],
+        std::time::Duration::from_secs(2),
+        64 * 1024,
+    )?;
+    out.status
+        .success()
+        .then(|| display_outputs_from(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Show a count only when more than one display is connected. A single laptop
+/// panel does not need a permanent module.
+pub fn display_text(outputs: &[DisplayOutput], icon: &str) -> String {
+    if outputs.len() > 1 {
+        format!("{icon} {}", outputs.len())
+    } else {
+        String::new()
+    }
+}
+
+pub fn display_detail(outputs: &[DisplayOutput]) -> Vec<String> {
+    if outputs.is_empty() {
+        return vec!["no connected outputs".to_string()];
+    }
+    outputs
+        .iter()
+        .map(|output| {
+            format!(
+                "{}: {}{}",
+                output.name,
+                output.resolution,
+                if output.primary { " (primary)" } else { "" }
+            )
+        })
+        .collect()
 }
 
 /// Detail lines for the battery popup.

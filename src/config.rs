@@ -194,6 +194,7 @@ impl Default for Bar {
                 "media".into(),
                 "volume".into(),
                 "brightness".into(),
+                "display".into(),
                 "network".into(),
                 "battery".into(),
                 "clock".into(),
