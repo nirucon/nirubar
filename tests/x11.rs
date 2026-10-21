@@ -27,7 +27,7 @@ fn popup_and_reload_cycles_release_server_pixmaps() {
     std::fs::write(&actions, "").unwrap();
     for (program, script) in [
         ("wpctl", "#!/bin/sh\ncase \"$1\" in get-volume) printf 'Volume: 0.45\\n';; *) printf 'audio-action\\n' >> \"$FIXTURE_ACTIONS\";; esac\n"),
-        ("playerctl", "#!/bin/sh\ncase \"$*\" in status) printf 'Playing\\n';; 'metadata artist') printf 'Artist\\n';; 'metadata title') printf 'Track\\n';; 'metadata mpris:length') printf '100000000\\n';; position) printf '10\\n';; *) printf 'media-action\\n' >> \"$FIXTURE_ACTIONS\";; esac\n"),
+        ("playerctl", "#!/bin/sh\ncase \"$*\" in status|*' status') printf 'Playing\\n';; *'metadata artist'*) printf 'Artist\\n';; *'metadata title'*) printf 'Track\\n';; *'metadata mpris:length'*) printf '100000000\\n';; *position*) printf '10\\n';; *play-pause*|*next*|*previous*|*play*|*pause*|*stop*) printf 'media-action\\n' >> \"$FIXTURE_ACTIONS\";; *) exit 0;; esac\n"),
     ] {
         let path = directory.join("bin").join(program);
         std::fs::write(&path, script).unwrap();
