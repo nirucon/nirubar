@@ -12,6 +12,7 @@ mod av;
 mod config;
 mod helpers;
 mod layout;
+mod microphone;
 mod module;
 mod popup;
 mod probe;
@@ -239,6 +240,7 @@ fn module_priority(name: &str) -> i32 {
         "battery" => 90,
         "network" => 85,
         "volume" => 80,
+        "microphone" => 82,
         "media" => 70,
         "notifications" => 65,
         "updates" => 60,

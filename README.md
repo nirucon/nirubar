@@ -21,6 +21,23 @@ Maintain NIRUX-owned installations with `nirux update`.
 
 ## Configure
 
+### Microphone (optional)
+
+Add `"microphone"` to `[bar] modules` in the shared config. Set
+`microphone_visibility = "always"` (default), or `"muted"` to hide a healthy
+unmuted input. Missing input/provider remains visible. The label shows
+`mic mute`, input gain, `mic none` or `mic --`; unmuted never means recording.
+
+- Left click: selected input, gain and mute information; no setting changes.
+- Right click: toggle mute. Scroll: adjust input gain, preserving mute.
+- Middle click: `nirulauncher --microphone` for keyboard source selection,
+  mute and gain controls. The same commands are in Super+Shift+P.
+
+Requires the suite's `niructl audio mic-status` / `mic-level` commands and
+WirePlumber (`wpctl`). A single bounded worker polls every two seconds; the
+X11 render/input thread never waits for the audio provider. Gain is the
+configured input level, not a live sound meter.
+
 Shared config: `~/.config/niruwm/config.toml` (XDG respected).
 Weather: `~/.config/nirubar/config.toml`; weather is opt-in.
 

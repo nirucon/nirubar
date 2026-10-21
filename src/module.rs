@@ -401,6 +401,44 @@ pub struct Volume {
     sample: Sample<av::Volume>,
 }
 
+pub struct Microphone {
+    monitor: crate::microphone::Monitor,
+    visibility: String,
+}
+
+impl Module for Microphone {
+    fn name(&self) -> &'static str {
+        "microphone"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::microphone::text(&self.monitor.snapshot(), "mic", &self.visibility)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Microphone".into(),
+            crate::microphone::detail(&self.monitor.snapshot()),
+        ))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        let (key, program, args): (&str, &str, &[&str]) = match input {
+            Input::Right => ("mic-mute", "niructl", &["audio", "mic-mute"]),
+            Input::ScrollUp => ("mic-level", "niructl", &["audio", "mic-level", "up"]),
+            Input::ScrollDown => ("mic-level", "niructl", &["audio", "mic-level", "down"]),
+            Input::Middle => ("mic-selector", "nirulauncher", &["--microphone"]),
+        };
+        Some(Control::run(
+            key,
+            Some((
+                program.into(),
+                args.iter().map(|arg| (*arg).into()).collect(),
+            )),
+        ))
+    }
+}
+
 impl Module for Volume {
     fn name(&self) -> &'static str {
         "volume"
@@ -1031,6 +1069,10 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
                 icons: cfg.volume_icons(),
                 sample: Sample::default(),
             })),
+            "microphone" => out.push(Box::new(Microphone {
+                monitor: crate::microphone::Monitor::new(),
+                visibility: cfg.microphone_visibility.clone(),
+            })),
             "media" => out.push(Box::new(Media {
                 sample: Sample::default(),
                 player: None,
@@ -1172,6 +1214,7 @@ mod tests {
                         | "notifications"
                         | "brightness"
                         | "display"
+                        | "microphone"
                         | "mode"
                 ),
                 "example config names an unknown module {name:?}"

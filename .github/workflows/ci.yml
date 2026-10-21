@@ -17,6 +17,8 @@ jobs:
       - run: xvfb-run -a -s '-screen 0 1280x1024x24 -noreset' cargo test --locked --test x11 -- --ignored --test-threads=1
       - name: Exact rendered theme colours
         run: sh tests/theme-colors.sh "$PWD/target/release/nirubar"
+      - name: Microphone status and controls (fake provider)
+        run: xvfb-run -a sh tests/microphone-smoke.sh "$PWD/target/release/nirubar"
       - name: Bound probes while media is scrolling
         run: sh tests/resource-check.sh "$PWD/target/release/nirubar"
 

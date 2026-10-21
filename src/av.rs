@@ -202,16 +202,7 @@ impl Volume {
     /// Command form for microphone mute. PipeWire exposes a source node; plain
     /// ALSA without wpctl has no portable equivalent, so the action is disabled.
     pub fn mic_mute_command() -> Option<(String, Vec<String>)> {
-        which("wpctl").then(|| {
-            (
-                "wpctl".into(),
-                vec![
-                    "set-mute".into(),
-                    "@DEFAULT_AUDIO_SOURCE@".into(),
-                    "toggle".into(),
-                ],
-            )
-        })
+        which("niructl").then(|| ("niructl".into(), vec!["audio".into(), "mic-mute".into()]))
     }
 
     /// Whether the default microphone is muted, when PipeWire can report it.
