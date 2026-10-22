@@ -99,9 +99,9 @@ pub struct Workspaces {
 impl Workspaces {
     pub fn new(cfg: &config::Bar) -> Self {
         let mut names = cfg.tags.clone();
-        // Standalone use keeps the historical nine cells; a running WM
-        // replaces both names and count from `_NIRUWM_MONITORS`.
-        while names.len() < 9 {
+        // Standalone use keeps ten cells; a running WM replaces both names and
+        // count from `_NIRUWM_MONITORS`.
+        while names.len() < 10 {
             names.push((names.len() + 1).to_string());
         }
         for (i, n) in names.iter_mut().enumerate() {
@@ -1405,11 +1405,11 @@ mod tests {
         let cfg = config::Bar::default();
         let ws = Workspaces::new(&cfg);
         assert_eq!(ws.names[0], "1");
-        assert_eq!(ws.names[8], "9");
+        assert_eq!(ws.names[9], "10");
     }
 
     #[test]
-    fn monitor_workspaces_are_not_hardcoded_to_nine() {
+    fn monitor_workspaces_are_not_hardcoded_to_ten() {
         let cfg = config::Bar::default();
         let mut ws = Workspaces::new(&cfg);
         ws.update(

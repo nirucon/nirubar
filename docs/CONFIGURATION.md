@@ -8,7 +8,7 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 
 | Module | Shows |
 |---|---|
-| `workspaces` | Nine workspace cells; click to switch |
+| `workspaces` | Ten workspace cells; click to switch. A small accent marker shows occupied non-active workspaces |
 | `network` | Wired/wireless icon; `!` means link up without a default route; click for interface, route and address |
 | `battery` | Aggregated battery packs; panel shows charge, state and remaining time when available |
 | `volume` | Output level or mute; click for info, scroll to change, right-click mute, middle-click microphone mute |
@@ -38,7 +38,7 @@ weather_longitude = 11.92
 
 [bar]
 modules = ["workspaces", "network", "battery", "clock"]
-tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 date_format = "%Y-%m-%d"
 time_format = "%H:%M"
 icons = true

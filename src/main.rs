@@ -661,6 +661,7 @@ impl Bar {
         let fg = Theme::pixel(&self.theme.foreground)?;
         let muted = Theme::pixel(&self.theme.muted)?;
         let border = Theme::pixel(&self.theme.border)?;
+        let accent = Theme::pixel(&self.theme.focus)?;
         self.renderer.clear(&self.c, self.gc, bg)?;
         self.placed.clear();
 
@@ -695,6 +696,20 @@ impl Bar {
                 let text_x = x + (cell - self.renderer.width(&label)) / 2;
                 self.renderer
                     .text(&self.c, self.gc, text_x, &label, colour, cell_bg, x + cell)?;
+                if !active && self.workspaces.occupied.get(i).copied().unwrap_or(false) {
+                    let dot = 3;
+                    self.renderer.fill(
+                        &self.c,
+                        self.gc,
+                        Rectangle {
+                            x: x + (cell - dot) / 2,
+                            y: self.height as i16 - 4,
+                            width: dot as u16,
+                            height: 2,
+                        },
+                        accent,
+                    )?;
+                }
             }
         }
 

@@ -23,7 +23,7 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 
 | Module | Shows | Interaction |
 |---|---|---|
-| `workspaces` | Nine workspace cells with active/occupied state | Click a cell to switch workspace |
+| `workspaces` | Ten workspace cells with active/occupied state and occupancy markers | Click a cell to switch workspace |
 | `network` | Wired/wireless icon; `!` means link up without a default route | Click for interface, link, route and address |
 | `battery` | Aggregated battery charge and state | Click for charge, state and remaining time when available |
 | `volume` | Output level or mute icon | Click for info, scroll volume, right-click mute, middle-click microphone mute |

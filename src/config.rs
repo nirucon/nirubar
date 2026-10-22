@@ -204,7 +204,7 @@ impl Default for Bar {
                 "battery".into(),
                 "clock".into(),
             ],
-            tags: (1..=9).map(|n| n.to_string()).collect(),
+            tags: (1..=10).map(|n| n.to_string()).collect(),
             microphone_visibility: "always".into(),
             show_date: true,
             show_time: true,
@@ -310,8 +310,8 @@ impl Config {
                 return Err(format!("bar.{name} must be a valid nonempty strftime format").into());
             }
         }
-        if self.bar.tags.len() > 9 {
-            return Err("bar.tags has more than nine entries".into());
+        if self.bar.tags.len() > 10 {
+            return Err("bar.tags has more than ten entries".into());
         }
         for module in &self.bar.modules {
             // NIRUWM owns the shaped-name rule; the bar owns which names exist.
@@ -563,7 +563,7 @@ struct MonitorsValidation {
 impl Default for MonitorsValidation {
     fn default() -> Self {
         Self {
-            workspaces: 9,
+            workspaces: 10,
             profiles: Vec::new(),
         }
     }
@@ -844,7 +844,7 @@ action = "terminal"
             ("rule class", "[[rules]]\nworkspace = 1\n"),
             (
                 "bar tags",
-                "[bar]\ntags = [\"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\", \"10\"]\n",
+                "[bar]\ntags = [\"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\", \"10\", \"11\"]\n",
             ),
             ("empty module", "[bar]\nmodules = [\"\"]\n"),
             ("module shape", "[bar]\nmodules = [\"UP\"]\n"),
