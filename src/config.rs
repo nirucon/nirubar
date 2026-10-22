@@ -629,6 +629,7 @@ struct RuleValidation {
     class: String,
     workspace: Option<u32>,
     floating: Option<bool>,
+    center: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
