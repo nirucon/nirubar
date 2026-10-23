@@ -360,6 +360,7 @@ impl Bar {
             "_NET_ACTIVE_WINDOW",
             "_NET_DESKTOP_NAMES",
             "_NIRUWM_MONITORS",
+            "_NIRUWM_LAYOUT",
             "_NIRUWM_COMMAND",
             "_NIRUBAR_SELECTION",
             "_NIRUBAR_REDRAW",
