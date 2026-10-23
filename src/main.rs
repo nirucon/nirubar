@@ -28,6 +28,7 @@ mod weather;
 
 use config::{Config, Result, Theme};
 use libc::{poll, pollfd as PollFd, read as libc_read, write as libc_write};
+use std::sync::{Arc, Mutex};
 
 /// Which monitor this bar belongs to, read with `--monitor`.
 #[derive(Clone, Debug)]
@@ -245,6 +246,7 @@ fn module_priority(name: &str) -> i32 {
         "bluetooth" => 84,
         "powerprofile" => 83,
         "microphone" => 82,
+        "layout" => 72,
         "media" => 70,
         "notifications" => 65,
         "updates" => 60,
@@ -277,6 +279,7 @@ struct Bar {
     /// System tray, when enabled.
     tray: Option<tray::Tray>,
     modules: Vec<Box<dyn Module>>,
+    layout_text: Arc<Mutex<String>>,
     workspaces: Workspaces,
     /// True when the running WM published `_NIRUWM_MONITORS`.
     monitor_managed: bool,
@@ -473,7 +476,8 @@ impl Bar {
         let mut cfg = cfg;
         cfg.bar.volume_icons = Some(av::volume_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
         cfg.bar.media_icons = Some(av::media_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
-        let modules = module::build(&cfg, icons);
+        let layout_text = Arc::new(Mutex::new(String::new()));
+        let modules = module::build(&cfg, icons, layout_text.clone());
         let workspaces = Workspaces::new(&cfg.bar);
         let cells = cfg.bar.cell_width as i16;
         Ok(Self {
@@ -494,6 +498,7 @@ impl Bar {
             icons,
             tray,
             modules,
+            layout_text,
             rendered: Vec::new(),
             monitor_managed: false,
             selection,
@@ -511,6 +516,25 @@ impl Bar {
 
     /// Collect the EWMH state the bar displays.
     fn snapshot(&mut self) {
+        let current_layout = self
+            .c
+            .get_property(
+                false,
+                self.root,
+                self.atom("_NIRUWM_LAYOUT"),
+                self.atom("UTF8_STRING"),
+                0,
+                64,
+            )
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .map(|r| String::from_utf8_lossy(&r.value).trim().to_string())
+            .unwrap_or_default();
+        if !current_layout.is_empty() {
+            if let Ok(mut value) = self.layout_text.lock() {
+                *value = current_layout;
+            }
+        }
         let layout_text = self
             .c
             .get_property(
@@ -1164,7 +1188,7 @@ impl Bar {
             |c| self.renderer.has_glyph(c),
             cfg.bar.icons,
         ));
-        self.modules = module::build(&cfg, self.icons);
+        self.modules = module::build(&cfg, self.icons, self.layout_text.clone());
         self.workspaces = Workspaces::new(&cfg.bar);
         self.cells = cfg.bar.cell_width as i16;
         self.cfg = cfg;
@@ -1513,6 +1537,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             plain.display
         },
         mode: if ok(nerd.mode) { nerd.mode } else { plain.mode },
+        layout: if ok(nerd.layout) {
+            nerd.layout
+        } else {
+            plain.layout
+        },
         bluetooth: if ok(nerd.bluetooth) {
             nerd.bluetooth
         } else {

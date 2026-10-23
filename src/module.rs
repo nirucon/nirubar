@@ -6,6 +6,7 @@
 
 use crate::{ambient, av, config, status, updates, weather};
 use chrono::Datelike;
+use std::sync::{Arc, Mutex};
 
 /// Where a module sits on the bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,6 +243,58 @@ impl Module for Battery {
                 vec!["no battery in this machine".to_string()],
             )),
         }
+    }
+}
+
+/// Current NIRUWM layout, published as `_NIRUWM_LAYOUT` on the root window.
+pub struct LayoutMode {
+    icons: status::Icons,
+    value: Arc<Mutex<String>>,
+}
+
+impl LayoutMode {
+    fn current(&self) -> String {
+        self.value
+            .lock()
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default()
+    }
+}
+
+impl Module for LayoutMode {
+    fn name(&self) -> &'static str {
+        "layout"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        let current = self.current();
+        if current.is_empty() {
+            return String::new();
+        }
+        format!("{} {}", self.icons.layout, current)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let current = self.current();
+        let mut lines = vec![
+            format!("Current: {current}"),
+            String::new(),
+            "tile          master left, stack right".into(),
+            "left          master right, stack left".into(),
+            "monocle       one window fills the screen".into(),
+            "centered      master in the middle".into(),
+            "centeredfloat centred master, floating stack".into(),
+            "fibonacci     spiral split".into(),
+            "floating      windows keep their own size".into(),
+            String::new(),
+            "Cycle: Super+Ctrl+period".into(),
+            "Set: niructl layout NAME".into(),
+        ];
+        if current == "floating" {
+            lines.insert(1, String::new());
+        }
+        Some(("Layout".into(), lines))
     }
 }
 
@@ -1119,7 +1172,11 @@ impl Module for Sun {
 ///
 /// An unknown name is reported once and skipped, so a typo in the config does
 /// not stop the bar from starting.
-pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>> {
+pub fn build(
+    full: &config::Config,
+    icons: status::Icons,
+    layout: Arc<Mutex<String>>,
+) -> Vec<Box<dyn Module>> {
     let cfg = &full.bar;
     let mut out: Vec<Box<dyn Module>> = Vec::new();
     for name in &cfg.modules {
@@ -1140,6 +1197,10 @@ pub fn build(full: &config::Config, icons: status::Icons) -> Vec<Box<dyn Module>
                 outputs: None,
             })),
             "mode" => out.push(Box::new(WorkMode { icons })),
+            "layout" => out.push(Box::new(LayoutMode {
+                icons,
+                value: layout.clone(),
+            })),
             "network" => out.push(Box::new(Network {
                 icons,
                 use_icons: cfg.icons,
@@ -1285,7 +1346,11 @@ mod tests {
         let list = value["bar"]["modules"]
             .as_array()
             .expect("bar.modules is a list");
-        let built = build(&config::Config::default(), status::Icons::plain());
+        let built = build(
+            &config::Config::default(),
+            status::Icons::plain(),
+            Arc::new(Mutex::new(String::new())),
+        );
         for name in list {
             let name = name.as_str().expect("module names are strings");
             assert!(
@@ -1309,6 +1374,7 @@ mod tests {
                         | "bluetooth"
                         | "powerprofile"
                         | "mode"
+                        | "layout"
                 ),
                 "example config names an unknown module {name:?}"
             );
@@ -1325,7 +1391,15 @@ mod tests {
             "notifications".into(),
             "clock".into(),
         ];
-        assert_eq!(build(&all, status::Icons::plain()).len(), 6);
+        assert_eq!(
+            build(
+                &all,
+                status::Icons::plain(),
+                Arc::new(Mutex::new(String::new()))
+            )
+            .len(),
+            6
+        );
     }
 
     #[test]
@@ -1446,7 +1520,11 @@ mod tests {
             },
             ..Default::default()
         };
-        let mods = build(&cfg, status::Icons::plain());
+        let mods = build(
+            &cfg,
+            status::Icons::plain(),
+            Arc::new(Mutex::new(String::new())),
+        );
         assert_eq!(mods.len(), 2);
         assert_eq!(mods[0].name(), "clock");
         assert_eq!(mods[1].name(), "battery");
@@ -1520,11 +1598,19 @@ mod tests {
         cfg.bar.network = false;
         cfg.bar.show_date = false;
         cfg.bar.show_time = false;
-        let modules = build(&cfg, status::Icons::plain());
+        let modules = build(
+            &cfg,
+            status::Icons::plain(),
+            Arc::new(Mutex::new(String::new())),
+        );
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].name(), "volume");
         cfg.bar.show_time = true;
-        let modules = build(&cfg, status::Icons::plain());
+        let modules = build(
+            &cfg,
+            status::Icons::plain(),
+            Arc::new(Mutex::new(String::new())),
+        );
         assert_eq!(modules.len(), 2);
         assert_eq!(modules[0].name(), "clock");
     }

@@ -39,6 +39,8 @@ pub struct Icons {
     pub display: &'static str,
     /// The work-mode countdown module.
     pub mode: &'static str,
+    /// The current NIRUWM layout module.
+    pub layout: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
     /// The optional power-profile module.
@@ -75,6 +77,7 @@ impl Icons {
             brightness: "\u{f185}", // sun; brightness is a display property
             display: "\u{f108}", // nf-fa-desktop
             mode: "\u{f017}",    // clock face
+            layout: "\u{f009}",  // nf-fa-th-large
             bluetooth: "\u{f293}", // nf-fa-bluetooth
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
@@ -102,6 +105,7 @@ impl Icons {
             brightness: "bri",
             display: "disp",
             mode: "mode",
+            layout: "layout",
             bluetooth: "bt",
             powerprofile: "pwr",
             notifications: "ntf",
