@@ -65,9 +65,6 @@ pub struct Config {
     /// fields it does not know: this one stopped every bar from starting on
     /// 18 October, one release after the same mistake with weather_latitude.
     pub restore_session: bool,
-    /// NIRUWM's opt-in NIRUPI shortcut and helper profile. The bar reads the
-    /// same document and must accept the key even though it does not use it.
-    pub nirupi_compat: bool,
     /// Read only by NIRUBAR, but it lives at the top level of the file so that
     /// NIRUWM accepts the same document. A setting only one of the two
     /// programs knows is a config the other one refuses to start with, and a
@@ -160,7 +157,6 @@ impl Default for Config {
             weather_latitude: 0.0,
             weather_longitude: 0.0,
             restore_session: false,
-            nirupi_compat: false,
             theme: "niru-noir".into(),
             gap: 8,
             border_width: 2,
@@ -169,7 +165,7 @@ impl Default for Config {
             terminal: vec!["kitty".into()],
             terminal_alt: Vec::new(),
             browser: vec!["brave".into()],
-            launcher: vec!["rofi".into(), "-show".into(), "drun".into()],
+            launcher: vec!["nirulauncher".into(), "--apps".into()],
             font_path: None,
             font_size: 15.0,
             bar: Bar::default(),
@@ -822,7 +818,7 @@ master_ratio = 0.55
 terminal = ["kitty"]
 terminal_alt = []
 browser = ["brave"]
-launcher = ["rofi", "-show", "drun"]
+launcher = ["nirulauncher", "--apps"]
 font_size = 15.0
 
 [wallpaper]

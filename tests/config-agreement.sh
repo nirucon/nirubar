@@ -51,10 +51,9 @@ ok "the window manager accepts every setting the bar knows"
 cat >>"$XDG_CONFIG_HOME/niruwm/config.toml" <<'EOF'
 
 restore_session = true
-nirupi_compat = true
 EOF
 "$BINDIR/nirubar" --check-config >/tmp/agree-bar.out 2>&1 ||
-  { cat /tmp/agree-bar.out; fail "nirubar refuses restore_session/nirupi_compat"; }
+  { cat /tmp/agree-bar.out; fail "nirubar refuses restore_session"; }
 "$BINDIR/niruwm" --check-config >/tmp/agree-wm.out 2>&1 ||
   { cat /tmp/agree-wm.out; fail "niruwm refuses restore_session"; }
 ok "restore_session is accepted by both"
@@ -69,7 +68,7 @@ border_width = 2
 browser = ["firefox"]
 font_size = 15.0
 gap = 8
-launcher = ["rofi", "-show", "drun"]
+launcher = ["nirulauncher", "--apps"]
 master_ratio = 0.55
 terminal = ["kitty"]
 terminal_alt = ["alacritty"]
