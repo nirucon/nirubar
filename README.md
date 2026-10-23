@@ -84,7 +84,7 @@ weather_longitude = 11.92
 
 [bar]
 modules = ["workspaces", "network", "battery", "clock"]
-tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 icons = true
 popups = true
 popup_timeout_seconds = 8
@@ -96,6 +96,18 @@ nirubar --check-config
 niructl reload
 niructl restart-bar
 ```
+
+Workspace labels are numbered by default. The config example contains ready
+icon and text presets; comment out the numbered `tags` line and uncomment one
+preset. To discard bar-only edits and return to the current defaults:
+
+```sh
+nirubar --reset-config
+niructl restart-bar
+```
+
+Only the shared `[bar]` table is replaced. A timestamp-free
+`config.toml.nirubar-backup` is kept for recovery.
 
 Themes: Niru Noir, Nord, Satie, Carl Larsson and custom themes. Colours and font
 come from the shared NIRUWM appearance.

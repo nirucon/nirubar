@@ -6,7 +6,7 @@
 //!
 //! The old 0.1 path `~/.config/niru/config.toml` is still read when the new
 //! file does not exist, so an existing alpha configuration keeps working.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{error::Error, fs, path::PathBuf};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -76,7 +76,7 @@ pub struct Config {
     pub weather_longitude: f64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Bar {
     /// Where the machine is, for the `sun` module: the sunrise and sunset times.
@@ -234,6 +234,58 @@ pub fn directory() -> PathBuf {
             PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
         })
         .join("niruwm")
+}
+
+pub fn active_path() -> PathBuf {
+    let primary = directory().join("config.toml");
+    if primary.exists() {
+        primary
+    } else {
+        let legacy = legacy_path();
+        if legacy.exists() {
+            legacy
+        } else {
+            primary
+        }
+    }
+}
+
+/// Replace only the shared `[bar]` table with current compiled defaults.
+/// Returns the backup path when an existing file was preserved.
+pub fn reset_bar() -> Result<(PathBuf, Option<PathBuf>)> {
+    reset_bar_at(&active_path())
+}
+
+fn reset_bar_at(path: &std::path::Path) -> Result<(PathBuf, Option<PathBuf>)> {
+    let path = path.to_path_buf();
+    let original = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let mut document: toml_edit::DocumentMut = original
+        .as_deref()
+        .unwrap_or("")
+        .parse()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let defaults = toml::to_string(&Bar::default())?;
+    let fragment: toml_edit::DocumentMut = format!("[bar]\n{defaults}")
+        .parse()
+        .map_err(|e| format!("internal bar defaults: {e}"))?;
+    document["bar"] = fragment["bar"].clone();
+    let parent = path.parent().ok_or("configuration directory is missing")?;
+    fs::create_dir_all(parent)?;
+    let backup = if original.is_some() {
+        let backup = PathBuf::from(format!("{}.nirubar-backup", path.display()));
+        fs::write(&backup, original.as_deref().unwrap_or(""))?;
+        Some(backup)
+    } else {
+        None
+    };
+    let temp = parent.join(format!(".config.toml.{}", std::process::id()));
+    fs::write(&temp, document.to_string())?;
+    fs::rename(&temp, &path)?;
+    Ok((path, backup))
 }
 
 fn legacy_path() -> PathBuf {
@@ -863,6 +915,22 @@ action = "terminal"
     fn future_module_names_are_accepted() {
         let c: Config = toml::from_str("[bar]\nmodules = [\"future_module\"]\n").unwrap();
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn reset_replaces_only_the_bar_table() {
+        let base = std::env::temp_dir().join(format!("nirubar-reset-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("config.toml");
+        fs::write(&path, "theme = \"niru-nord\"\n[bar]\ntags = [\"old\"]\n").unwrap();
+        let (written, backup) = reset_bar_at(&path).unwrap();
+        assert_eq!(written, path);
+        assert!(backup.unwrap().exists());
+        let value: toml::Value = fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(value["theme"].as_str(), Some("niru-nord"));
+        assert_eq!(value["bar"]["tags"].as_array().unwrap().len(), 10);
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

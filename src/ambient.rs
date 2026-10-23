@@ -118,7 +118,7 @@ mod tests {
         let lat = 78.2;
         let day = chrono::Datelike::ordinal(&chrono::Local::now().date_naive());
         let midsummer = (80..=200).contains(&day);
-        assert_eq!(solar_events(-lat, 15.6).is_none(), midsummer);
+        assert_eq!(solar_events(lat, 15.6).is_none(), midsummer);
     }
 
     #[test]

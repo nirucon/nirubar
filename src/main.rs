@@ -1532,6 +1532,28 @@ fn main() {
         println!("NIRUBAR {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if arg == "--reset-config" {
+        if args.len() != 1 {
+            eprintln!("Usage: nirubar --reset-config");
+            std::process::exit(2);
+        }
+        match config::reset_bar() {
+            Ok((path, backup)) => {
+                if let Some(backup) = backup {
+                    println!("Backup: {}", backup.display());
+                }
+                println!(
+                    "Reset [bar] in {}. Restart with: niructl restart-bar",
+                    path.display()
+                );
+                return;
+            }
+            Err(e) => {
+                eprintln!("nirubar: {e}");
+                std::process::exit(1)
+            }
+        }
+    }
     if arg == "--check-config" {
         match Config::load().and_then(|c| Theme::load(&c.theme)) {
             Ok(t) => {
@@ -1552,7 +1574,7 @@ fn main() {
         }
     };
     if monitor.is_none() && !args.is_empty() {
-        eprintln!("Usage: nirubar [--version|--check-config] [--monitor X,Y,W]");
+        eprintln!("Usage: nirubar [--version|--check-config|--reset-config] [--monitor X,Y,W]");
         std::process::exit(2)
     }
     if let Err(e) = Bar::new(monitor).and_then(|mut b| b.run()) {
