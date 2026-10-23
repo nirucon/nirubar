@@ -203,6 +203,35 @@ impl Renderer {
         Ok(())
     }
 
+    /// Draw exactly one glyph with its visible outline centred in one
+    /// monospaced cell. Nerd Font icons have different side bearings; using
+    /// the advance alone makes a WiFi or Bluetooth glyph look off-centre
+    /// between separators even though the cell is correct.
+    #[allow(clippy::too_many_arguments)]
+    pub fn single_glyph(
+        &mut self,
+        c: &RustConnection,
+        gc: Gcontext,
+        x: i16,
+        ch: char,
+        colour: u32,
+        background: u32,
+    ) -> Result<i16> {
+        let baseline = self.centred_baseline();
+        let mask = self.mask(ch).clone();
+        let offset = (i32::from(self.advance) - i32::from(mask.width)) / 2 - i32::from(mask.x);
+        self.blend(
+            c,
+            gc,
+            &mask,
+            x.saturating_add(offset as i16),
+            baseline,
+            colour,
+            background,
+        )?;
+        Ok(x.saturating_add(self.advance))
+    }
+
     /// Draw one line of text with its baseline at `baseline`.
     ///
     /// Popups stack lines, so they place each baseline themselves instead of

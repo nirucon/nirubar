@@ -768,8 +768,19 @@ impl Bar {
             let Some((x, w)) = placements[slot] else {
                 continue;
             };
-            self.renderer
-                .text(&self.c, self.gc, x, text, fg, bg, right_edge)?;
+            if text.chars().count() == 1 {
+                self.renderer.single_glyph(
+                    &self.c,
+                    self.gc,
+                    x,
+                    text.chars().next().unwrap(),
+                    fg,
+                    bg,
+                )?;
+            } else {
+                self.renderer
+                    .text(&self.c, self.gc, x, text, fg, bg, right_edge)?;
+            }
             // The media module's mark is drawn, not typed: three bars of the
             // theme's foreground, sitting where its placeholder is.
             if let Some(bars) = marks.get(slot).and_then(|m| m.clone()) {

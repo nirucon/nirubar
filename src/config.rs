@@ -710,6 +710,12 @@ impl Theme {
             ("niru-carl-larsson", false) => {
                 include_str!("../themes/niru-carl-larsson.toml").to_string()
             }
+            ("niru-forest-vigil", false) => {
+                include_str!("../themes/niru-forest-vigil.toml").to_string()
+            }
+            ("niru-blood-of-urdr", false) => {
+                include_str!("../themes/niru-blood-of-urdr.toml").to_string()
+            }
             _ => fs::read_to_string(&user_file)?,
         };
         let mut theme: Self = toml::from_str(&text)?;
@@ -849,7 +855,14 @@ action = "terminal"
 
     #[test]
     fn all_builtin_themes_load() {
-        for name in ["niru-noir", "niru-nord", "niru-satie", "niru-carl-larsson"] {
+        for name in [
+            "niru-noir",
+            "niru-nord",
+            "niru-satie",
+            "niru-carl-larsson",
+            "niru-forest-vigil",
+            "niru-blood-of-urdr",
+        ] {
             Theme::load(name).unwrap_or_else(|e| panic!("{name}: {e}"));
         }
     }
