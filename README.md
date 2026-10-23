@@ -110,7 +110,7 @@ Only the shared `[bar]` table is replaced. A timestamp-free
 `config.toml.nirubar-backup` is kept for recovery.
 
 Themes: Niru Noir, Nord, Satie, Carl Larsson, Forest Vigil, Blood of Urdr,
-Root and Stone, Blue Horizon and custom themes. Colours and font
+Root and Stone, Blue Horizon, The Norns, Winter Nights and custom themes. Colours and font
 come from the shared NIRUWM appearance.
 
 ## NIRUX suite
