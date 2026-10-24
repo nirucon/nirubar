@@ -353,6 +353,7 @@ impl Bar {
             "_NET_WM_STRUT",
             "_NET_WM_NAME",
             "_NET_WM_PID",
+            "_NET_WM_WINDOW_OPACITY",
             "UTF8_STRING",
             "_NET_CURRENT_DESKTOP",
             "_NET_CLIENT_LIST",
@@ -437,6 +438,17 @@ impl Bar {
             atoms["UTF8_STRING"],
             b"NIRUBAR",
         )?;
+        // The bar itself paints opaque pixels; transparency comes from the
+        // compositor reading this property. Absent means fully opaque.
+        if let Some(opacity) = cfg.bar.effective_opacity() {
+            c.change_property32(
+                PropMode::REPLACE,
+                win,
+                atoms["_NET_WM_WINDOW_OPACITY"],
+                AtomEnum::CARDINAL,
+                &[opacity],
+            )?;
+        }
         set_strut(&c, win, &atoms, cfg.bar_height, width, bar_x, bar_y == 0)?;
         c.set_selection_owner(win, selection, x11rb::CURRENT_TIME)?;
         let legacy = atoms["_NIRUBAR_SELECTION"];

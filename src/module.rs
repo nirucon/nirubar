@@ -99,7 +99,7 @@ pub struct Workspaces {
 
 impl Workspaces {
     pub fn new(cfg: &config::Bar) -> Self {
-        let mut names = cfg.tags.clone();
+        let mut names = cfg.effective_tags();
         // Standalone use keeps ten cells; a running WM replaces both names and
         // count from `_NIRUWM_MONITORS`.
         while names.len() < 10 {
@@ -1480,6 +1480,57 @@ mod tests {
         let ws = Workspaces::new(&cfg);
         assert_eq!(ws.names[0], "1");
         assert_eq!(ws.names[9], "10");
+    }
+
+    #[test]
+    fn workspace_layout_selects_the_rendered_labels() {
+        let cfg = config::Bar {
+            workspace_layout: Some(1),
+            ..Default::default()
+        };
+        let ws = Workspaces::new(&cfg);
+        assert_eq!(ws.names[0], "1");
+        assert_eq!(ws.names[9], "10");
+
+        let cfg = config::Bar {
+            workspace_layout: Some(2),
+            ..Default::default()
+        };
+        let ws = Workspaces::new(&cfg);
+        assert_eq!(ws.names.len(), 10);
+        assert_ne!(ws.names[0], "1", "the icon preset is not numeric");
+        assert!(
+            ws.names.iter().all(|n| !n.is_empty()),
+            "every icon cell must have a label"
+        );
+
+        let cfg = config::Bar {
+            workspace_layout: Some(3),
+            ..Default::default()
+        };
+        let ws = Workspaces::new(&cfg);
+        assert_eq!(ws.names[0], "web");
+        assert_eq!(ws.names[4], "term");
+        assert_eq!(ws.names[9], "term");
+
+        // An unknown preset falls back to numbers instead of panicking.
+        let cfg = config::Bar {
+            workspace_layout: Some(42),
+            ..Default::default()
+        };
+        let ws = Workspaces::new(&cfg);
+        assert_eq!(ws.names[0], "1");
+    }
+
+    #[test]
+    fn explicit_tags_still_reach_the_bar() {
+        let cfg = config::Bar {
+            tags: vec!["a".into(), "b".into(), "c".into()],
+            ..Default::default()
+        };
+        let ws = Workspaces::new(&cfg);
+        assert_eq!(&ws.names[..3], &["a", "b", "c"]);
+        assert_eq!(ws.names.len(), 10, "cells are padded to ten");
     }
 
     #[test]

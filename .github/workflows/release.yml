@@ -1,10 +1,19 @@
 name: Release
 
 # NIRUBAR releases independently; NIRUX pins its verified component version.
+#
+# A release is always built from a tag. `workflow_dispatch` exists only to
+# rebuild an existing tag and takes that tag as input; it refuses to run
+# otherwise, so assets can never be published from a branch.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to rebuild, for example v0.18.36"
+        required: true
+        default: ""
 
 permissions:
   contents: write
@@ -13,7 +22,33 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Refuse anything that is not a tag
+        env:
+          REF: ${{ github.ref }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            [ -n "$INPUT_TAG" ] || { echo "refusing: a tag is required"; exit 1; }
+            case "$INPUT_TAG" in
+              v*) : ;;
+              *) echo "refusing: tag must start with v"; exit 1 ;;
+            esac
+            echo "TAG=$INPUT_TAG" >> "$GITHUB_ENV"
+          else
+            case "$REF" in
+              refs/tags/v*) echo "TAG=${REF#refs/tags/}" >> "$GITHUB_ENV" ;;
+              *) echo "refusing: release must be built from a v* tag, got $REF"; exit 1 ;;
+            esac
+          fi
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Confirm the tag matches the version being built
+        run: |
+          version=$(awk -F '"' '/^version = / {print $2; exit}' Cargo.toml)
+          [ "v$version" = "$TAG" ] || {
+            echo "refusing: Cargo.toml says v$version but the tag is $TAG"; exit 1;
+          }
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
@@ -66,8 +101,7 @@ jobs:
         run: sh tests/theme-colors.sh target/x86_64-unknown-linux-musl/release/nirubar
       - run: |
           version=$(awk -F '"' '/^version = / {print $2; exit}' Cargo.toml)
-          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
           mkdir -p dist
           cp target/x86_64-unknown-linux-musl/release/nirubar dist/
           cd dist && sha256sum nirubar > SHA256SUMS && cat SHA256SUMS

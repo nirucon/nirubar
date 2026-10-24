@@ -97,9 +97,31 @@ niructl reload
 niructl restart-bar
 ```
 
-Workspace labels are numbered by default. The config example contains ready
-icon and text presets; comment out the numbered `tags` line and uncomment one
-preset. To discard bar-only edits and return to the current defaults:
+Workspace labels are chosen with one value, `workspace_layout`:
+
+```toml
+[bar]
+workspace_layout = 1   # 1 numbers (default), 2 icons, 3 text
+```
+
+Only the labels change; the workspace count and the Super+1..0 shortcuts are
+the same in every preset. An unknown number falls back to numbers, and an
+explicit `tags` list is still honoured when no preset is set.
+
+The bar is see-through by default in the NIRUX look. It paints opaque pixels
+and publishes `_NET_WM_WINDOW_OPACITY`, which the compositor (picom in NIRUX)
+applies:
+
+```toml
+[bar]
+transparent = true   # false keeps the bar fully opaque
+opacity = 94         # 1-100; out of range falls back to 94
+```
+
+Without a compositor the bar stays opaque, because X11 has no alpha of its own
+for an ordinary window.
+
+To discard bar-only edits and return to the current defaults:
 
 ```sh
 nirubar --reset-config

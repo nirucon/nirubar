@@ -53,6 +53,8 @@ pub struct Config {
     pub nightlight: toml::Value,
     /// NIRUWM/niructl brightness device and step; accepted but not used here.
     pub brightness: toml::Value,
+    /// NIRUIDLE screensaver/lock timers; accepted but not used by the bar.
+    pub idle: toml::Value,
     /// NIRUWM-only scratchpad settings.
     pub scratchpad: toml::Value,
     /// NIRUWM-only window rules.
@@ -95,6 +97,14 @@ pub struct Bar {
     pub title_max: usize,
     /// Width reserved per workspace cell, in pixels.
     pub cell_width: u16,
+    /// Draw the bar see-through instead of opaque. The bar has no alpha of its
+    /// own on X11: this sets `_NET_WM_WINDOW_OPACITY`, which the compositor
+    /// (picom in NIRUX) applies. Without a compositor the bar stays opaque,
+    /// which is also what `false` gives.
+    pub transparent: bool,
+    /// Window opacity used when `transparent` is true, 0-100. Out-of-range
+    /// values fall back to `DEFAULT_BAR_OPACITY`.
+    pub opacity: u32,
     /// Separator drawn between the status groups.
     pub separator: String,
     /// Modules to show, in order: workspaces, network, battery, clock.
@@ -103,6 +113,9 @@ pub struct Bar {
     pub microphone_visibility: String,
     /// Workspace labels shown instead of 1..9.
     pub tags: Vec<String>,
+    /// Preset for the workspace labels: 1 numbers, 2 icons, 3 text. Wins over
+    /// `tags` when it names a known preset; absent or unknown keeps `tags`.
+    pub workspace_layout: Option<u32>,
     pub show_date: bool,
     pub show_time: bool,
     pub date_format: String,
@@ -176,9 +189,67 @@ impl Default for Config {
             monitors: toml::Value::Table(Default::default()),
             nightlight: toml::Value::Table(Default::default()),
             brightness: toml::Value::Table(Default::default()),
+            idle: toml::Value::Table(Default::default()),
             scratchpad: toml::Value::Table(Default::default()),
             rules: Vec::new(),
         }
+    }
+}
+
+/// Workspace label presets selected by `[bar] workspace_layout`.
+pub const WORKSPACE_LAYOUTS: u32 = 3;
+
+/// Opacity used when the bar is transparent but `opacity` is out of range.
+/// One definition for the default, the validator and the fallback.
+pub const DEFAULT_BAR_OPACITY: u32 = 94;
+
+/// Labels for a preset. `1` numbers, `2` icons, `3` text. Must match NIRUWM's
+/// table: both programs render the same shared configuration.
+pub fn workspace_layout_tags(layout: u32) -> Vec<String> {
+    match layout {
+        2 => [
+            "\u{f0ac}", "\u{f121}", "\u{f086}", "\u{e795}", "\u{f075}", "\u{f0e0}", "\u{f07b}",
+            "\u{f086}", "\u{f0e0}", "\u{f07b}",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        3 => [
+            "web", "ai", "ai", "ai", "term", "chat", "mail", "folder", "pchat", "term",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        _ => (1..=10).map(|n| n.to_string()).collect(),
+    }
+}
+
+impl Bar {
+    /// Labels to render. `workspace_layout` wins when it names a known preset;
+    /// otherwise the explicit `tags` list is used, which defaults to numbers.
+    pub fn effective_tags(&self) -> Vec<String> {
+        match self.workspace_layout {
+            Some(n) if (1..=WORKSPACE_LAYOUTS).contains(&n) => workspace_layout_tags(n),
+            _ => self.tags.clone(),
+        }
+    }
+
+    /// Opacity to publish, or `None` when the bar must stay opaque.
+    /// Out-of-range `opacity` falls back to `DEFAULT_BAR_OPACITY` rather than
+    /// making the bar vanish or fail to start.
+    pub fn effective_opacity(&self) -> Option<u32> {
+        if !self.transparent {
+            return None;
+        }
+        let percent = if (1..=100).contains(&self.opacity) {
+            self.opacity
+        } else {
+            DEFAULT_BAR_OPACITY
+        };
+        // _NET_WM_WINDOW_OPACITY is a 32-bit fraction of 0xffffffff. Multiply in
+        // u64 so a large percentage cannot overflow.
+        let fraction = u64::from(percent) * u64::from(u32::MAX) / 100;
+        Some(fraction as u32)
     }
 }
 
@@ -189,6 +260,8 @@ impl Default for Bar {
             show_title: false,
             title_max: 60,
             cell_width: 30,
+            transparent: true,
+            opacity: DEFAULT_BAR_OPACITY,
             separator: "|".into(),
             modules: vec![
                 "workspaces".into(),
@@ -201,6 +274,7 @@ impl Default for Bar {
                 "clock".into(),
             ],
             tags: (1..=10).map(|n| n.to_string()).collect(),
+            workspace_layout: None,
             microphone_visibility: "always".into(),
             show_date: true,
             show_time: true,
@@ -774,6 +848,100 @@ mod tests {
         assert!(c.bar.enabled);
         assert!(!c.bar.show_title, "the bar defaults to tags and clock only");
         assert_eq!(c.bar.cell_width, 30);
+    }
+
+    #[test]
+    fn workspace_layout_selects_a_preset_and_falls_back_safely() {
+        let mut bar = Bar::default();
+        assert_eq!(bar.effective_tags()[0], "1", "default layout is numbers");
+
+        bar.workspace_layout = Some(2);
+        let icons = bar.effective_tags();
+        assert_eq!(icons.len(), 10);
+        assert_ne!(icons[0], "1", "layout 2 is not numeric");
+
+        bar.workspace_layout = Some(3);
+        assert_eq!(bar.effective_tags()[0], "web");
+        assert_eq!(bar.effective_tags()[9], "term");
+
+        // An unknown preset keeps the explicit tags rather than panicking.
+        bar.workspace_layout = Some(99);
+        assert_eq!(bar.effective_tags()[0], "1");
+        bar.workspace_layout = None;
+        assert_eq!(bar.effective_tags()[0], "1");
+    }
+
+    #[test]
+    fn explicit_tags_still_win_when_no_layout_is_set() {
+        let bar = Bar {
+            tags: vec!["a".into(), "b".into()],
+            workspace_layout: None,
+            ..Default::default()
+        };
+        assert_eq!(bar.effective_tags(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn bar_opacity_is_opt_in_and_clamped() {
+        let mut bar = Bar::default();
+        assert!(bar.transparent, "transparent appearance is the default");
+        assert_eq!(
+            bar.effective_opacity(),
+            Some(u64::from(DEFAULT_BAR_OPACITY) * u64::from(u32::MAX) / 100).map(|v| v as u32)
+        );
+
+        bar.transparent = false;
+        assert_eq!(bar.effective_opacity(), None, "opaque when disabled");
+
+        // Out-of-range values fall back instead of making the bar invisible.
+        bar.transparent = true;
+        bar.opacity = 0;
+        assert_eq!(
+            bar.effective_opacity(),
+            Some(u64::from(DEFAULT_BAR_OPACITY) * u64::from(u32::MAX) / 100).map(|v| v as u32)
+        );
+        bar.opacity = 250;
+        assert_eq!(
+            bar.effective_opacity(),
+            Some(u64::from(DEFAULT_BAR_OPACITY) * u64::from(u32::MAX) / 100).map(|v| v as u32)
+        );
+        bar.opacity = 80;
+        assert_eq!(
+            bar.effective_opacity(),
+            Some(u64::from(80u32) * u64::from(u32::MAX) / 100).map(|v| v as u32)
+        );
+    }
+
+    #[test]
+    fn new_bar_keys_parse_from_toml() {
+        let c: Config =
+            toml::from_str("[bar]\nworkspace_layout = 3\ntransparent = false\nopacity = 80\n")
+                .expect("new keys must parse");
+        assert_eq!(c.bar.workspace_layout, Some(3));
+        assert!(!c.bar.transparent);
+        assert_eq!(c.bar.opacity, 80);
+    }
+
+    #[test]
+    fn an_absurd_opacity_parses_and_falls_back() {
+        // A percentage larger than u8 used to fail the whole config and stop
+        // the bar from starting. It must be rejected as a value, not as a file.
+        let c: Config = toml::from_str("[bar]\nopacity = 500\n")
+            .expect("an out-of-range opacity must not stop the bar");
+        assert_eq!(
+            c.bar.effective_opacity(),
+            Some(u64::from(DEFAULT_BAR_OPACITY) * u64::from(u32::MAX) / 100).map(|v| v as u32)
+        );
+    }
+
+    #[test]
+    fn nirubar_accepts_sections_owned_by_other_programs() {
+        // [idle] belongs to NIRUIDLE; refusing it would stop the bar from
+        // starting on a config that NIRUWM accepts.
+        let c: Config =
+            toml::from_str("[idle]\nscreensaver_timeout = 5\nlock_after_screensaver = 2\n")
+                .expect("the bar must accept the shared file");
+        assert!(c.idle.is_table());
     }
 
     #[test]
