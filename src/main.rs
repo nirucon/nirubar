@@ -15,6 +15,7 @@ mod helpers;
 mod layout;
 mod microphone;
 mod module;
+mod nirux_update;
 mod popup;
 mod powerprofile;
 mod probe;
@@ -250,6 +251,7 @@ fn module_priority(name: &str) -> i32 {
         "media" => 70,
         "notifications" => 65,
         "updates" => 60,
+        "niruxupdate" => 58,
         "brightness" => 55,
         "weather" => 50,
         "sun" => 45,

@@ -805,6 +805,43 @@ impl Module for Updates {
     }
 }
 
+/// A newer NIRUX release than the one installed.
+///
+/// Silent when there is nothing to say, so the bar looks the same on a machine
+/// that is up to date and on one that has no suite installed.
+pub struct NiruxUpdate {
+    pub icons: status::Icons,
+}
+
+impl Module for NiruxUpdate {
+    fn name(&self) -> &'static str {
+        "niruxupdate"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::nirux_update::text(
+            crate::nirux_update::available().as_deref(),
+            self.icons.notifications,
+        )
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let latest = crate::nirux_update::available()?;
+        Some((
+            "NIRUX update".into(),
+            vec![
+                format!("version {latest} is available"),
+                String::new(),
+                "update when you can log out afterwards".into(),
+                String::new(),
+                "nirux update".into(),
+                "then log out and back in".into(),
+            ],
+        ))
+    }
+}
+
 /// How long the machine has been up, and how the memory and disk look.
 pub struct Uptime {
     pub icons: status::Icons,
@@ -1209,6 +1246,7 @@ pub fn build(
                 icons,
                 every: std::time::Duration::from_secs(u64::from(cfg.update_check_minutes) * 60),
             })),
+            "niruxupdate" => out.push(Box::new(NiruxUpdate { icons })),
             "volume" => out.push(Box::new(Volume {
                 icons: cfg.volume_icons(),
                 sample: Sample::default(),
@@ -1303,6 +1341,22 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    /// A module name in the config must become a module in the bar. Without
+    /// this, a config can list a module that never appears and nothing says so.
+    #[test]
+    fn a_configured_module_is_built() {
+        use std::sync::{Arc, Mutex};
+        let mut cfg = config::Config::default();
+        cfg.bar.modules = vec!["workspaces".into(), "niruxupdate".into(), "clock".into()];
+        let layout = Arc::new(Mutex::new("tile".to_string()));
+        let built = super::build(&cfg, status::Icons::plain(), layout);
+        let names: Vec<&str> = built.iter().map(|m| m.name()).collect();
+        assert!(
+            names.contains(&"niruxupdate"),
+            "configured module missing from the bar: {names:?}"
+        );
+    }
+
     #[test]
     fn samples_cache_success_and_failure_independently_of_redraws() {
         let mut sample = super::Sample::default();
