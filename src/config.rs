@@ -656,6 +656,9 @@ struct WallpaperValidation {
     shuffle_on_start: bool,
     follow_theme: bool,
     theme_dir: String,
+    /// Per-screen pictures; NIRUWM validates them, the bar only has to accept
+    /// the shared file unchanged.
+    outputs: Vec<toml::Value>,
 }
 
 impl Default for WallpaperValidation {
@@ -671,6 +674,7 @@ impl Default for WallpaperValidation {
             shuffle_on_start: true,
             follow_theme: true,
             theme_dir: "~/Pictures/Wallpapers/NIRU".into(),
+            outputs: Vec::new(),
         }
     }
 }
@@ -950,6 +954,25 @@ mod tests {
         // file is shared, so both programs must describe every key they use.
         let err = toml::from_str::<Config>("gap = 8\nbogus = 1");
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn accepts_a_wallpaper_entry_for_one_screen() {
+        // NIRUWM writes this section for a per-screen picture. A bar that
+        // rejected it would not start at the next login.
+        let shared = r#"
+[wallpaper]
+enabled = true
+follow_theme = true
+
+[[wallpaper.outputs]]
+output = "DP-1"
+mode = "single"
+file = "~/Pictures/Wallpapers/mine/tower.png"
+scale = "fit"
+"#;
+        let c: Config = toml::from_str(shared).expect("the bar must accept a per-screen entry");
+        c.validate().expect("valid settings");
     }
 
     #[test]
