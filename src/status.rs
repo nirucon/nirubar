@@ -591,7 +591,33 @@ mod tests {
         assert!(outputs[0].primary);
         assert_eq!(outputs[1].name, "HDMI-1");
         assert!(!outputs[1].primary);
-        assert_eq!(display_text(&outputs, "D"), "D 2");
+        // With two screens each bar says which one it is.
+        let left = crate::module::Screen {
+            name: Some("eDP-1".into()),
+        };
+        let right = crate::module::Screen {
+            name: Some("HDMI-1".into()),
+        };
+        // File order decides which screen is on the left, as xrandr lists it.
+        assert_eq!(display_text(&outputs, "D", &left), "D 2 right");
+        assert_eq!(display_text(&outputs, "D", &right), "D 2 left");
+        // Stacked screens read above/below instead of left/right.
+        let stacked = "DP-1 connected 2560x1440+0+1440 (normal left inverted right x axis y axis)\nDP-2 connected 2560x1440+0+0 (normal left inverted right x axis y axis)\n";
+        let stacked = display_outputs_from(stacked);
+        let lower = crate::module::Screen {
+            name: Some("DP-1".into()),
+        };
+        let upper = crate::module::Screen {
+            name: Some("DP-2".into()),
+        };
+        // DP-2 sits at y=0, so DP-1 is below it and DP-2 above.
+        assert_eq!(display_text(&stacked, "D", &lower), "D 2 above");
+        assert_eq!(display_text(&stacked, "D", &upper), "D 2 below");
+        // One screen does not need a permanent module.
+        let single = crate::module::Screen {
+            name: Some("eDP-1".into()),
+        };
+        assert_eq!(display_text(&outputs[..1], "D", &single), "");
         assert_eq!(display_detail(&outputs)[0], "eDP-1: 1920x1080 (primary)");
     }
 
@@ -628,6 +654,9 @@ pub struct DisplayOutput {
     pub name: String,
     pub resolution: String,
     pub primary: bool,
+    /// The output's top-left corner on the combined desktop, from
+    /// `2560x1440+2560+0`.
+    pub position: (i16, i16),
 }
 
 fn display_outputs_from(text: &str) -> Vec<DisplayOutput> {
@@ -639,16 +668,23 @@ fn display_outputs_from(text: &str) -> Vec<DisplayOutput> {
         let mut words = line.split_whitespace();
         let Some(name) = words.next() else { continue };
         let primary = line.contains(" primary ");
-        let resolution = line
+        let geometry = line
             .split_whitespace()
-            .find(|word| word.contains('x') && word.contains('+'))
+            .find(|word| word.contains('x') && word.contains('+'));
+        let resolution = geometry
             .and_then(|word| word.split('+').next())
             .unwrap_or("?")
             .to_string();
+        let position = geometry.and_then(|word| {
+            let (_, rest) = word.split_once('+')?;
+            let (x, y) = rest.split_once('+')?;
+            Some((x.parse::<i16>().ok()?, y.parse::<i16>().ok()?))
+        });
         outputs.push(DisplayOutput {
             name: name.to_string(),
             resolution,
             primary,
+            position: position.unwrap_or((0, 0)),
         });
     }
     outputs
@@ -669,13 +705,63 @@ pub fn display_outputs() -> Option<Vec<DisplayOutput>> {
         .then(|| display_outputs_from(&String::from_utf8_lossy(&out.stdout)))
 }
 
-/// Show a count only when more than one display is connected. A single laptop
-/// panel does not need a permanent module.
-pub fn display_text(outputs: &[DisplayOutput], icon: &str) -> String {
-    if outputs.len() > 1 {
-        format!("{icon} {}", outputs.len())
+/// Name this bar's screen, and where it sits when there are several.
+///
+/// With more than one screen the count alone does not say which bar is which,
+/// so the bar adds the screen's place: `2 above` when the screens are stacked,
+/// `2 right` when they are side by side. A single screen still shows nothing.
+pub fn display_text(
+    outputs: &[DisplayOutput],
+    icon: &str,
+    screen: &crate::module::Screen,
+) -> String {
+    if outputs.len() <= 1 {
+        return String::new();
+    }
+    let own = screen.name.as_deref().and_then(|name| {
+        outputs
+            .iter()
+            .find(|output| output.name == name)
+            .map(|output| output.position)
+    });
+    let count = outputs.len();
+    let Some((x, y)) = own else {
+        return format!("{icon} {count}");
+    };
+    let mut above = 0;
+    let mut below = 0;
+    let mut left = 0;
+    let mut right = 0;
+    for output in outputs {
+        let (ox, oy) = output.position;
+        if (ox, oy) == (x, y) {
+            continue;
+        }
+        if oy < y {
+            above += 1;
+        } else if oy > y {
+            below += 1;
+        } else if ox < x {
+            left += 1;
+        } else {
+            right += 1;
+        }
+    }
+    let place = if above > 0 {
+        "above"
+    } else if below > 0 {
+        "below"
+    } else if left > 0 {
+        "left"
+    } else if right > 0 {
+        "right"
     } else {
-        String::new()
+        ""
+    };
+    if place.is_empty() {
+        format!("{icon} {count}")
+    } else {
+        format!("{icon} {count} {place}")
     }
 }
 

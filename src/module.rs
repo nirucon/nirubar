@@ -142,6 +142,16 @@ impl Workspaces {
     }
 }
 
+/// The screen a bar draws on, as the window manager named it.
+///
+/// A workspace cell or a clock looks the same on every screen; the display
+/// module does not, because it says which of the two screens this bar is.
+#[derive(Clone, Debug, Default)]
+pub struct Screen {
+    /// The RandR output name, when the window manager passed one.
+    pub name: Option<String>,
+}
+
 pub struct Clock {
     pub format_date: String,
     pub format_time: String,
@@ -345,6 +355,8 @@ pub struct Display {
     pub icons: status::Icons,
     checked: Option<std::time::Instant>,
     outputs: Option<Vec<status::DisplayOutput>>,
+    /// This bar's screen, the one the module should name.
+    pub screen: Screen,
 }
 
 impl Display {
@@ -371,7 +383,7 @@ impl Module for Display {
     fn render(&mut self) -> String {
         self.refresh();
         match &self.outputs {
-            Some(outputs) => status::display_text(outputs, self.icons.display),
+            Some(outputs) => status::display_text(outputs, self.icons.display, &self.screen),
             None => String::new(),
         }
     }
@@ -1213,6 +1225,7 @@ pub fn build(
     full: &config::Config,
     icons: status::Icons,
     layout: Arc<Mutex<String>>,
+    screen: Screen,
 ) -> Vec<Box<dyn Module>> {
     let cfg = &full.bar;
     let mut out: Vec<Box<dyn Module>> = Vec::new();
@@ -1232,6 +1245,7 @@ pub fn build(
                 icons,
                 checked: None,
                 outputs: None,
+                screen: screen.clone(),
             })),
             "mode" => out.push(Box::new(WorkMode { icons })),
             "layout" => out.push(Box::new(LayoutMode {
@@ -1349,7 +1363,7 @@ mod tests {
         let mut cfg = config::Config::default();
         cfg.bar.modules = vec!["workspaces".into(), "niruxupdate".into(), "clock".into()];
         let layout = Arc::new(Mutex::new("tile".to_string()));
-        let built = super::build(&cfg, status::Icons::plain(), layout);
+        let built = super::build(&cfg, status::Icons::plain(), layout, Screen::default());
         let names: Vec<&str> = built.iter().map(|m| m.name()).collect();
         assert!(
             names.contains(&"niruxupdate"),
@@ -1404,6 +1418,7 @@ mod tests {
             &config::Config::default(),
             status::Icons::plain(),
             Arc::new(Mutex::new(String::new())),
+            Screen::default(),
         );
         for name in list {
             let name = name.as_str().expect("module names are strings");
@@ -1449,7 +1464,8 @@ mod tests {
             build(
                 &all,
                 status::Icons::plain(),
-                Arc::new(Mutex::new(String::new()))
+                Arc::new(Mutex::new(String::new())),
+                Screen::default()
             )
             .len(),
             6
@@ -1629,6 +1645,7 @@ mod tests {
             &cfg,
             status::Icons::plain(),
             Arc::new(Mutex::new(String::new())),
+            Screen::default(),
         );
         assert_eq!(mods.len(), 2);
         assert_eq!(mods[0].name(), "clock");
@@ -1707,6 +1724,7 @@ mod tests {
             &cfg,
             status::Icons::plain(),
             Arc::new(Mutex::new(String::new())),
+            Screen::default(),
         );
         assert_eq!(modules.len(), 1);
         assert_eq!(modules[0].name(), "volume");
@@ -1715,6 +1733,7 @@ mod tests {
             &cfg,
             status::Icons::plain(),
             Arc::new(Mutex::new(String::new())),
+            Screen::default(),
         );
         assert_eq!(modules.len(), 2);
         assert_eq!(modules[0].name(), "clock");

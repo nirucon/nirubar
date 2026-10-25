@@ -9,7 +9,8 @@ NetworkManager is required.
 
 ## Features
 
-- One bar per monitor with monitor-local workspaces.
+- One bar per monitor with monitor-local workspaces, so each screen shows its
+  own workspace cells and its own clock.
 - Font-aware layout and semantic theme colours drawn from the active NIRUX
   theme, with ten built-in theme palettes when NIRUX is not installed.
 - Panels with measured hitboxes, Escape/click-outside dismissal and a timeout.
@@ -39,6 +40,7 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | `sun` | Sunrise and sunset | Click for daylight progress |
 | `weather` | Cached temperature, condition and next-hour rain | Click for an eight-hour rain timeline and daylight progress |
 | `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |
+| `display` | With two screens, which one this bar is: `2 below`, `2 above`, `2 left`, `2 right` | Middle-click for display profiles |
 
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in

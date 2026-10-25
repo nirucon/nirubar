@@ -492,7 +492,12 @@ impl Bar {
         cfg.bar.volume_icons = Some(av::volume_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
         cfg.bar.media_icons = Some(av::media_icons(|ch| renderer.has_glyph(ch), cfg.bar.icons));
         let layout_text = Arc::new(Mutex::new(String::new()));
-        let modules = module::build(&cfg, icons, layout_text.clone());
+        // The bar's own screen travels into the modules: only the display
+        // module needs it, to name which screen this is.
+        let screen = module::Screen {
+            name: monitor.as_ref().and_then(|m| m.name.clone()),
+        };
+        let modules = module::build(&cfg, icons, layout_text.clone(), screen);
         let workspaces = Workspaces::new(&cfg.bar);
         let cells = cfg.bar.cell_width as i16;
         Ok(Self {
@@ -1203,7 +1208,10 @@ impl Bar {
             |c| self.renderer.has_glyph(c),
             cfg.bar.icons,
         ));
-        self.modules = module::build(&cfg, self.icons, self.layout_text.clone());
+        let screen = module::Screen {
+            name: self.monitor.as_ref().and_then(|m| m.name.clone()),
+        };
+        self.modules = module::build(&cfg, self.icons, self.layout_text.clone(), screen);
         self.workspaces = Workspaces::new(&cfg.bar);
         self.cells = cfg.bar.cell_width as i16;
         self.cfg = cfg;
