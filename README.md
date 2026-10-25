@@ -2,7 +2,7 @@
 
 **Part of [NIRUX - A minimal X11 desktop by Nicklas Rudolfsson](https://github.com/nirucon/nirux).**
 
-**Early beta.** A native X11 status bar for the NIRU desktop. It is a separate
+**Early beta.** A native X11 status bar for the NIRUX X11 desktop. It is a separate
 process, draws only when values change, reserves screen space with an X11 strut
 and reads system state directly from `/sys` where possible. No daemon or
 NetworkManager is required.
@@ -10,7 +10,8 @@ NetworkManager is required.
 ## Features
 
 - One bar per monitor with monitor-local workspaces.
-- Font-aware layout, semantic theme colours and four built-in NIRU themes.
+- Font-aware layout and semantic theme colours drawn from the active NIRUX
+  theme, with ten built-in theme palettes when NIRUX is not installed.
 - Panels with measured hitboxes, Escape/click-outside dismissal and a timeout.
 - XEmbed system tray per X screen.
 - Narrow-width overflow: low-priority modules collapse into a clickable `+N`.
