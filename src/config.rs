@@ -469,6 +469,30 @@ impl Config {
                 return Err("monitors.profiles entries need a name and workspaces".into());
             }
         }
+        // The same names NIRUWM accepts; a typo is refused here too, so the two
+        // programs can never disagree about a file they share.
+        let known = |name: &String| {
+            matches!(
+                name.as_str(),
+                "tile"
+                    | "left"
+                    | "monocle"
+                    | "centered"
+                    | "centeredfloat"
+                    | "floating"
+                    | "fibonacci"
+            )
+        };
+        if let Some(bad) = monitors.layouts.iter().find(|l| !known(l)) {
+            return Err(format!("monitors.layouts: unknown layout {bad}").into());
+        }
+        for profile in &monitors.profiles {
+            if let Some(bad) = profile.layouts.iter().find(|l| !known(l)) {
+                return Err(
+                    format!("monitors.profiles {}: unknown layout {bad}", profile.name).into(),
+                );
+            }
+        }
 
         let nightlight: NightlightValidation = self.nightlight.clone().try_into()?;
         if !(-90.0..=90.0).contains(&nightlight.latitude)
@@ -684,6 +708,10 @@ impl Default for WallpaperValidation {
 struct MonitorsValidation {
     workspaces: usize,
     profiles: Vec<MonitorProfileValidation>,
+    /// Workspace layouts NIRUWM keeps. The bar shares this file and must
+    /// accept what the window manager writes after a workspace change.
+    #[serde(default)]
+    layouts: Vec<String>,
 }
 
 impl Default for MonitorsValidation {
@@ -691,6 +719,7 @@ impl Default for MonitorsValidation {
         Self {
             workspaces: 10,
             profiles: Vec::new(),
+            layouts: Vec::new(),
         }
     }
 }
@@ -702,6 +731,9 @@ struct MonitorProfileValidation {
     name: String,
     workspaces: Vec<String>,
     primary: bool,
+    /// This screen's own workspace layouts, written by NIRUWM.
+    #[serde(default)]
+    layouts: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

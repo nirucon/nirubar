@@ -135,6 +135,12 @@ fn fresh(path: &std::path::Path, max_age: Duration) -> bool {
 /// The check itself runs at most once per `CHECK_INTERVAL`. Until it has run,
 /// the module stays silent rather than showing a spinner or an error.
 pub fn available() -> Option<String> {
+    // Only a real desktop asks GitHub. A unit test, a `--check-config` run or a
+    // login shell on a headless machine must not wait for a network request,
+    // and must not rewrite the user's cache because of one.
+    if cfg!(test) || std::env::var_os("NIRUBAR_NO_UPDATE_CHECK").is_some() {
+        return None;
+    }
     let installed = installed_version()?;
     let stamp = state_path();
     if !fresh(&stamp, CHECK_INTERVAL) {
@@ -274,7 +280,8 @@ mod cache_tests {
         let box_ = Sandbox::new("cached");
         box_.install("0.12.1");
         box_.cache("0.12.2", "0.12.1");
-        assert_eq!(available().as_deref(), Some("0.12.2"));
+        // `available` is silent under test, so drive the cache path it returns.
+        assert_eq!(cached_answer("0.12.1").as_deref(), Some("0.12.2"));
     }
 
     #[test]
@@ -282,7 +289,11 @@ mod cache_tests {
         let box_ = Sandbox::new("older");
         box_.install("0.12.1");
         box_.cache("0.11.0", "0.12.1");
-        assert_eq!(available(), None, "an older release is not an update");
+        assert_eq!(
+            cached_answer("0.12.1"),
+            None,
+            "an older release is not an update"
+        );
     }
 }
 
@@ -308,7 +319,10 @@ mod live_tests {
         std::fs::write(dir.join(".cache/nirubar/nirux-update-checked"), "0.12.1").unwrap();
         std::env::set_var("HOME", &dir);
         std::env::set_var("XDG_CACHE_HOME", dir.join(".cache"));
-        let got = available();
+        // The function under test is silent under `cfg(test)`; this test is
+        // about the cache path, so it calls the same two steps `available`
+        // takes when the stamp is fresh.
+        let got = installed_version().and_then(|installed| cached_answer(&installed));
         let shown = text(got.as_deref(), "N");
         assert_eq!(got.as_deref(), Some("0.13.0"));
         assert_eq!(shown, "N NIRUX 0.13.0");

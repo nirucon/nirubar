@@ -610,9 +610,29 @@ mod tests {
         let upper = crate::module::Screen {
             name: Some("DP-2".into()),
         };
-        // DP-2 sits at y=0, so DP-1 is below it and DP-2 above.
+        // DP-1 sits at y=1440, below DP-2. Each bar names where the other
+        // screen is: the lower screen has one above it, the upper one below.
         assert_eq!(display_text(&stacked, "D", &lower), "D 2 above");
         assert_eq!(display_text(&stacked, "D", &upper), "D 2 below");
+        // The same for side by side: the right screen has one to its left.
+        let side = display_outputs_from(
+            "eDP-1 connected 1920x1080+0+0 (normal left inverted right x axis y axis)\n\
+             DP-3 connected 2560x1440+1920+0 (normal left inverted right x axis y axis)\n",
+        );
+        let left = crate::module::Screen {
+            name: Some("eDP-1".into()),
+        };
+        let right = crate::module::Screen {
+            name: Some("DP-3".into()),
+        };
+        assert_eq!(display_text(&side, "D", &left), "D 2 right");
+        assert_eq!(display_text(&side, "D", &right), "D 2 left");
+        // A screen placed diagonally reads by the vertical difference.
+        let corner = display_outputs_from(
+            "eDP-1 connected 1920x1080+0+0 (normal left inverted right x axis y axis)\n\
+             DP-3 connected 2560x1440+1920+500 (normal left inverted right x axis y axis)\n",
+        );
+        assert_eq!(display_text(&corner, "D", &left), "D 2 below");
         // One screen does not need a permanent module.
         let single = crate::module::Screen {
             name: Some("eDP-1".into()),
@@ -728,40 +748,42 @@ pub fn display_text(
     let Some((x, y)) = own else {
         return format!("{icon} {count}");
     };
-    let mut above = 0;
-    let mut below = 0;
-    let mut left = 0;
-    let mut right = 0;
+    // Where the other screens are, counted on each side of this one.
+    let mut offsets: Vec<(i32, i32)> = Vec::new();
     for output in outputs {
         let (ox, oy) = output.position;
-        if (ox, oy) == (x, y) {
-            continue;
-        }
-        if oy < y {
-            above += 1;
-        } else if oy > y {
-            below += 1;
-        } else if ox < x {
-            left += 1;
-        } else {
-            right += 1;
+        if (ox, oy) != (x, y) {
+            // Subtract in i32: two screens far apart can overflow i16.
+            offsets.push((i32::from(ox) - i32::from(x), i32::from(oy) - i32::from(y)));
         }
     }
-    let place = if above > 0 {
-        "above"
-    } else if below > 0 {
-        "below"
-    } else if left > 0 {
-        "left"
-    } else if right > 0 {
-        "right"
-    } else {
-        ""
-    };
+    let place = display_place(&offsets);
     if place.is_empty() {
         format!("{icon} {count}")
     } else {
         format!("{icon} {count} {place}")
+    }
+}
+
+/// Name where this screen sits among the others, from relative positions.
+///
+/// The label says where the *other* screens are, as the bar has always read
+/// it: a screen below the top one shows `2 above`, because the second screen
+/// is above it. A screen to the right of another shows `2 left`. A stack that
+/// is also offset sideways is `above` or `below` first, since that is the
+/// arrangement a reader notices.
+fn display_place(offsets: &[(i32, i32)]) -> &'static str {
+    let any = |test: &dyn Fn(i32, i32) -> bool| offsets.iter().any(|&(dx, dy)| test(dx, dy));
+    if any(&|_, dy| dy < 0) {
+        "above"
+    } else if any(&|_, dy| dy > 0) {
+        "below"
+    } else if any(&|dx, _| dx < 0) {
+        "left"
+    } else if any(&|dx, _| dx > 0) {
+        "right"
+    } else {
+        ""
     }
 }
 

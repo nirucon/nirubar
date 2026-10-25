@@ -30,6 +30,38 @@ ok() { echo "OK   $*"; }
   { cat /tmp/agree-wm.out; fail "niruwm refuses config.example.toml"; }
 ok "config.example.toml is accepted by both programs"
 
+# NIRUWM writes workspace layouts into [monitors] and every [[monitors.profiles]]
+# entry. The bar must load that file: if it does not, it stops starting after
+# the first workspace layout change.
+layouts="$XDG_CONFIG_HOME/niruwm/config.toml.layouts"
+awk '
+  { print }
+  !done && $0 == "[monitors]" { print "layouts = [\"tile\", \"monocle\"]"; done = 1 }
+' "$XDG_CONFIG_HOME/niruwm/config.toml" > "$layouts"
+cat >> "$layouts" <<'EOF'
+
+[[monitors.profiles]]
+name = "DP-2"
+workspaces = ["1", "2"]
+primary = false
+layouts = ["fibonacci", "tile"]
+EOF
+cp "$layouts" "$XDG_CONFIG_HOME/niruwm/config.toml"
+"$BINDIR/nirubar" --check-config >/tmp/agree-bar.out 2>&1 ||
+  { cat /tmp/agree-bar.out; fail "nirubar refuses the layouts NIRUWM writes"; }
+"$BINDIR/niruwm" --check-config >/tmp/agree-wm.out 2>&1 ||
+  { cat /tmp/agree-wm.out; fail "niruwm refuses its own generated layouts"; }
+ok "generated workspace layouts load in both programs"
+
+# Leave the generated profile out again: the next section appends ordinary
+# top-level settings, which would otherwise land inside that table.
+awk '
+  /^\[\[monitors.profiles\]\]$/ { skip = 1; next }
+  skip && /^[[:space:]]*\[/ { skip = 0 }
+  !skip { print }
+' "$XDG_CONFIG_HOME/niruwm/config.toml" > "$layouts"
+cp "$layouts" "$XDG_CONFIG_HOME/niruwm/config.toml"
+
 # Every top-level and [bar] key the bar knows, written out the way a person
 # would, and handed to the window manager. Values are deliberately ordinary.
 cat >>"$XDG_CONFIG_HOME/niruwm/config.toml" <<'EOF'

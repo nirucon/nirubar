@@ -77,11 +77,13 @@ fn sanitize(name: &str) -> String {
 }
 
 /// State published by niruwm for one output in `_NIRUWM_MONITORS`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct MonitorLayout {
     offset: u32,
     count: usize,
     active: u32,
+    /// The layout of the workspace this screen shows.
+    layout: Option<String>,
 }
 
 fn parse_monitor_layout(text: &str, monitor: &Option<Monitor>) -> Option<MonitorLayout> {
@@ -94,10 +96,18 @@ fn parse_monitor_layout(text: &str, monitor: &Option<Monitor>) -> Option<Monitor
         if fields.len() < 7 {
             continue;
         }
+        // An older window manager publishes seven fields and no layout; the
+        // bar then keeps the global one.
+        let layout = fields
+            .get(7)
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         return Some(MonitorLayout {
             offset: fields[4].parse().ok()?,
             count: fields[5].parse::<usize>().ok()?.max(1),
             active: fields[6].parse().ok()?,
+            layout,
         });
     }
     None
@@ -571,18 +581,26 @@ impl Bar {
             .unwrap_or_default();
         let layout = parse_monitor_layout(&layout_text, &self.monitor);
         self.monitor_managed = layout.is_some();
+        // The manager publishes each screen's own workspace layout in
+        // `_NIRUWM_MONITORS`, so this bar shows what its screen is tiling with,
+        // not whichever screen has focus. A newer manager adds an eighth field;
+        // without it the global `_NIRUWM_LAYOUT` above stands.
+        if let Some(own) = layout.as_ref().and_then(|l| l.layout.clone()) {
+            if let Ok(mut value) = self.layout_text.lock() {
+                *value = own;
+            }
+        }
         let fallback_active = self
             .values(self.root, "_NET_CURRENT_DESKTOP")
             .first()
             .copied()
             .unwrap_or(0);
-        let (offset, count, active) = layout.map(|l| (l.offset, l.count, l.active)).unwrap_or((
-            0,
-            self.workspaces.names.len().max(1),
-            fallback_active,
-        ));
+        let (offset, count, active) = layout
+            .as_ref()
+            .map(|l| (l.offset, l.count, l.active))
+            .unwrap_or((0, self.workspaces.names.len().max(1), fallback_active));
 
-        let names = layout.and_then(|_| {
+        let names = layout.as_ref().and_then(|_| {
             let reply = self
                 .c
                 .get_property(
@@ -1683,7 +1701,8 @@ mod tests {
             Some(super::MonitorLayout {
                 offset: 0,
                 count: 3,
-                active: 1
+                active: 1,
+                layout: None,
             })
         );
         assert_eq!(
@@ -1691,10 +1710,38 @@ mod tests {
             Some(super::MonitorLayout {
                 offset: 3,
                 count: 2,
-                active: 0
+                active: 0,
+                layout: None,
             })
         );
         assert_eq!(super::parse_monitor_layout(text, &None), None);
+    }
+
+    /// With two screens the bars must not share one layout. A newer manager
+    /// adds the layout of the screen's own workspace as the eighth field.
+    #[test]
+    fn each_screen_reports_its_own_workspace_layout() {
+        let text = "left\t0\t0\t800\t0\t3\t1\ttile\nright\t800\t0\t800\t3\t2\t0\tmonocle\n";
+        let left = Some(super::Monitor {
+            x: 0,
+            y: 0,
+            w: 800,
+            name: Some("left".into()),
+        });
+        let right = Some(super::Monitor {
+            x: 800,
+            y: 0,
+            w: 800,
+            name: Some("right".into()),
+        });
+        assert_eq!(
+            super::parse_monitor_layout(text, &left).and_then(|l| l.layout),
+            Some("tile".to_string())
+        );
+        assert_eq!(
+            super::parse_monitor_layout(text, &right).and_then(|l| l.layout),
+            Some("monocle".to_string())
+        );
     }
 
     #[test]
