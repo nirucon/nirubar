@@ -37,7 +37,12 @@ pub struct Tray {
 
 impl Tray {
     /// Announce a tray on screen `screen` and start accepting icons.
-    pub fn new(c: &RustConnection, root: Window, screen: usize) -> Result<Self> {
+    ///
+    /// `win` is the bar window itself. Icons are reparented into it, so they
+    /// share the bar's geometry and cannot be clipped by a tiny selection
+    /// window. The bar also owns the tray selection, which is what XEmbed
+    /// clients expect.
+    pub fn new(c: &RustConnection, root: Window, screen: usize, win: Window) -> Result<Self> {
         let atom =
             |n: &str| -> Result<Atom> { Ok(c.intern_atom(false, n.as_bytes())?.reply()?.atom) };
         let selection = atom(&format!("_NET_SYSTEM_TRAY_S{screen}"))?;
@@ -53,29 +58,6 @@ impl Tray {
             return Err("another system tray is already running".into());
         }
 
-        let win = c.generate_id()?;
-        c.create_window(
-            0,
-            win,
-            root,
-            -1,
-            -1,
-            1,
-            1,
-            0,
-            WindowClass::INPUT_OUTPUT,
-            0,
-            &CreateWindowAux::new()
-                .override_redirect(1)
-                // An application docks by sending a ClientMessage to this
-                // window with SubstructureNotifyMask, so that mask must be
-                // selected here or the request is dropped by the server.
-                .event_mask(
-                    EventMask::EXPOSURE
-                        | EventMask::STRUCTURE_NOTIFY
-                        | EventMask::SUBSTRUCTURE_NOTIFY,
-                ),
-        )?;
         // Horizontal, and with the root visual so icons compose normally.
         c.change_property32(
             PropMode::REPLACE,
@@ -91,9 +73,6 @@ impl Tray {
             AtomEnum::VISUALID,
             &[c.setup().roots[screen].root_visual],
         )?;
-        // XEmbed clients expect the manager window itself to be mapped; an
-        // unmapped 1x1 parent made some icons never appear.
-        c.map_window(win)?;
         c.set_selection_owner(win, selection, x11rb::CURRENT_TIME)?;
 
         // Tell every running application that a tray exists now.
@@ -201,6 +180,17 @@ impl Tray {
                     .height(u32::from(ICON_SIZE)),
             )?;
             x += (ICON_SIZE + GAP) as i16;
+        }
+        Ok(())
+    }
+
+    /// Move the icons out of sight when the layout drops the tray item.
+    pub fn hide(&self, c: &RustConnection) -> Result<()> {
+        for icon in &self.icons {
+            c.configure_window(
+                *icon,
+                &ConfigureWindowAux::new().x(-(ICON_SIZE as i32) * 2).y(0),
+            )?;
         }
         Ok(())
     }

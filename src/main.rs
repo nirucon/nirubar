@@ -425,7 +425,10 @@ impl Bar {
             &CreateWindowAux::new()
                 .background_pixel(background)
                 .event_mask(
-                    EventMask::EXPOSURE | EventMask::BUTTON_PRESS | EventMask::STRUCTURE_NOTIFY,
+                    EventMask::EXPOSURE
+                        | EventMask::BUTTON_PRESS
+                        | EventMask::STRUCTURE_NOTIFY
+                        | EventMask::SUBSTRUCTURE_NOTIFY,
                 ),
         )?;
         c.create_gc(
@@ -490,7 +493,7 @@ impl Bar {
         // A tray only when asked for, since it owns an X selection that
         // another tray program may already hold.
         let tray = if cfg.bar.tray {
-            match tray::Tray::new(&c, root, s) {
+            match tray::Tray::new(&c, root, s, win) {
                 Ok(t) => Some(t),
                 Err(e) => {
                     eprintln!("nirubar: tray: {e}");
@@ -781,12 +784,13 @@ impl Bar {
             }
         }
 
-        // Right-aligned status modules, in config order. The tray takes the
-        // last stretch of the bar, so modules stop before it. When the bar is
-        // narrow, low-priority modules are hidden and an overflow indicator
-        // keeps their summaries reachable. Workspace cells never move.
+        // Right-aligned status modules, in config order. The tray is the first
+        // item on the right, so it reads before the status text. It takes part
+        // in the same fit: a narrow bar hides low-priority modules and keeps an
+        // overflow indicator reachable. Workspace cells never move.
+        const TRAY_ITEM: usize = usize::MAX;
         let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0) as i16;
-        let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10 - tray_width;
+        let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10;
         let workspace_width = if show_workspaces {
             self.cells * self.workspaces.names.len() as i16
         } else {
@@ -810,7 +814,7 @@ impl Bar {
             }
         }
         let gap = self.renderer.advance * MODULE_PAD;
-        let items: Vec<layout::Item> = texts
+        let mut items: Vec<layout::Item> = texts
             .iter()
             .map(|(index, text)| layout::Item {
                 index: *index,
@@ -818,10 +822,25 @@ impl Bar {
                 priority: module_priority(self.modules[*index].name()),
             })
             .collect();
+        if tray_width > 0 {
+            items.insert(
+                0,
+                layout::Item {
+                    index: TRAY_ITEM,
+                    width: tray_width,
+                    priority: 95,
+                },
+            );
+        }
         let overflow_width = self.renderer.width("+99");
         let fit = layout::fit(workspace_width, right_edge, gap, overflow_width, &items);
         let mut placements: Vec<Option<(i16, i16)>> = vec![None; texts.len()];
+        let mut tray_x = None;
         for placement in &fit.visible {
+            if placement.index == TRAY_ITEM {
+                tray_x = Some(placement.x);
+                continue;
+            }
             let slot = texts
                 .iter()
                 .position(|(index, _)| *index == placement.index);
@@ -911,14 +930,18 @@ impl Bar {
         self.hidden = fit
             .hidden
             .iter()
-            .map(|slot| {
-                let (index, text) = &texts[*slot];
-                let name = self.modules[*index].name();
+            .filter_map(|slot| {
+                let index = items.get(*slot)?.index;
+                if index == TRAY_ITEM {
+                    return None;
+                }
+                let (_, text) = texts.iter().find(|(candidate, _)| *candidate == index)?;
+                let name = self.modules[index].name();
                 let text = text.trim();
                 if text.is_empty() {
-                    format!("{name}: (no data)")
+                    Some(format!("{name}: (no data)"))
                 } else {
-                    format!("{name}: {text}")
+                    Some(format!("{name}: {text}"))
                 }
             })
             .collect();
@@ -947,10 +970,9 @@ impl Bar {
             String::new()
         };
         if !title.is_empty() {
-            let first_x = self
-                .placed
-                .iter()
-                .map(|p| p.x)
+            let first_x = tray_x
+                .into_iter()
+                .chain(self.placed.iter().map(|p| p.x))
                 .min()
                 .or_else(|| self.overflow.map(|p| p.x))
                 .unwrap_or(right_edge);
@@ -963,8 +985,10 @@ impl Bar {
         }
 
         if let Some(t) = &self.tray {
-            let edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 4;
-            t.layout(&self.c, 0, edge, self.height)?;
+            match tray_x {
+                Some(x) => t.layout(&self.c, 0, x + t.width() as i16, self.height)?,
+                None => t.hide(&self.c)?,
+            }
         }
 
         self.c.flush()?;

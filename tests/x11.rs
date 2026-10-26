@@ -494,6 +494,11 @@ fn tray_embeds_icons_and_survives_selection_loss() {
         MapState::VIEWABLE,
         "tray manager window must be mapped for XEmbed clients"
     );
+    let tray_geometry = c.get_geometry(tray).unwrap().reply().unwrap();
+    assert!(
+        tray_geometry.width > 1 && tray_geometry.height > 1,
+        "tray manager must be the bar window, not a clipped 1x1 selection window"
+    );
     let icon = c.generate_id().unwrap();
     c.create_window(
         0,
