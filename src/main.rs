@@ -434,10 +434,7 @@ impl Bar {
             &CreateWindowAux::new()
                 .background_pixel(background)
                 .event_mask(
-                    EventMask::EXPOSURE
-                        | EventMask::BUTTON_PRESS
-                        | EventMask::STRUCTURE_NOTIFY
-                        | EventMask::SUBSTRUCTURE_NOTIFY,
+                    EventMask::EXPOSURE | EventMask::BUTTON_PRESS | EventMask::STRUCTURE_NOTIFY,
                 ),
         )?;
         c.create_gc(
@@ -1279,6 +1276,24 @@ impl Bar {
         self.draw()
     }
 
+    /// Reclaim an icon's slot as soon as it stops being embedded. A client may
+    /// destroy, unmap or reparent its icon away when it withdraws; waiting for
+    /// DestroyNotify alone leaves blank places behind.
+    fn drop_tray_icon(&mut self, icon: Window) -> Result<()> {
+        let known = self
+            .tray
+            .as_ref()
+            .is_some_and(|tray| tray.icons.contains(&icon));
+        if !known {
+            return Ok(());
+        }
+        if let Some(tray) = self.tray.as_mut() {
+            tray.remove(icon);
+        }
+        self.last_frame.clear();
+        self.draw()
+    }
+
     fn close_popup(&mut self) -> Result<()> {
         if let Some(p) = self.popup.take() {
             p.destroy(&self.c, self.root)?;
@@ -1533,16 +1548,19 @@ impl Bar {
                     }
                 }
                 Event::DestroyNotify(e) => {
-                    // An icon that quits must not leave a gap in the tray.
-                    if let Some(t) = self.tray.as_mut() {
-                        if t.icons.contains(&e.window) {
-                            t.remove(e.window);
-                            self.last_frame.clear();
-                            self.draw()?;
-                        }
-                    }
+                    self.drop_tray_icon(e.window)?;
                     if e.window == self.win {
                         break;
+                    }
+                }
+                Event::UnmapNotify(e) => {
+                    // Hidden icons must not keep their place in the tray.
+                    self.drop_tray_icon(e.window)?;
+                }
+                Event::ReparentNotify(e) => {
+                    // A client that withdraws reparents its icon away from us.
+                    if e.parent != self.win {
+                        self.drop_tray_icon(e.window)?;
                     }
                 }
                 Event::SelectionClear(e) => {

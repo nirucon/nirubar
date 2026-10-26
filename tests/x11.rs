@@ -555,6 +555,65 @@ fn tray_embeds_icons_and_survives_selection_loss() {
         .unwrap()
         .collect::<Vec<_>>();
     assert_eq!(values, vec![0, 1], "embedded icon needs _XEMBED_INFO");
+
+    // Withdrawing by unmapping must free the slot instead of leaving a gap.
+    let dock = |window: u32, pixel: u32| {
+        c.create_window(
+            0,
+            window,
+            root,
+            0,
+            0,
+            16,
+            16,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new().background_pixel(pixel),
+        )
+        .unwrap();
+        c.map_window(window).unwrap();
+        c.send_event(
+            false,
+            tray,
+            EventMask::NO_EVENT,
+            ClientMessageEvent::new(32, tray, opcode, [x11rb::CURRENT_TIME, 0, window, 0, 0]),
+        )
+        .unwrap();
+        c.flush().unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            if c.query_tree(window).unwrap().reply().unwrap().parent == tray {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "icon was not reparented into the tray"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let middle = c.generate_id().unwrap();
+    let right = c.generate_id().unwrap();
+    dock(middle, 0x00ff00);
+    dock(right, 0x0000ff);
+    thread::sleep(Duration::from_millis(300));
+    let before = c.get_geometry(icon).unwrap().reply().unwrap().x;
+    c.unmap_window(middle).unwrap();
+    c.flush().unwrap();
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        let after = c.get_geometry(icon).unwrap().reply().unwrap().x;
+        if after > before {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "an unmapped icon kept its slot in the tray"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+
     // Another manager taking the tray selection must not kill a healthy bar.
     let rival = c.generate_id().unwrap();
     c.create_window(

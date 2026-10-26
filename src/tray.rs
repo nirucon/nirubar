@@ -129,13 +129,16 @@ impl Tray {
         // The icon must be reparented into our window and told so. Without the
         // _XEMBED_INFO property a client stays unembedded and never draws.
         let _ = c.change_save_set(SetMode::INSERT, icon);
+        let _ = c.reparent_window(icon, self.win, 0, 0);
+        let _ = c.map_window(icon);
+        // Select after reparenting: XReparentWindow unmaps and remaps a mapped
+        // window, and that transient UnmapNotify would otherwise look like a
+        // client withdrawing its icon and free the slot we just took.
         let _ = c.change_window_attributes(
             icon,
             &ChangeWindowAttributesAux::new()
                 .event_mask(EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE),
         );
-        let _ = c.reparent_window(icon, self.win, 0, 0);
-        let _ = c.map_window(icon);
         let _ = c.change_property32(
             PropMode::REPLACE,
             icon,
