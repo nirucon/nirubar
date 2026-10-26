@@ -308,6 +308,197 @@ pub struct NetworkState {
     pub route: bool,
 }
 
+/// Wi-Fi presence and link state. Presence is independent of the link: an
+/// adapter whose radio is off still has an entry point, otherwise it could
+/// never be switched on again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WifiState {
+    pub present: bool,
+    pub powered: bool,
+    pub connected: bool,
+    pub hard_blocked: bool,
+    pub soft_blocked: bool,
+    pub ssid: Option<String>,
+    pub signal: Option<u8>,
+}
+
+impl WifiState {
+    fn absent() -> Self {
+        Self {
+            present: false,
+            powered: false,
+            connected: false,
+            hard_blocked: false,
+            soft_blocked: false,
+            ssid: None,
+            signal: None,
+        }
+    }
+}
+
+pub fn wifi_present() -> bool {
+    wireless_interface().is_some()
+}
+
+pub fn wifi_state() -> WifiState {
+    let Some(interface) = wireless_interface() else {
+        return WifiState::absent();
+    };
+    let (hard, soft) = wifi_rfkill();
+    let link = wifi_link(&interface);
+    let powered = !hard && !soft;
+    WifiState {
+        present: true,
+        powered,
+        connected: powered && link.0,
+        hard_blocked: hard,
+        soft_blocked: soft,
+        ssid: link.1,
+        signal: link.2,
+    }
+}
+
+/// Wi-Fi text for the bar. Empty on machines with no wireless adapter.
+pub fn wifi_text(state: WifiState, icons: &Icons, use_icons: bool) -> String {
+    if !state.present {
+        return String::new();
+    }
+    let icon = if use_icons {
+        icons.wifi
+    } else {
+        icons.wifi_fallback
+    };
+    if state.connected {
+        icon.to_string()
+    } else {
+        format!("{icon} !")
+    }
+}
+
+pub fn wifi_detail(state: WifiState) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !state.present {
+        return vec!["no wireless adapter in this machine".to_string()];
+    }
+    lines.push(if state.hard_blocked {
+        "radio: blocked by a hardware switch".to_string()
+    } else if state.soft_blocked {
+        "radio: off".to_string()
+    } else if state.powered {
+        "radio: on".to_string()
+    } else {
+        "radio: off".to_string()
+    });
+    if state.connected {
+        lines.push(format!(
+            "network: {}",
+            state.ssid.as_deref().unwrap_or("(hidden)")
+        ));
+        if let Some(signal) = state.signal {
+            lines.push(format!("signal: {signal}%"));
+        }
+    } else if state.powered {
+        lines.push("network: not connected".to_string());
+    }
+    if let Some(interface) = wireless_interface() {
+        lines.push(format!("interface: {interface}"));
+    }
+    lines.push(String::new());
+    lines.push("open the Wi-Fi selector to connect".to_string());
+    lines
+}
+
+fn wireless_interface() -> Option<String> {
+    let entries = fs::read_dir("/sys/class/net").ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("p2p-dev-") {
+            continue;
+        }
+        if entry.path().join("wireless").exists() {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn wifi_rfkill() -> (bool, bool) {
+    let mut hard = false;
+    let mut soft = false;
+    let Ok(entries) = fs::read_dir("/sys/class/rfkill") else {
+        return (false, false);
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let kind = fs::read_to_string(path.join("type")).unwrap_or_default();
+        if kind.trim() != "wlan" {
+            continue;
+        }
+        hard |= fs::read_to_string(path.join("hard"))
+            .map(|v| v.trim() == "1")
+            .unwrap_or(false);
+        soft |= fs::read_to_string(path.join("soft"))
+            .map(|v| v.trim() == "1")
+            .unwrap_or(false);
+    }
+    (hard, soft)
+}
+
+/// Read the link without NetworkManager. `iw` is the kernel's own interface;
+/// `/proc/net/wireless` supplies the signal when `iw` is unavailable.
+fn wifi_link(interface: &str) -> (bool, Option<String>, Option<u8>) {
+    let mut ssid = None;
+    let mut signal = signal_from_proc(interface);
+    let mut connected = false;
+    for program in ["/sbin/iw", "/usr/bin/iw", "/usr/sbin/iw"] {
+        if !Path::new(program).exists() {
+            continue;
+        }
+        let Some(output) = crate::probe::run(
+            program,
+            &["dev", interface, "link"],
+            &[],
+            std::time::Duration::from_secs(1),
+            64 * 1024,
+        ) else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("SSID: ") {
+                ssid = Some(value.to_string());
+                connected = true;
+            } else if let Some(value) = line.strip_prefix("signal: ") {
+                signal = value
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse::<i32>().ok())
+                    .map(|dbm| ((dbm + 90) * 100 / 60).clamp(0, 100) as u8);
+            } else if line.contains("Not connected") {
+                connected = false;
+            }
+        }
+        break;
+    }
+    (connected, ssid, signal)
+}
+
+fn signal_from_proc(interface: &str) -> Option<u8> {
+    let raw = fs::read_to_string("/proc/net/wireless").ok()?;
+    for line in raw.lines().skip(2) {
+        if !line.starts_with(interface) {
+            continue;
+        }
+        let quality = line.split_whitespace().nth(2)?;
+        let value: f32 = quality.trim_end_matches('.').parse().ok()?;
+        return Some((value / 70.0 * 100.0).clamp(0.0, 100.0) as u8);
+    }
+    None
+}
+
 /// Return the best active link, preferring a wired connection.
 ///
 /// Uses `/sys/class/net`: `operstate == "up"` and a carrier of 1 means the
@@ -325,6 +516,18 @@ pub fn network() -> Option<NetworkState> {
     };
     Some(NetworkState {
         link,
+        route: default_route(),
+    })
+}
+
+/// Wired link only. Used when the bar has a dedicated Wi-Fi segment, so the
+/// same network is not represented twice.
+pub fn network_wired() -> Option<NetworkState> {
+    let wired = active_interfaces()
+        .into_iter()
+        .any(|(_, kind)| kind == Link::Ethernet);
+    wired.then_some(NetworkState {
+        link: Link::Ethernet,
         route: default_route(),
     })
 }
@@ -657,6 +860,33 @@ mod tests {
         }
         assert_eq!(name.as_deref(), Some("focus"));
         assert!(expiry.is_some_and(|expiry| expiry > 0));
+    }
+
+    #[test]
+    fn wifi_segment_is_empty_without_an_adapter_and_marks_a_dead_link() {
+        let icons = Icons::plain();
+        assert_eq!(wifi_text(WifiState::absent(), &icons, true), "");
+        let off = WifiState {
+            present: true,
+            powered: false,
+            ..WifiState::absent()
+        };
+        assert_eq!(
+            wifi_text(off.clone(), &icons, true),
+            format!("{} !", icons.wifi)
+        );
+        let connected = WifiState {
+            present: true,
+            powered: true,
+            connected: true,
+            ssid: Some("Home".into()),
+            signal: Some(61),
+            ..WifiState::absent()
+        };
+        assert_eq!(wifi_text(connected.clone(), &icons, true), icons.wifi);
+        let detail = wifi_detail(connected);
+        assert!(detail.iter().any(|line| line == "network: Home"));
+        assert!(detail.iter().any(|line| line == "signal: 61%"));
     }
 
     #[test]

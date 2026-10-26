@@ -435,6 +435,8 @@ impl Module for Display {
 pub struct Network {
     pub icons: status::Icons,
     pub use_icons: bool,
+    /// True when a dedicated Wi-Fi segment owns the wireless state.
+    pub hide_wifi: bool,
 }
 
 impl Module for Network {
@@ -445,7 +447,12 @@ impl Module for Network {
         Side::Right
     }
     fn render(&mut self) -> String {
-        status::network_text(status::network(), &self.icons, self.use_icons)
+        let state = if self.hide_wifi {
+            status::network_wired()
+        } else {
+            status::network()
+        };
+        status::network_text(state, &self.icons, self.use_icons)
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         // Always open, even when offline: a click that does nothing looks
@@ -461,6 +468,40 @@ impl Module for Network {
                 ],
             )),
         }
+    }
+}
+
+/// A separate Wi-Fi segment. It exists only when the machine has a wireless
+/// adapter, and it opens the launcher's Wi-Fi view on left click.
+pub struct Wifi {
+    pub icons: status::Icons,
+    pub use_icons: bool,
+}
+
+impl Module for Wifi {
+    fn name(&self) -> &'static str {
+        "wifi"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        status::wifi_text(status::wifi_state(), &self.icons, self.use_icons)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let state = status::wifi_state();
+        if !state.present {
+            return None;
+        }
+        Some(("Wi-Fi".into(), status::wifi_detail(state)))
+    }
+    fn controls(&self) -> Option<Control> {
+        status::wifi_present().then(|| {
+            Control::ui(
+                "wifi",
+                Some(("nirulauncher".into(), vec!["--wifi".into()])),
+            )
+        })
     }
 }
 
@@ -1297,10 +1338,30 @@ pub fn build(
                 icons,
                 value: layout.clone(),
             })),
-            "network" => out.push(Box::new(Network {
-                icons,
-                use_icons: cfg.icons,
-            })),
+            "network" => {
+                out.push(Box::new(Network {
+                    icons,
+                    use_icons: cfg.icons,
+                    hide_wifi: cfg.wifi && status::wifi_present(),
+                }));
+                if cfg.wifi
+                    && status::wifi_present()
+                    && !cfg.modules.iter().any(|module| module == "wifi")
+                {
+                    out.push(Box::new(Wifi {
+                        icons,
+                        use_icons: cfg.icons,
+                    }));
+                }
+            }
+            "wifi" => {
+                if cfg.wifi && status::wifi_present() {
+                    out.push(Box::new(Wifi {
+                        icons,
+                        use_icons: cfg.icons,
+                    }));
+                }
+            }
             "updates" => out.push(Box::new(Updates {
                 icons,
                 every: std::time::Duration::from_secs(u64::from(cfg.update_check_minutes) * 60),
@@ -1474,6 +1535,7 @@ mod tests {
                         | "clock"
                         | "battery"
                         | "network"
+                        | "wifi"
                         | "volume"
                         | "media"
                         | "updates"

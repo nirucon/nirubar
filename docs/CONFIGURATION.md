@@ -9,7 +9,8 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 | Module | Shows |
 |---|---|
 | `workspaces` | Ten workspace cells; click to switch. A small accent marker shows occupied non-active workspaces |
-| `network` | Wired/wireless icon; `!` means link up without a default route; click for interface, route and address |
+| `network` | Wired link; `!` means link up without a default route. Wireless appears here only with `wifi = false`; click for interface, route and address |
+| `wifi` | Wi-Fi radio and connection; `!` means radio off or not connected; click to open the Wi-Fi selector |
 | `battery` | Aggregated battery packs; panel shows charge, state and remaining time when available |
 | `volume` | Output level or mute; click for info, scroll to change, right-click mute, middle-click microphone mute |
 | `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |
@@ -38,7 +39,7 @@ weather_latitude = 58.22
 weather_longitude = 11.92
 
 [bar]
-modules = ["workspaces", "network", "battery", "clock"]
+modules = ["workspaces", "network", "wifi", "battery", "clock"]
 tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 date_format = "%Y-%m-%d"
 time_format = "%H:%M"
@@ -58,6 +59,13 @@ Font code point. `microphone_visibility = "muted"` hides a healthy unmuted
 input; missing providers remain visible.
 
 ## Optional modules
+
+### Wi-Fi
+
+The `wifi` module appears automatically after `network` when an adapter exists,
+including while the radio is off. Left click opens `nirulauncher --wifi`; the
+bar does not keep a separate network editor. Set `wifi = false` in `[bar]` to
+keep wireless state in the combined `network` module instead.
 
 ### Microphone
 

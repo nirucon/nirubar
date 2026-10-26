@@ -185,7 +185,8 @@ enabled = true
 #   workspaces  one cell per workspace
 #   media       the playing track, scrolling when it is long
 #   volume      speaker and percentage; click opens information
-#   network     wired or wireless link
+#   network     wired link (and Wi-Fi when `wifi = false`)
+#   wifi        Wi-Fi radio and connection; opens the Wi-Fi selector
 #   updates     packages that can be upgraded
 #   pulse       cpu and memory, with a graph in the panel
 #   uptime      how long the machine has been on
@@ -201,8 +202,10 @@ enabled = true
 # Add "bluetooth" for adapter/device status; hidden when no adapter exists.
 # Add "powerprofile" for Power saver/Balanced/Performance when PPD is available.
 # Add "layout" for the current NIRUWM layout; click it to list all layouts.
-# Weather settings live in ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "network", "mode", "battery", "clock"]
+# "wifi" is added automatically after "network" when an adapter exists; set
+# `wifi = false` to hide it. Weather settings live in
+# ~/.config/nirubar/config.toml; see weather.example.toml.
+modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "network", "wifi", "mode", "battery", "clock"]
 # Missing input/provider stays visible even with "muted" visibility.
 microphone_visibility = "always" # "always" or "muted"
 # Left: information. Right: mute. Scroll: gain (never unmutes).

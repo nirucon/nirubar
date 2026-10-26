@@ -26,7 +26,8 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | Module | Shows | Interaction |
 |---|---|---|
 | `workspaces` | Ten workspace cells with active/occupied state and occupancy markers | Click a cell to switch workspace |
-| `network` | Wired/wireless icon; `!` means link up without a default route | Click for interface, link, route and address |
+| `network` | Wired link; `!` means link up without a default route. Wireless is shown here only with `wifi = false` | Click for interface, link, route and address |
+| `wifi` | Wi-Fi radio and connection; `!` means radio off or not connected | Click to open the Wi-Fi selector in `nirulauncher` |
 | `battery` | Aggregated battery charge and state | Click for charge, state and remaining time when available |
 | `volume` | Output level or mute icon | Click for info, scroll volume, right-click mute, middle-click microphone mute |
 | `microphone` | Input mute and gain; `mic none`/`mic --` when unavailable | Click for input and gain, right-click mute, scroll gain, middle-click source selector |
@@ -45,6 +46,11 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
 `~/.cache/nirubar/updates` for `update_check_minutes`.
+
+The `wifi` segment is added automatically after `network` when a wireless
+adapter exists, even while its radio is off. Set `wifi = false` in `[bar]` to
+keep the combined `network` segment instead. The segment opens the launcher's
+Wi-Fi view; it never runs a second network editor.
 
 Display, power-profile, Bluetooth and microphone panels offer **Open controls**
 through Return or the footer. Each opens the existing launcher view; the bar has
@@ -95,7 +101,7 @@ weather_latitude = 58.22
 weather_longitude = 11.92
 
 [bar]
-modules = ["workspaces", "network", "battery", "clock"]
+modules = ["workspaces", "network", "wifi", "battery", "clock"]
 tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 icons = true
 popups = true

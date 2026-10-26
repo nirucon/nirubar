@@ -1153,6 +1153,21 @@ impl Bar {
                 return Ok(());
             }
         }
+        if let Some(index) = self
+            .placed
+            .iter()
+            .find(|p| x >= p.x && x < p.x + p.width)
+            .map(|p| p.index)
+        {
+            if self
+                .modules
+                .get(index)
+                .is_some_and(|module| module.name() == "wifi")
+            {
+                self.close_popup()?;
+                return self.controls(index);
+            }
+        }
         if !self.cfg.bar.popups {
             return Ok(());
         }

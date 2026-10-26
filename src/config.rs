@@ -128,6 +128,9 @@ pub struct Bar {
     pub battery: bool,
     /// Show a network icon while a wired or wireless link is up.
     pub network: bool,
+    /// Show a dedicated Wi-Fi segment when an adapter is present. The segment
+    /// opens the Wi-Fi selector, including while the radio is off.
+    pub wifi: bool,
     /// Use Nerd Font glyphs. When the configured font lacks them, set this to
     /// false for plain ASCII labels.
     pub icons: bool,
@@ -284,6 +287,7 @@ impl Default for Bar {
             popup_timeout_seconds: 4,
             battery: true,
             network: true,
+            wifi: true,
             icons: true,
             media_width: 32,
             update_check_minutes: 30,
