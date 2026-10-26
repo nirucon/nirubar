@@ -496,12 +496,8 @@ impl Module for Wifi {
         Some(("Wi-Fi".into(), status::wifi_detail(state)))
     }
     fn controls(&self) -> Option<Control> {
-        status::wifi_present().then(|| {
-            Control::ui(
-                "wifi",
-                Some(("nirulauncher".into(), vec!["--wifi".into()])),
-            )
-        })
+        status::wifi_present()
+            .then(|| Control::ui("wifi", Some(("nirulauncher".into(), vec!["--wifi".into()]))))
     }
 }
 

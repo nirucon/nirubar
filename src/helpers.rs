@@ -21,6 +21,7 @@ pub(crate) struct HelperPool {
     running: HashMap<String, Running>,
     limit: usize,
     timeout: Duration,
+    pending_failures: Vec<String>,
 }
 
 impl HelperPool {
@@ -33,6 +34,7 @@ impl HelperPool {
             running: HashMap::new(),
             limit,
             timeout,
+            pending_failures: Vec::new(),
         }
     }
 
@@ -64,11 +66,18 @@ impl HelperPool {
         args: &[String],
         long_lived: bool,
     ) -> Result<(), String> {
-        self.reap();
+        let failures = self.reap();
+        self.pending_failures.extend(failures);
         if self.running.contains_key(key) {
             return Ok(());
         }
-        if self.running.len() >= self.limit {
+        if self
+            .running
+            .values()
+            .filter(|job| job.long_lived == long_lived)
+            .count()
+            >= self.limit
+        {
             return Err("too many bar controls are already running".into());
         }
         match Command::new(program).args(args).spawn() {
@@ -89,7 +98,7 @@ impl HelperPool {
 
     /// Reap finished helpers and return readable failures.
     pub(crate) fn reap(&mut self) -> Vec<String> {
-        let mut failures = Vec::new();
+        let mut failures = std::mem::take(&mut self.pending_failures);
         let timeout = self.timeout;
         self.running
             .retain(|key, running| match running.child.try_wait() {
@@ -175,6 +184,22 @@ mod tests {
             failures.iter().any(|failure| failure.contains("exited")),
             "{failures:?}"
         );
+    }
+
+    #[test]
+    fn spawning_after_failure_preserves_feedback_and_ui_does_not_starve_controls() {
+        let mut pool = HelperPool::with_timeout(1, Duration::from_secs(2));
+        pool.spawn("failure", "sh", &["-c".into(), "exit 7".into()])
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        pool.spawn_ui("view", "sh", &sleeper("0.2")).unwrap();
+        pool.spawn("control", "sh", &sleeper("0.2")).unwrap();
+        assert!(pool
+            .reap()
+            .iter()
+            .any(|message| message.contains("failure")));
+        std::thread::sleep(Duration::from_millis(250));
+        pool.reap();
     }
 
     #[test]
