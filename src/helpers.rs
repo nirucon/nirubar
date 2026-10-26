@@ -14,6 +14,7 @@ use std::{
 struct Running {
     child: Child,
     started: Instant,
+    long_lived: bool,
 }
 
 pub(crate) struct HelperPool {
@@ -35,12 +36,33 @@ impl HelperPool {
         }
     }
 
-    /// Start a control. `Ok(())` also covers a request that is already running.
+    /// Start a short control job. `Ok(())` also covers a request already running.
     pub(crate) fn spawn(
         &mut self,
         key: &str,
         program: &str,
         args: &[String],
+    ) -> Result<(), String> {
+        self.spawn_inner(key, program, args, false)
+    }
+
+    /// Start an interactive view. It is tracked and reaped, but the short
+    /// control timeout must never kill a launcher or settings window.
+    pub(crate) fn spawn_ui(
+        &mut self,
+        key: &str,
+        program: &str,
+        args: &[String],
+    ) -> Result<(), String> {
+        self.spawn_inner(key, program, args, true)
+    }
+
+    fn spawn_inner(
+        &mut self,
+        key: &str,
+        program: &str,
+        args: &[String],
+        long_lived: bool,
     ) -> Result<(), String> {
         self.reap();
         if self.running.contains_key(key) {
@@ -56,6 +78,7 @@ impl HelperPool {
                     Running {
                         child,
                         started: Instant::now(),
+                        long_lived,
                     },
                 );
                 Ok(())
@@ -76,7 +99,7 @@ impl HelperPool {
                     }
                     false
                 }
-                Ok(None) if running.started.elapsed() >= timeout => {
+                Ok(None) if !running.long_lived && running.started.elapsed() >= timeout => {
                     let _ = running.child.kill();
                     let _ = running.child.wait();
                     failures.push(format!("{key} timed out"));
@@ -126,6 +149,19 @@ mod tests {
             pool.spawn("mic", "sh", &sleeper("0.2")).is_ok(),
             "finished slots are reused"
         );
+    }
+
+    #[test]
+    fn a_long_lived_view_is_not_killed_by_the_short_timeout() {
+        let mut pool = HelperPool::with_timeout(2, Duration::from_millis(50));
+        pool.spawn_ui("launcher", "sh", &sleeper("0.2")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        assert!(
+            pool.reap().is_empty(),
+            "a UI must survive the control timeout"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(pool.reap().is_empty(), "a finished UI is simply reaped");
     }
 
     #[test]

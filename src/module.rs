@@ -33,6 +33,8 @@ pub struct Control {
     pub key: String,
     /// Program and arguments, or None when the provider is unavailable.
     pub command: Option<(String, Vec<String>)>,
+    /// Open/focus-style views are tracked without the short helper timeout.
+    pub long_lived: bool,
 }
 
 impl Control {
@@ -40,6 +42,15 @@ impl Control {
         Self {
             key: key.into(),
             command,
+            long_lived: false,
+        }
+    }
+
+    fn ui(key: &str, command: Option<(String, Vec<String>)>) -> Self {
+        Self {
+            key: key.into(),
+            command,
+            long_lived: true,
         }
     }
 }
@@ -406,7 +417,7 @@ impl Module for Display {
     }
     fn control(&mut self, input: Input) -> Option<Control> {
         match input {
-            Input::Middle => Some(Control::run(
+            Input::Middle => Some(Control::ui(
                 "display-profiles",
                 Some(("nirulauncher".into(), vec!["--displays".into()])),
             )),
@@ -414,7 +425,7 @@ impl Module for Display {
         }
     }
     fn controls(&self) -> Option<Control> {
-        Some(Control::run(
+        Some(Control::ui(
             "display-controls",
             Some(("nirulauncher".into(), vec!["--displays".into()])),
         ))
@@ -515,7 +526,7 @@ impl Module for PowerProfile {
                 "powerprofile-next",
                 Some(("niructl".into(), vec!["powerprofile".into(), "next".into()])),
             )),
-            Input::Middle => Some(Control::run(
+            Input::Middle => Some(Control::ui(
                 "powerprofile-selector",
                 Some(("nirulauncher".into(), vec!["--power".into()])),
             )),
@@ -523,7 +534,7 @@ impl Module for PowerProfile {
         }
     }
     fn controls(&self) -> Option<Control> {
-        Some(Control::run(
+        Some(Control::ui(
             "powerprofile-controls",
             Some(("nirulauncher".into(), vec!["--power".into()])),
         ))
@@ -560,7 +571,7 @@ impl Module for Bluetooth {
                     vec!["bluetooth".into(), "power".into(), "toggle".into()],
                 )),
             )),
-            Input::Middle => Some(Control::run(
+            Input::Middle => Some(Control::ui(
                 "bluetooth-selector",
                 Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
             )),
@@ -568,7 +579,7 @@ impl Module for Bluetooth {
         }
     }
     fn controls(&self) -> Option<Control> {
-        Some(Control::run(
+        Some(Control::ui(
             "bluetooth-controls",
             Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
         ))
@@ -603,16 +614,18 @@ impl Module for Microphone {
             Input::ScrollDown => ("mic-level", "niructl", &["audio", "mic-level", "down"]),
             Input::Middle => ("mic-selector", "nirulauncher", &["--microphone"]),
         };
-        Some(Control::run(
-            key,
-            Some((
-                program.into(),
-                args.iter().map(|arg| (*arg).into()).collect(),
-            )),
-        ))
+        let control = Some((
+            program.into(),
+            args.iter().map(|arg| (*arg).into()).collect(),
+        ));
+        if matches!(input, Input::Middle) {
+            Some(Control::ui(key, control))
+        } else {
+            Some(Control::run(key, control))
+        }
     }
     fn controls(&self) -> Option<Control> {
-        Some(Control::run(
+        Some(Control::ui(
             "mic-controls",
             Some(("nirulauncher".into(), vec!["--microphone".into()])),
         ))

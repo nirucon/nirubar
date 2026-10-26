@@ -113,6 +113,12 @@ fn parse_monitor_layout(text: &str, monitor: &Option<Monitor>) -> Option<Monitor
     None
 }
 
+/// A monitor bar must keep the width assigned by the WM even when the global
+/// root changes size. A standalone bar follows the root.
+fn follows_root_width(monitor: &Option<Monitor>, current: u16, next: u16) -> bool {
+    monitor.is_none() && current != next
+}
+
 /// Read `--monitor X,Y,W` from the command line.
 ///
 /// The window manager passes the geometry rather than a name, so the bar does
@@ -1067,7 +1073,12 @@ impl Bar {
             return Ok(());
         };
         if let Some((program, args)) = control.command {
-            if let Err(error) = self.helpers.spawn(&control.key, &program, &args) {
+            let result = if control.long_lived {
+                self.helpers.spawn_ui(&control.key, &program, &args)
+            } else {
+                self.helpers.spawn(&control.key, &program, &args)
+            };
+            if let Err(error) = result {
                 helpers::notify_failure(&error);
             }
         }
@@ -1083,7 +1094,12 @@ impl Bar {
             return Ok(());
         };
         if let Some((program, args)) = control.command {
-            if let Err(error) = self.helpers.spawn(&control.key, &program, &args) {
+            let result = if control.long_lived {
+                self.helpers.spawn_ui(&control.key, &program, &args)
+            } else {
+                self.helpers.spawn(&control.key, &program, &args)
+            };
+            if let Err(error) = result {
                 helpers::notify_failure(&error);
             }
         }
@@ -1399,7 +1415,14 @@ impl Bar {
                         self.click(e.event_x)?;
                     }
                 }
-                Event::ConfigureNotify(e) if e.window == self.root && e.width != self.width => {
+                // A standalone bar follows the root width. A monitor bar keeps
+                // the width the WM assigned: a global display change (mirror,
+                // rotate, mode) must not turn every per-monitor bar into a
+                // full-desktop bar.
+                Event::ConfigureNotify(e)
+                    if e.window == self.root
+                        && follows_root_width(&self.monitor, self.width, e.width) =>
+                {
                     self.close_popup()?;
                     self.width = e.width;
                     self.renderer
@@ -1698,6 +1721,20 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_monitor_bar_ignores_global_root_resizes() {
+        let monitor = Some(super::Monitor {
+            x: 0,
+            y: 0,
+            w: 2560,
+            name: None,
+        });
+        assert!(!super::follows_root_width(&monitor, 2560, 5120));
+        assert!(!super::follows_root_width(&monitor, 2560, 2560));
+        assert!(super::follows_root_width(&None, 2560, 5120));
+        assert!(!super::follows_root_width(&None, 2560, 2560));
+    }
+
     #[test]
     fn monitor_argument_sets_the_geometry() {
         let args = vec!["--monitor".to_string(), "10,20,800".to_string()];
