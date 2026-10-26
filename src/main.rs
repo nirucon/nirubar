@@ -277,6 +277,15 @@ fn module_priority(name: &str) -> i32 {
     }
 }
 
+/// A tray belongs to the primary monitor so it does not migrate between bars
+/// when a session starts. Without a usable primary, keep the old fallback.
+fn tray_belongs_here(monitor: Option<&str>, primary: Option<&str>) -> bool {
+    match (monitor, primary) {
+        (Some(monitor), Some(primary)) => monitor == primary,
+        _ => true,
+    }
+}
+
 struct Bar {
     c: RustConnection,
     root: Window,
@@ -491,8 +500,14 @@ impl Bar {
 
         renderer.resize(&c, root, width, cfg.bar_height)?;
         // A tray only when asked for, since it owns an X selection that
-        // another tray program may already hold.
-        let tray = if cfg.bar.tray {
+        // another tray program may already hold. Only the primary monitor
+        // owns it: otherwise the first bar to start wins and the tray moves
+        // between screens from one login to the next.
+        let primary = status::display_outputs()
+            .and_then(|outputs| outputs.into_iter().find(|output| output.primary))
+            .map(|output| output.name);
+        let monitor_name = monitor.as_ref().and_then(|m| m.name.as_deref());
+        let tray = if cfg.bar.tray && tray_belongs_here(monitor_name, primary.as_deref()) {
             match tray::Tray::new(&c, root, s, win) {
                 Ok(t) => Some(t),
                 Err(e) => {
@@ -1760,6 +1775,14 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_tray_follows_the_primary_monitor() {
+        assert!(super::tray_belongs_here(Some("DP-4"), Some("DP-4")));
+        assert!(!super::tray_belongs_here(Some("DP-5"), Some("DP-4")));
+        assert!(super::tray_belongs_here(None, Some("DP-4")));
+        assert!(super::tray_belongs_here(Some("DP-4"), None));
+    }
+
     #[test]
     fn a_monitor_bar_ignores_global_root_resizes() {
         let monitor = Some(super::Monitor {
