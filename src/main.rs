@@ -966,7 +966,9 @@ impl Bar {
     }
 
     fn draw(&mut self) -> Result<()> {
-        self.helpers.reap();
+        for failure in self.helpers.reap() {
+            helpers::notify_failure(&failure);
+        }
         self.snapshot();
         let frame = self.frame_key();
         if frame == self.last_frame {
@@ -1065,9 +1067,26 @@ impl Bar {
             return Ok(());
         };
         if let Some((program, args)) = control.command {
-            self.helpers.spawn(&control.key, &program, &args);
+            if let Err(error) = self.helpers.spawn(&control.key, &program, &args) {
+                helpers::notify_failure(&error);
+            }
         }
         // Player selection has no command but changes what the next read uses.
+        self.last_frame.clear();
+        self.draw()?;
+        Ok(())
+    }
+
+    /// Open the existing control view for a module that has one.
+    fn controls(&mut self, index: usize) -> Result<()> {
+        let Some(control) = self.modules.get(index).and_then(|module| module.controls()) else {
+            return Ok(());
+        };
+        if let Some((program, args)) = control.command {
+            if let Err(error) = self.helpers.spawn(&control.key, &program, &args) {
+                helpers::notify_failure(&error);
+            }
+        }
         self.last_frame.clear();
         self.draw()?;
         Ok(())
@@ -1112,6 +1131,7 @@ impl Bar {
                     overflow.x,
                     "Hidden modules",
                     &lines,
+                    false,
                     self.cfg.bar.popup_timeout_seconds,
                 )?);
                 return Ok(());
@@ -1136,6 +1156,11 @@ impl Bar {
             }
         }
         self.close_popup()?;
+        let controls = self
+            .modules
+            .get(index)
+            .and_then(|module| module.controls())
+            .is_some();
         let content = self.modules.get_mut(index).and_then(|m| m.popup());
         if let Some((title, lines)) = content {
             self.popup = Some(popup::Popup::open(
@@ -1153,6 +1178,7 @@ impl Bar {
                 left,
                 &title,
                 &lines,
+                controls,
                 self.cfg.bar.popup_timeout_seconds,
             )?);
         }
@@ -1320,8 +1346,14 @@ impl Bar {
                     || event_is_from(&event, p.catch_window())
                     || event_is_from(&event, self.root) && is_dismiss_key(&event)
                 {
-                    if let popup::Outcome::Close = p.handle(&event) {
-                        self.close_popup()?;
+                    let module = p.module;
+                    match p.handle(&event) {
+                        popup::Outcome::Close => self.close_popup()?,
+                        popup::Outcome::Controls => {
+                            self.close_popup()?;
+                            self.controls(module)?;
+                        }
+                        popup::Outcome::Keep => {}
                     }
                     continue;
                 }

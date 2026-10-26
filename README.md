@@ -40,11 +40,15 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | `sun` | Sunrise and sunset | Click for daylight progress |
 | `weather` | Cached temperature, condition and next-hour rain | Click for an eight-hour rain timeline and daylight progress |
 | `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |
-| `display` | With two screens, which one this bar is: `2 below`, `2 above`, `2 left`, `2 right` | Middle-click for display profiles |
+| `display` | With two screens, which one this bar is: `2 below`, `2 above`, `2 left`, `2 right` | Click for info, Return/Open controls for display profiles, middle-click for the same quick route |
 
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
 `~/.cache/nirubar/updates` for `update_check_minutes`.
+
+Display, power-profile, Bluetooth and microphone panels offer **Open controls**
+through Return or the footer. Each opens the existing launcher view; the bar has
+no second editor of its own.
 
 ## Install
 
@@ -68,6 +72,11 @@ NIRUWM starts the bar at login; it can also run on its own.
 - Right click and scroll perform the explicit playback, mute and volume actions.
 - Middle click opens the keyboard-first detail view where one exists.
 - One panel is open at a time. Escape or a click elsewhere closes it.
+- A panel footer says whether it is informational or has controls. Where a
+  control view exists, Return or a click on that footer opens it. Informational
+  text is never a hidden button.
+- A failed or stuck helper is reported instead of looking like a successful
+  click. Controls are bounded and coalesced so the bar cannot spawn a storm.
 - Media titles longer than `media_width` scroll and rest at the beginning.
 - Battery packs are aggregated by energy when available; unknown values are not
   shown as zero.

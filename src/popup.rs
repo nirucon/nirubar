@@ -36,6 +36,10 @@ pub struct Popup {
     y: i16,
     width: u16,
     height: u16,
+    /// Root y where the action footer starts.
+    footer_top: i16,
+    /// True when this module has a control view Return can open.
+    controls: bool,
     title: String,
     lines: Vec<String>,
     font_size: f32,
@@ -62,11 +66,12 @@ impl Popup {
         origin_x: i16,
         title: &str,
         lines: &[String],
+        controls: bool,
         timeout_seconds: u32,
     ) -> Result<Self> {
         let line_height = (font_size * 1.5).ceil() as u16;
         let width: u16 = 340;
-        let height = line_height * (lines.len() as u16 + 2) + 14;
+        let height = line_height * (lines.len() as u16 + 2 + u16::from(controls)) + 14;
         // Root coordinates, clamped inside the bar's physical monitor.
         let max_x = i32::from(bar_x) + i32::from(bar_width) - i32::from(width);
         let x = (i32::from(bar_x) + i32::from(origin_x))
@@ -74,6 +79,8 @@ impl Popup {
         let root_geometry = c.get_geometry(root)?.reply()?;
         let max_y = i32::from(root_geometry.height) - i32::from(height);
         let y = (i32::from(bar_y) + i32::from(bar_height)).min(max_y.max(0)) as i16;
+        let footer_top =
+            y + i16::try_from(height).unwrap_or(0) - i16::try_from(line_height).unwrap_or(0) - 8;
         let previous_focus = c.get_input_focus()?.reply()?;
 
         let screen_width = c.setup().roots[0].width_in_pixels;
@@ -168,6 +175,8 @@ impl Popup {
             y,
             width,
             height,
+            footer_top,
+            controls,
             title: title.to_string(),
             lines: lines.to_vec(),
             font_size,
@@ -211,6 +220,20 @@ impl Popup {
             }
             renderer.line(c, self.gc, 14, row(i as i16 + 1), line, muted, bg)?;
         }
+        let footer = if self.controls {
+            "Return: open controls    Esc: close"
+        } else {
+            "Informational panel    Esc: close"
+        };
+        renderer.line(
+            c,
+            self.gc,
+            14,
+            row(lines.len() as i16 + 1),
+            footer,
+            muted,
+            bg,
+        )?;
         c.flush()?;
         Ok(())
     }
@@ -269,6 +292,8 @@ pub enum Outcome {
     Keep,
     /// Close the panel and do nothing else.
     Close,
+    /// Close the panel and open this module's explicit control view.
+    Controls,
 }
 
 impl Popup {
@@ -278,9 +303,14 @@ impl Popup {
             // A click on the catch window is by definition outside the panel.
             Event::ButtonPress(e) if e.event == self.catch => Outcome::Close,
             Event::ButtonPress(e) => {
-                // A click inside the panel keeps it: it is content, not a
-                // dismiss target.
+                // The bottom line is an action, not explanatory content.
                 if self.contains(e.root_x, e.root_y) {
+                    if self.controls
+                        && e.root_y >= self.footer_top
+                        && e.root_y < self.y + i16::try_from(self.height).unwrap_or(0)
+                    {
+                        return Outcome::Controls;
+                    }
                     return Outcome::Keep;
                 }
                 // A click on the bar at the module that opened it toggles it,
@@ -288,6 +318,8 @@ impl Popup {
                 // stay responsive.
                 Outcome::Close
             }
+            // Return opens the explicit controls; any other key dismisses.
+            Event::KeyPress(e) if e.detail == 36 && self.controls => Outcome::Controls,
             Event::KeyPress(_) => Outcome::Close,
             _ => Outcome::Keep,
         }

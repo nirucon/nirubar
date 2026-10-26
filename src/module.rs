@@ -84,6 +84,14 @@ pub trait Module {
     fn control(&mut self, _input: Input) -> Option<Control> {
         None
     }
+    /// The existing control view this module can open, if it has one.
+    ///
+    /// Reading a panel stays side-effect free; Return or a click on the
+    /// footer uses this explicit action instead of pretending informational
+    /// text is a button.
+    fn controls(&self) -> Option<Control> {
+        None
+    }
 }
 
 /// A workspace cell. Kept separate from the text modules because the bar draws
@@ -405,6 +413,12 @@ impl Module for Display {
             _ => None,
         }
     }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::run(
+            "display-controls",
+            Some(("nirulauncher".into(), vec!["--displays".into()])),
+        ))
+    }
 }
 
 pub struct Network {
@@ -508,6 +522,12 @@ impl Module for PowerProfile {
             _ => None,
         }
     }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::run(
+            "powerprofile-controls",
+            Some(("nirulauncher".into(), vec!["--power".into()])),
+        ))
+    }
 }
 
 pub struct Bluetooth {
@@ -547,6 +567,12 @@ impl Module for Bluetooth {
             _ => None,
         }
     }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::run(
+            "bluetooth-controls",
+            Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
+        ))
+    }
 }
 
 pub struct Microphone {
@@ -583,6 +609,12 @@ impl Module for Microphone {
                 program.into(),
                 args.iter().map(|arg| (*arg).into()).collect(),
             )),
+        ))
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::run(
+            "mic-controls",
+            Some(("nirulauncher".into(), vec!["--microphone".into()])),
         ))
     }
 }
