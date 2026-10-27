@@ -1293,7 +1293,7 @@ impl Bar {
             return self.close_popup();
         }
         self.close_popup()?;
-        if item.item_is_menu && item.menu.is_some() {
+        if sni::left_click_opens_menu(&item) {
             return self.open_sni_menu(&item, hit_x);
         }
         if let Some(host) = &self.sni {

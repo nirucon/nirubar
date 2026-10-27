@@ -317,12 +317,25 @@ fn resolve_icons(items: &mut [Item]) {
     }
 }
 
-/// Look up a PNG icon by its Freedesktop name. Most SNI clients send only an
-/// icon name; showing a badge for every one of them would make a real tray
-/// look broken. SVG-only themes intentionally fall back to the badge because
+/// AppIndicator items expose a menu but no `Activate` method. Their
+/// `item_is_menu` flag is false, so use the absolute IconName path as the
+/// capability signal and open the menu on left-click.
+pub(crate) fn left_click_opens_menu(item: &Item) -> bool {
+    item.menu.is_some()
+        && (item.item_is_menu
+            || item
+                .icon_name
+                .as_deref()
+                .is_some_and(|name| name.contains('/')))
+}
+
+/// Look up a PNG icon by its Freedesktop name, or load an absolute PNG path
+/// supplied by libayatana-appindicator. Most SNI clients send only an icon
+/// name; showing a badge for every one of them would make a real tray look
+/// broken. SVG-only themes intentionally fall back to the badge because
 /// decoding them would add a large renderer dependency.
 fn icon_for_name(name: &str) -> Option<Icon> {
-    if name.is_empty() || name.len() > 200 || name.contains('/') || name.contains('\0') {
+    if name.is_empty() || name.len() > 200 || name.contains('\0') {
         return None;
     }
     static CACHE: OnceLock<Mutex<HashMap<String, Option<Icon>>>> = OnceLock::new();
@@ -332,7 +345,15 @@ fn icon_for_name(name: &str) -> Option<Icon> {
             return cached.clone();
         }
     }
-    let found = find_icon(name).and_then(|path| load_png(&path));
+    // libayatana-appindicator sets IconName to an absolute PNG path instead of
+    // a Freedesktop theme name. Load it directly; the PNG-only policy and cache
+    // stay the same as for named icons.
+    let found = if name.contains('/') {
+        let path = Path::new(name);
+        path.is_file().then(|| load_png(path)).flatten()
+    } else {
+        find_icon(name).and_then(|path| load_png(&path))
+    };
     if let Ok(mut cache) = cache.lock() {
         cache.insert(name.to_string(), found.clone());
     }
@@ -395,7 +416,10 @@ fn find_icon(name: &str) -> Option<PathBuf> {
 
 fn load_png(path: &Path) -> Option<Icon> {
     let file = std::fs::File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
+    let mut decoder = png::Decoder::new(file);
+    // libayatana/Flutter icons are commonly palette PNGs. Expanding here keeps
+    // the PNG-only policy while producing the RGB/RGBA arms below.
+    decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info().ok()?;
     let mut buffer = vec![0; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buffer).ok()?;
@@ -691,6 +715,57 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!((icon.width, icon.height), (1, 1));
         assert_eq!(icon.pixels, vec![40, 10, 20, 30]);
+    }
+
+    #[test]
+    fn absolute_png_icon_path_is_loaded_and_missing_path_is_rejected() {
+        let path =
+            std::env::temp_dir().join(format!("nirubar-sni-path-{}.png", std::process::id()));
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut encoder = png::Encoder::new(file, 1, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[10, 20, 30, 40]).unwrap();
+        }
+        let name = path.to_string_lossy().to_string();
+        let icon = icon_for_name(&name).expect("absolute PNG path loads");
+        assert_eq!((icon.width, icon.height), (1, 1));
+        let missing = path.with_extension("missing.png");
+        assert!(icon_for_name(&missing.to_string_lossy()).is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn decision_item(menu: Option<TrayMenu>, item_is_menu: bool, icon_name: Option<&str>) -> Item {
+        Item {
+            address: ":1.1/StatusNotifierItem".into(),
+            id: "app".into(),
+            title: "LocalSend".into(),
+            status: Status::Active,
+            icon: None,
+            icon_name: icon_name.map(str::to_string),
+            item_is_menu,
+            menu,
+            menu_path: Some("/Menu".into()),
+            fingerprint: 0,
+        }
+    }
+
+    #[test]
+    fn appindicator_style_left_click_opens_the_menu() {
+        let menu = TrayMenu {
+            id: 0,
+            submenus: vec![menu_item(3, "Open", true, true, false, Vec::new())],
+        };
+        let appindicator = decision_item(Some(menu.clone()), false, Some("/tmp/logo.png"));
+        assert!(left_click_opens_menu(&appindicator));
+        let named = decision_item(Some(menu.clone()), false, Some("network-wireless"));
+        assert!(!left_click_opens_menu(&named));
+        let menu_flag = decision_item(Some(menu), true, None);
+        assert!(left_click_opens_menu(&menu_flag));
+        let no_menu = decision_item(None, false, Some("/tmp/logo.png"));
+        assert!(!left_click_opens_menu(&no_menu));
     }
 
     #[test]
