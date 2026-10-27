@@ -303,6 +303,105 @@ impl Renderer {
         Ok(pen)
     }
 
+    /// Draw an ARGB32 icon in network byte order, scaled to a square with
+    /// nearest-neighbour sampling and alpha-composited over `background`.
+    ///
+    /// SNI sends big-endian bytes (A, R, G, B) regardless of the host, so the
+    /// channels are read by position and the result is re-encoded in the
+    /// server's byte order, just like `blend` does for glyph coverage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn argb(
+        &self,
+        c: &RustConnection,
+        gc: Gcontext,
+        x: i16,
+        y: i16,
+        size: u16,
+        width: i32,
+        height: i32,
+        pixels: &[u8],
+        background: u32,
+    ) -> Result<()> {
+        if size == 0 || width <= 0 || height <= 0 {
+            return Ok(());
+        }
+        let Some(expected) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|count| count.checked_mul(4))
+        else {
+            return Ok(());
+        };
+        if pixels.len() < expected {
+            return Ok(());
+        }
+        let left = i32::from(x).max(0);
+        let top = i32::from(y).max(0);
+        let right = (i32::from(x) + i32::from(size)).min(i32::from(self.back_width));
+        let bottom = (i32::from(y) + i32::from(size)).min(i32::from(self.height));
+        let draw_width = (right - left).max(0) as u16;
+        let draw_height = (bottom - top).max(0) as u16;
+        if draw_width == 0 || draw_height == 0 {
+            return Ok(());
+        }
+
+        let (br, bg_, bb) = split(background);
+        let size = u32::from(size);
+        let source_width = width as u32;
+        let mut out = Vec::with_capacity(usize::from(draw_width) * usize::from(draw_height));
+        for dy in 0..i32::from(draw_height) {
+            let sy =
+                (((top + dy - i32::from(y)) as u32) * height as u32 / size).min(height as u32 - 1);
+            for dx in 0..i32::from(draw_width) {
+                let sx = (((left + dx - i32::from(x)) as u32) * source_width / size)
+                    .min(source_width - 1);
+                let offset = ((sy as usize) * (width as usize) + (sx as usize)) * 4;
+                let pixel = &pixels[offset..offset + 4];
+                let alpha = u32::from(pixel[0]);
+                if alpha == 0 {
+                    out.push(background);
+                    continue;
+                }
+                let mix = |foreground: u32, base: u32| {
+                    ((foreground * alpha + base * (255 - alpha)) / 255) & 255
+                };
+                out.push(
+                    (mix(u32::from(pixel[1]), br) << 16)
+                        | (mix(u32::from(pixel[2]), bg_) << 8)
+                        | mix(u32::from(pixel[3]), bb),
+                );
+            }
+        }
+
+        let stride = usize::from(draw_width) * 4;
+        let max_rows = (60000 / stride).max(1);
+        for (index, chunk) in out.chunks(max_rows * usize::from(draw_width)).enumerate() {
+            let rows = (chunk.len() / usize::from(draw_width)) as u16;
+            let bytes: Vec<u8> = chunk
+                .iter()
+                .flat_map(|pixel| {
+                    if self.image_byte_order == ImageOrder::MSB_FIRST {
+                        pixel.to_be_bytes()
+                    } else {
+                        pixel.to_le_bytes()
+                    }
+                })
+                .collect();
+            c.put_image(
+                ImageFormat::Z_PIXMAP,
+                self.back,
+                gc,
+                draw_width,
+                rows,
+                left as i16,
+                (top as i16).saturating_add((index * max_rows) as i16),
+                0,
+                self.depth,
+                &bytes,
+            )?;
+        }
+        Ok(())
+    }
+
     /// Copy the finished frame to the window in one request.
     ///
     /// A renderer created with `direct` has already drawn on the window.

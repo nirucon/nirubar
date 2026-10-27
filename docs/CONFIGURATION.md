@@ -54,8 +54,17 @@ graph_width = 24
 microphone_visibility = "always"
 ```
 
-`tags` accepts words or glyphs, for example `["web", "code", "chat"]` or a Nerd
-Font code point. `microphone_visibility = "muted"` hides a healthy unmuted
+`tray = true` shows both XEmbed and D-Bus StatusNotifierItem icons on the
+primary monitor. SNI menus open in a selectable bar panel; left click activates
+an item, right click opens its menu when it has one, and items without a menu
+receive the secondary action. The strip scales with the normal bar geometry.
+
+On high-DPI displays the bar reads `Xft.dpi` at startup and scales `font_size`,
+`bar_height` and `bar.cell_width`. Set `NIRU_UI_SCALE` (for example `1.25`) to
+override detection, or `1` to disable it. The value is bounded to 0.75–2.5.
+
+`tags` accepts words or glyphs, for example `["web", "code", "chat"]` or a
+Nerd Font code point. `microphone_visibility = "muted"` hides a healthy unmuted
 input; missing providers remain visible.
 
 ## Optional modules

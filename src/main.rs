@@ -22,6 +22,7 @@ mod probe;
 mod pulse;
 mod render;
 mod scroll;
+mod sni;
 mod status;
 mod tray;
 mod updates;
@@ -287,6 +288,23 @@ fn tray_belongs_here(monitor: Option<&str>, primary: Option<&str>) -> bool {
     }
 }
 
+/// Popup module id for an SNI menu, distinct from overflow (`usize::MAX`).
+const SNI_MENU: usize = usize::MAX - 1;
+
+/// One clickable SNI icon in the last composed frame.
+struct SniHit {
+    address: String,
+    x: i16,
+    width: i16,
+}
+
+/// The menu currently shown for an SNI item.
+struct SniMenu {
+    item_address: String,
+    menu_path: String,
+    rows: Vec<sni::MenuRow>,
+}
+
 struct Bar {
     c: RustConnection,
     root: Window,
@@ -306,6 +324,12 @@ struct Bar {
     monitor: Option<Monitor>,
     /// System tray, when enabled.
     tray: Option<tray::Tray>,
+    /// D-Bus StatusNotifierItem host, on the primary bar only.
+    sni: Option<sni::Host>,
+    /// Hit boxes for the SNI icons in the last frame.
+    sni_hits: Vec<SniHit>,
+    /// Context for the open SNI menu, if the current popup is one.
+    sni_menu: Option<SniMenu>,
     modules: Vec<Box<dyn Module>>,
     layout_text: Arc<Mutex<String>>,
     workspaces: Workspaces,
@@ -505,11 +529,25 @@ impl Bar {
             .and_then(|outputs| outputs.into_iter().find(|output| output.primary))
             .map(|output| output.name);
         let monitor_name = monitor.as_ref().and_then(|m| m.name.as_deref());
-        let tray = if cfg.bar.tray && tray_belongs_here(monitor_name, primary.as_deref()) {
+        let owns_tray = cfg.bar.tray && tray_belongs_here(monitor_name, primary.as_deref());
+        let tray = if owns_tray {
             match tray::Tray::new(&c, root, s, win) {
                 Ok(t) => Some(t),
                 Err(e) => {
                     eprintln!("nirubar: tray: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        // StatusNotifierItem is independent of the XEmbed selection: an app
+        // may register even when another program already owns the X tray.
+        let sni = if owns_tray {
+            match sni::Host::new() {
+                Ok(host) => host,
+                Err(e) => {
+                    eprintln!("nirubar: sni: {e}");
                     None
                 }
             }
@@ -549,6 +587,9 @@ impl Bar {
             monitor,
             icons,
             tray,
+            sni,
+            sni_hits: Vec::new(),
+            sni_menu: None,
             modules,
             layout_text,
             rendered: Vec::new(),
@@ -746,8 +787,18 @@ impl Bar {
         let muted = Theme::pixel(&self.theme.muted)?;
         let border = Theme::pixel(&self.theme.border)?;
         let accent = Theme::pixel(&self.theme.focus)?;
+        let sni_items = self
+            .sni
+            .as_ref()
+            .map(sni::Host::snapshot)
+            .unwrap_or_default();
+        let sni_slot = (sni::ICON_SIZE + sni::GAP) as i16;
+        let sni_width = i16::try_from(sni_items.len())
+            .unwrap_or(i16::MAX)
+            .saturating_mul(sni_slot);
         self.renderer.clear(&self.c, self.gc, bg)?;
         self.placed.clear();
+        self.sni_hits.clear();
 
         // Workspaces are cells, drawn first on the left.
         let cell = self.cells;
@@ -798,11 +849,13 @@ impl Bar {
         }
 
         // Right-aligned status modules, in config order. The tray is the first
-        // item on the right, so it reads before the status text. It takes part
+        // item on the right, so it reads before the status text. SNI and XEmbed
+        // share one strip: SNI on the left, XEmbed on the right. It takes part
         // in the same fit: a narrow bar hides low-priority modules and keeps an
         // overflow indicator reachable. Workspace cells never move.
         const TRAY_ITEM: usize = usize::MAX;
         let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0) as i16;
+        let strip_width = sni_width.saturating_add(tray_width);
         let right_edge = i16::try_from(self.width).unwrap_or(i16::MAX) - 10;
         let workspace_width = if show_workspaces {
             self.cells * self.workspaces.names.len() as i16
@@ -835,12 +888,12 @@ impl Bar {
                 priority: module_priority(self.modules[*index].name()),
             })
             .collect();
-        if tray_width > 0 {
+        if strip_width > 0 {
             items.insert(
                 0,
                 layout::Item {
                     index: TRAY_ITEM,
-                    width: tray_width,
+                    width: strip_width,
                     priority: 95,
                 },
             );
@@ -997,9 +1050,62 @@ impl Bar {
             }
         }
 
+        if let Some(x) = tray_x {
+            let icon_y =
+                (i16::try_from(self.height).unwrap_or(0) - sni::ICON_SIZE as i16).max(0) / 2;
+            let mut icon_x = x;
+            for item in &sni_items {
+                if let Some(icon) = &item.icon {
+                    self.renderer.argb(
+                        &self.c,
+                        self.gc,
+                        icon_x,
+                        icon_y,
+                        sni::ICON_SIZE,
+                        icon.width,
+                        icon.height,
+                        &icon.pixels,
+                        bg,
+                    )?;
+                } else {
+                    // A one-character badge keeps an iconless application
+                    // visible without ever guessing at a missing pixmap.
+                    self.renderer.fill(
+                        &self.c,
+                        self.gc,
+                        Rectangle {
+                            x: icon_x,
+                            y: icon_y,
+                            width: sni::ICON_SIZE,
+                            height: sni::ICON_SIZE,
+                        },
+                        border,
+                    )?;
+                    let mut bytes = [0u8; 4];
+                    let label = item.initial().encode_utf8(&mut bytes);
+                    let width = self.renderer.width(label);
+                    let text_x = icon_x + (sni::ICON_SIZE as i16 - width).max(0) / 2;
+                    self.renderer.text(
+                        &self.c,
+                        self.gc,
+                        text_x,
+                        label,
+                        fg,
+                        border,
+                        icon_x + sni::ICON_SIZE as i16,
+                    )?;
+                }
+                self.sni_hits.push(SniHit {
+                    address: item.address.clone(),
+                    x: icon_x,
+                    width: sni_slot,
+                });
+                icon_x = icon_x.saturating_add(sni_slot);
+            }
+        }
         if let Some(t) = &self.tray {
             match tray_x {
-                Some(x) => t.layout(&self.c, 0, x + t.width() as i16, self.height)?,
+                Some(x) => t.layout(&self.c, 0, x + strip_width, self.height)?,
                 None => t.hide(&self.c)?,
             }
         }
@@ -1041,12 +1147,19 @@ impl Bar {
             .collect();
         let title = self.title();
         let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0);
+        let sni_key = self
+            .sni
+            .as_ref()
+            .map(sni::Host::frame_key)
+            .unwrap_or_default();
         // The module text is part of the key, and the media module's text
         // changes on every scroll step, so a title in motion asks for a redraw
         // by itself. Width and tray size take part because they decide which
-        // modules fit and whether the overflow indicator exists.
+        // modules fit and whether the overflow indicator exists. SNI identity,
+        // status, title and icon bytes take part so a tray change is painted
+        // on the next idle tick.
         format!(
-            "{width}:{tray_width}:{tag}:{occupied:?}:{modules:?}:{progress:?}:{title}",
+            "{width}:{tray_width}:{sni_key}:{tag}:{occupied:?}:{modules:?}:{progress:?}:{title}",
             width = self.width
         )
     }
@@ -1145,6 +1258,134 @@ impl Bar {
         Ok(())
     }
 
+    /// Find the SNI item under a bar x coordinate. The address, not the
+    /// snapshot index, identifies it: an asynchronous add or remove between a
+    /// paint and a click must not activate the wrong application.
+    fn sni_target(&self, x: i16) -> Option<(usize, sni::Item)> {
+        let hit = self
+            .sni_hits
+            .iter()
+            .find(|hit| x >= hit.x && x < hit.x + hit.width)?;
+        let snapshot = self.sni.as_ref()?.snapshot();
+        snapshot
+            .into_iter()
+            .enumerate()
+            .find(|(_, item)| item.address == hit.address)
+    }
+
+    fn sni_left(
+        &mut self,
+        index: usize,
+        item: sni::Item,
+        hit_x: i16,
+        root_x: i16,
+        root_y: i16,
+    ) -> Result<()> {
+        if self
+            .popup
+            .as_ref()
+            .is_some_and(|popup| popup.module == SNI_MENU)
+            && self
+                .sni_menu
+                .as_ref()
+                .is_some_and(|menu| menu.item_address == item.address)
+        {
+            return self.close_popup();
+        }
+        self.close_popup()?;
+        if item.item_is_menu && item.menu.is_some() {
+            return self.open_sni_menu(&item, hit_x);
+        }
+        if let Some(host) = &self.sni {
+            host.activate(index, false, root_x, root_y);
+        }
+        Ok(())
+    }
+
+    fn sni_right(
+        &mut self,
+        index: usize,
+        item: sni::Item,
+        hit_x: i16,
+        root_x: i16,
+        root_y: i16,
+    ) -> Result<()> {
+        self.close_popup()?;
+        if item.menu.is_some() {
+            return self.open_sni_menu(&item, hit_x);
+        }
+        if let Some(host) = &self.sni {
+            host.activate(index, true, root_x, root_y);
+        }
+        Ok(())
+    }
+
+    fn open_sni_menu(&mut self, item: &sni::Item, hit_x: i16) -> Result<()> {
+        let Some(menu) = item.menu.as_ref() else {
+            return Ok(());
+        };
+        let Some(menu_path) = item.menu_path.clone() else {
+            return Ok(());
+        };
+        let rows = sni::menu_rows(menu);
+        let actions: Vec<popup::ActionRow> = rows
+            .iter()
+            .map(|row| popup::ActionRow {
+                label: row.label.clone(),
+                enabled: row.enabled,
+                separator: row.separator,
+            })
+            .collect();
+        let title = if !item.title.is_empty() {
+            item.title.clone()
+        } else if !item.id.is_empty() {
+            item.id.clone()
+        } else {
+            "Tray menu".to_string()
+        };
+        let popup = popup::Popup::open(
+            &self.c,
+            self.root,
+            &self.theme,
+            self.height,
+            self.cfg.font_size,
+            self.cfg.font_path.as_deref(),
+            SNI_MENU,
+            self.bar_x,
+            self.bar_y,
+            self.width,
+            self.win,
+            hit_x,
+            &title,
+            &[],
+            &actions,
+            false,
+            self.cfg.bar.popup_timeout_seconds,
+        )?;
+        self.sni_menu = Some(SniMenu {
+            item_address: item.address.clone(),
+            menu_path,
+            rows,
+        });
+        self.popup = Some(popup);
+        Ok(())
+    }
+
+    fn sni_action(&mut self, index: usize) -> Result<()> {
+        let action = self.sni_menu.take().and_then(|menu| {
+            menu.rows
+                .get(index)
+                .map(|row| (menu.item_address, menu.menu_path, row.id))
+        });
+        self.close_popup()?;
+        if let Some((address, menu_path, id)) = action {
+            if let Some(host) = &self.sni {
+                host.menu_action(&address, &menu_path, id);
+            }
+        }
+        Ok(())
+    }
+
     /// Open the detail panel for whatever was clicked.
     /// Handle a click on the bar.
     ///
@@ -1184,6 +1425,7 @@ impl Bar {
                     overflow.x,
                     "Hidden modules",
                     &lines,
+                    &[],
                     false,
                     self.cfg.bar.popup_timeout_seconds,
                 )?);
@@ -1246,6 +1488,7 @@ impl Bar {
                 left,
                 &title,
                 &lines,
+                &[],
                 controls,
                 self.cfg.bar.popup_timeout_seconds,
             )?);
@@ -1296,6 +1539,7 @@ impl Bar {
     }
 
     fn close_popup(&mut self) -> Result<()> {
+        self.sni_menu = None;
         if let Some(p) = self.popup.take() {
             p.destroy(&self.c, self.root)?;
         }
@@ -1439,6 +1683,7 @@ impl Bar {
                             self.close_popup()?;
                             self.controls(module)?;
                         }
+                        popup::Outcome::Action(index) => self.sni_action(index)?,
                         popup::Outcome::Keep => {}
                     }
                     continue;
@@ -1455,6 +1700,16 @@ impl Bar {
                     }
                 }
                 Event::ButtonPress(e) => {
+                    if e.event_x >= 0 {
+                        if let Some((index, item)) = self.sni_target(e.event_x) {
+                            match e.detail {
+                                1 => self.sni_left(index, item, e.event_x, e.root_x, e.root_y)?,
+                                3 => self.sni_right(index, item, e.event_x, e.root_x, e.root_y)?,
+                                _ => {}
+                            }
+                            continue;
+                        }
+                    }
                     let control = match e.detail {
                         2 => Some(module::Input::Middle),
                         3 => Some(module::Input::Right),
@@ -1469,6 +1724,7 @@ impl Bar {
                         continue;
                     }
                     if let Some(p) = self.popup.take() {
+                        self.sni_menu = None;
                         // Clicking the bar under a panel toggles or replaces it.
                         let same_module = self
                             .placed

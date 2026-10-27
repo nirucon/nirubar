@@ -21,6 +21,14 @@ use x11rb::{
     rust_connection::RustConnection,
 };
 
+/// One clickable row in an action menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionRow {
+    pub label: String,
+    pub enabled: bool,
+    pub separator: bool,
+}
+
 /// An open panel.
 pub struct Popup {
     win: Window,
@@ -42,6 +50,11 @@ pub struct Popup {
     controls: bool,
     title: String,
     lines: Vec<String>,
+    /// Action rows for a menu. Empty for informational and control panels.
+    actions: Vec<ActionRow>,
+    /// Root y where the first action row starts.
+    action_top: i16,
+    line_height: i16,
     font_size: f32,
     font_path: Option<String>,
     /// Focus owner before the panel took focus; restored when it closes.
@@ -66,12 +79,23 @@ impl Popup {
         origin_x: i16,
         title: &str,
         lines: &[String],
+        actions: &[ActionRow],
         controls: bool,
         timeout_seconds: u32,
     ) -> Result<Self> {
         let line_height = (font_size * 1.5).ceil() as u16;
         let width: u16 = 340;
-        let height = line_height * (lines.len() as u16 + 2 + u16::from(controls)) + 14;
+        let content_rows = if actions.is_empty() {
+            lines.len() as u16
+        } else {
+            actions.len() as u16
+        };
+        let extend = if actions.is_empty() {
+            u16::from(controls)
+        } else {
+            0
+        };
+        let height = line_height * (content_rows + 2 + extend) + 14;
         // Root coordinates, clamped inside the bar's physical monitor.
         let max_x = i32::from(bar_x) + i32::from(bar_width) - i32::from(width);
         let x = (i32::from(bar_x) + i32::from(origin_x))
@@ -81,6 +105,9 @@ impl Popup {
         let y = (i32::from(bar_y) + i32::from(bar_height)).min(max_y.max(0)) as i16;
         let footer_top =
             y + i16::try_from(height).unwrap_or(0) - i16::try_from(line_height).unwrap_or(0) - 8;
+        let action_top = y
+            .saturating_add(10)
+            .saturating_add(i16::try_from(line_height).unwrap_or(i16::MAX));
         let previous_focus = c.get_input_focus()?.reply()?;
 
         let screen_width = c.setup().roots[0].width_in_pixels;
@@ -179,6 +206,9 @@ impl Popup {
             controls,
             title: title.to_string(),
             lines: lines.to_vec(),
+            actions: actions.to_vec(),
+            action_top,
+            line_height: i16::try_from(line_height).unwrap_or(i16::MAX),
             font_size,
             font_path: font_path.map(str::to_string),
             previous_focus: (previous_focus.focus, previous_focus.revert_to),
@@ -214,26 +244,45 @@ impl Popup {
         // The panel's renderer places text by baseline, so each line gets a row.
         let row = |i: i16| -> i16 { 10 + line_height * (i + 1) };
         renderer.line(c, self.gc, 14, row(0), &title.to_uppercase(), fg, bg)?;
-        for (i, line) in lines.iter().enumerate() {
-            if line.is_empty() {
-                continue;
+        if self.actions.is_empty() {
+            for (i, line) in lines.iter().enumerate() {
+                if line.is_empty() {
+                    continue;
+                }
+                renderer.line(c, self.gc, 14, row(i as i16 + 1), line, muted, bg)?;
             }
-            renderer.line(c, self.gc, 14, row(i as i16 + 1), line, muted, bg)?;
-        }
-        let footer = if self.controls {
-            "Return: open controls    Esc: close"
+            let footer = if self.controls {
+                "Return: open controls    Esc: close"
+            } else {
+                "Informational panel    Esc: close"
+            };
+            renderer.line(
+                c,
+                self.gc,
+                14,
+                row(lines.len() as i16 + 1),
+                footer,
+                muted,
+                bg,
+            )?;
         } else {
-            "Informational panel    Esc: close"
-        };
-        renderer.line(
-            c,
-            self.gc,
-            14,
-            row(lines.len() as i16 + 1),
-            footer,
-            muted,
-            bg,
-        )?;
+            for (i, action) in self.actions.iter().enumerate() {
+                if action.separator || action.label.is_empty() {
+                    continue;
+                }
+                let colour = if action.enabled { fg } else { muted };
+                renderer.line(c, self.gc, 14, row(i as i16 + 1), &action.label, colour, bg)?;
+            }
+            renderer.line(
+                c,
+                self.gc,
+                14,
+                row(self.actions.len() as i16 + 1),
+                "Esc: close",
+                muted,
+                bg,
+            )?;
+        }
         c.flush()?;
         Ok(())
     }
@@ -294,6 +343,8 @@ pub enum Outcome {
     Close,
     /// Close the panel and open this module's explicit control view.
     Controls,
+    /// Close the panel and invoke this action row.
+    Action(usize),
 }
 
 impl Popup {
@@ -305,6 +356,16 @@ impl Popup {
             Event::ButtonPress(e) => {
                 // The bottom line is an action, not explanatory content.
                 if self.contains(e.root_x, e.root_y) {
+                    if !self.actions.is_empty() && e.detail == 1 && e.root_y >= self.action_top {
+                        let row = (e.root_y - self.action_top) / self.line_height.max(1);
+                        let index = row.max(0) as usize;
+                        if let Some(action) = self.actions.get(index) {
+                            if action.enabled && !action.separator {
+                                return Outcome::Action(index);
+                            }
+                        }
+                        return Outcome::Keep;
+                    }
                     if self.controls
                         && e.root_y >= self.footer_top
                         && e.root_y < self.y + i16::try_from(self.height).unwrap_or(0)

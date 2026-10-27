@@ -14,7 +14,7 @@ NetworkManager is required.
 - Font-aware layout and semantic theme colours drawn from the active NIRUX
   theme, with ten built-in theme palettes when NIRUX is not installed.
 - Panels with measured hitboxes, Escape/click-outside dismissal and a timeout.
-- XEmbed system tray per X screen.
+- XEmbed and D-Bus StatusNotifierItem trays, on the primary monitor.
 - Narrow-width overflow: low-priority modules collapse into a clickable `+N`.
 - Bounded provider queries and caching for package updates and weather.
 - Shared configuration with NIRUWM; no duplicated palette or font settings.

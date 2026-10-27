@@ -386,6 +386,7 @@ impl Config {
                         let mut c: Self = value.clone().try_into()?;
                         apply_appearance_defaults(&mut c, &value);
                         c.validate()?;
+                        apply_ui_scale(&mut c);
                         return Ok(c);
                     }
                     Err(e) => return Err(e.into()),
@@ -397,6 +398,7 @@ impl Config {
         let mut c: Self = value.clone().try_into()?;
         apply_appearance_defaults(&mut c, &value);
         c.validate()?;
+        apply_ui_scale(&mut c);
         Ok(c)
     }
 
@@ -606,6 +608,58 @@ fn appearance_value() -> Option<toml::Value> {
 
 fn appearance_colour(value: &toml::Value, key: &str) -> Option<String> {
     value.get("colors")?.get(key)?.as_str().map(str::to_string)
+}
+
+/// Scale factor for the bar's default geometry on high-DPI displays.
+///
+/// `NIRU_UI_SCALE` wins when it is set. Otherwise the X resource `Xft.dpi` is
+/// read once at startup and divided by 96. The result is deliberately bounded:
+/// a bogus or absent value must not make the bar unusable.
+fn ui_scale() -> f32 {
+    let explicit = std::env::var("NIRU_UI_SCALE").ok();
+    let dpi = if explicit.is_none() {
+        std::process::Command::new("xrdb")
+            .args(["-query"])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        (key.trim() == "Xft.dpi").then(|| value.trim().parse::<f32>().ok())?
+                    })
+            })
+    } else {
+        None
+    };
+    scale_from(explicit.as_deref(), dpi)
+}
+
+fn scale_from(explicit: Option<&str>, dpi: Option<f32>) -> f32 {
+    explicit
+        .and_then(|value| value.trim().parse::<f32>().ok())
+        .or_else(|| dpi.map(|dpi| dpi / 96.0))
+        .filter(|scale| scale.is_finite())
+        .map(|scale| scale.clamp(0.75, 2.5))
+        .unwrap_or(1.0)
+}
+
+/// Apply the detected scale once, after the user's explicit geometry has been
+/// read. Clamping keeps the values inside the same ranges the config accepts.
+fn apply_ui_scale(cfg: &mut Config) {
+    let scale = ui_scale();
+    if (scale - 1.0).abs() < 0.001 {
+        return;
+    }
+    cfg.font_size = (cfg.font_size * scale).clamp(8.0, 40.0);
+    cfg.bar_height = (f32::from(cfg.bar_height) * scale)
+        .round()
+        .clamp(18.0, 100.0) as u16;
+    cfg.bar.cell_width = (f32::from(cfg.bar.cell_width) * scale)
+        .round()
+        .clamp(12.0, 200.0) as u16;
 }
 
 fn appearance_font_size(value: &toml::Value) -> Option<f32> {
@@ -882,6 +936,16 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ui_scale_prefers_the_explicit_value_and_clamps() {
+        assert_eq!(scale_from(Some("2.0"), Some(192.0)), 2.0);
+        assert_eq!(scale_from(None, Some(192.0)), 2.0);
+        assert_eq!(scale_from(None, Some(96.0)), 1.0);
+        assert_eq!(scale_from(Some("99"), None), 2.5);
+        assert_eq!(scale_from(Some("0.1"), None), 0.75);
+        assert_eq!(scale_from(Some("nonsense"), None), 1.0);
+    }
 
     #[test]
     fn defaults_are_minimal() {

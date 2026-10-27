@@ -253,8 +253,9 @@ graph_width = 24
 # Minutes between package update checks. The result is cached in
 # ~/.cache/nirubar/updates so the bar never runs a package query per redraw.
 update_check_minutes = 30
-# Let the bar own a system tray. Applications that show a tray icon appear in
-# the bar without any other program. Set false if another tray is running.
+# Let the bar own a system tray (XEmbed and D-Bus StatusNotifierItem).
+# Applications that show a tray icon appear in the bar without any other
+# program. Set false if another tray is running.
 tray = true
 
 # ── Key bindings ────────────────────────────────────────────────────────────
