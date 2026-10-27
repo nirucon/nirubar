@@ -488,6 +488,7 @@ impl Config {
                     | "centeredfloat"
                     | "floating"
                     | "fibonacci"
+                    | "scroll"
             )
         };
         if let Some(bad) = monitors.layouts.iter().find(|l| !known(l)) {

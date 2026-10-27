@@ -316,10 +316,15 @@ impl Module for LayoutMode {
             "centeredfloat centred master + float".into(),
             "fibonacci     spiral split".into(),
             "floating      windows keep size".into(),
+            "scroll        one/two columns, side scroll".into(),
             String::new(),
             "Cycle: Super+Ctrl+period".into(),
             "Set: niructl layout NAME".into(),
         ];
+        if current.starts_with("scroll") {
+            lines.insert(1, "Columns: Super+Ctrl+Shift+S".into());
+            lines.insert(2, "Set: niructl layout columns 1|2|toggle".into());
+        }
         if current == "floating" {
             lines.insert(1, String::new());
         }

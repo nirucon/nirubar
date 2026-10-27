@@ -17,7 +17,7 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 | `brightness` | Backlight percentage; hidden without a readable backlight |
 | `media` | Playing title; right-click play/pause, scroll previous/next, middle-click next player |
 | `powerprofile` | Active power profile; right-click next profile, middle-click launcher selector |
-| `layout` | Current NIRUWM layout; click for the list of layouts |
+| `layout` | Current NIRUWM layout; click for the list. Scroll shows `scroll 1`/`scroll 2` and lists the column controls |
 | `bluetooth` | Adapter/device state; right-click power, middle-click device selector |
 | `updates` | Available package updates; click for details and command |
 | `pulse` | CPU and memory; click for a graph of the last minute |
