@@ -1303,6 +1303,131 @@ impl Module for Sun {
 ///
 /// An unknown name is reported once and skipped, so a typo in the config does
 /// not stop the bar from starting.
+/// Recent deterministic/OpenCode task state written by `niructl`.
+#[derive(Clone, Debug, serde::Deserialize)]
+struct TaskRecord {
+    label: String,
+    state: String,
+    updated: u64,
+    #[serde(default)]
+    detail: String,
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn command_present(program: &str) -> bool {
+    std::env::var("PATH")
+        .map(|path| {
+            path.split(':')
+                .filter(|dir| !dir.is_empty())
+                .any(|dir| std::path::Path::new(dir).join(program).is_file())
+        })
+        .unwrap_or(false)
+}
+
+fn tasks_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".local/state")
+        });
+    base.join("niruwm/tasks.json")
+}
+
+fn read_tasks() -> Vec<TaskRecord> {
+    std::fs::read_to_string(tasks_path())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub struct Tasks {
+    active: usize,
+}
+
+impl Tasks {
+    fn state_icon(state: &str) -> &'static str {
+        match state {
+            "running" => "…",
+            "waiting" => "?",
+            "failed" => "!",
+            _ => "✓",
+        }
+    }
+}
+
+impl Module for Tasks {
+    fn name(&self) -> &'static str {
+        "tasks"
+    }
+
+    fn side(&self) -> Side {
+        Side::Right
+    }
+
+    fn render(&mut self) -> String {
+        let tasks = read_tasks();
+        self.active = tasks
+            .iter()
+            .filter(|task| task.state == "running" || task.state == "waiting")
+            .count();
+        if self.active == 0 {
+            String::new()
+        } else {
+            format!("tasks {}", self.active)
+        }
+    }
+
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let tasks = read_tasks();
+        let mut lines = Vec::new();
+        for task in tasks.iter().take(8) {
+            let age = now_secs().saturating_sub(task.updated);
+            let age = if age < 120 {
+                format!("{age}s ago")
+            } else if age < 7200 {
+                format!("{}m ago", age / 60)
+            } else {
+                format!("{}h ago", age / 3600)
+            };
+            let detail = if task.detail.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", task.detail)
+            };
+            lines.push(format!(
+                "{} {:<8}  {}{}",
+                Self::state_icon(&task.state),
+                task.state,
+                task.label,
+                detail
+            ));
+            lines.push(format!("             {age}"));
+        }
+        if lines.is_empty() {
+            lines.push("No recent NIRU tasks.".into());
+        }
+        Some(("NIRU tasks".into(), lines))
+    }
+
+    fn controls(&self) -> Option<Control> {
+        if command_present("nirulauncher") {
+            Some(Control::ui(
+                "launcher-actions",
+                Some(("nirulauncher".into(), vec!["--system-actions".into()])),
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 pub fn build(
     full: &config::Config,
     icons: status::Icons,
@@ -1330,6 +1455,7 @@ pub fn build(
                 screen: screen.clone(),
             })),
             "mode" => out.push(Box::new(WorkMode { icons })),
+            "tasks" => out.push(Box::new(Tasks { active: 0 })),
             "layout" => out.push(Box::new(LayoutMode {
                 icons,
                 value: layout.clone(),
@@ -1509,6 +1635,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn task_state_icons_are_not_colour_only() {
+        assert_eq!(Tasks::state_icon("running"), "…");
+        assert_eq!(Tasks::state_icon("waiting"), "?");
+        assert_eq!(Tasks::state_icon("failed"), "!");
+        assert_eq!(Tasks::state_icon("completed"), "✓");
+    }
+
+    #[test]
     fn every_module_in_the_example_config_is_known() {
         // A typo in the example would teach every user the same mistake.
         let text = include_str!("../config.example.toml");
@@ -1546,6 +1680,7 @@ mod tests {
                         | "bluetooth"
                         | "powerprofile"
                         | "mode"
+                        | "tasks"
                         | "layout"
                 ),
                 "example config names an unknown module {name:?}"

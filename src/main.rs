@@ -266,6 +266,7 @@ fn module_priority(name: &str) -> i32 {
         "layout" => 72,
         "media" => 70,
         "notifications" => 65,
+        "tasks" => 66,
         "updates" => 60,
         "niruxupdate" => 58,
         "brightness" => 55,

@@ -198,6 +198,7 @@ enabled = true
 # the package manager it finds. Each says what is missing when clicked.
 # Add "weather" (and optionally "sun") to enable the information panels.
 # Add "notifications" for an unread indicator backed by nirunotify.
+# Add "tasks" for running/waiting NIRU actions and OpenCode tasks.
 # Add "microphone" for input gain/mute; this does not monitor recording activity.
 # Add "bluetooth" for adapter/device status; hidden when no adapter exists.
 # Add "powerprofile" for Power saver/Balanced/Performance when PPD is available.
@@ -205,7 +206,7 @@ enabled = true
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "network", "wifi", "mode", "battery", "clock"]
+modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "network", "wifi", "mode", "tasks", "battery", "clock"]
 # Missing input/provider stays visible even with "muted" visibility.
 microphone_visibility = "always" # "always" or "muted"
 # Left: information. Right: mute. Scroll: gain (never unmutes).
