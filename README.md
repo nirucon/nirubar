@@ -40,6 +40,7 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | `uptime` | System uptime | Click for memory use and fullest filesystem |
 | `sun` | Sunrise and sunset | Click for daylight progress |
 | `weather` | Cached temperature, condition and next-hour rain | Click for an eight-hour rain timeline and daylight progress |
+| `tasks` | Running or waiting NIRU/OpenCode tasks | Click for recent task states and results; Return/Open controls opens NIRU Actions |
 | `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |
 | `display` | With two screens, which one this bar is: `2 below`, `2 above`, `2 left`, `2 right` | Click for info, Return/Open controls for display profiles, middle-click for the same quick route |
 
@@ -83,6 +84,8 @@ NIRUWM starts the bar at login; it can also run on its own.
   text is never a hidden button.
 - A failed or stuck helper is reported instead of looking like a successful
   click. Controls are bounded and coalesced so the bar cannot spawn a storm.
+- The optional `tasks` module reads the bounded task list written by `niructl`;
+  it stays empty when no task is running or waiting and needs no daemon.
 - Media titles longer than `media_width` scroll and rest at the beginning.
 - Battery packs are aggregated by energy when available; unknown values are not
   shown as zero.
@@ -101,7 +104,7 @@ weather_latitude = 58.22
 weather_longitude = 11.92
 
 [bar]
-modules = ["workspaces", "network", "wifi", "battery", "clock"]
+modules = ["workspaces", "network", "wifi", "mode", "tasks", "battery", "clock"]
 tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 icons = true
 popups = true

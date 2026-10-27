@@ -273,6 +273,7 @@ impl Default for Bar {
                 "brightness".into(),
                 "display".into(),
                 "network".into(),
+                "tasks".into(),
                 "battery".into(),
                 "clock".into(),
             ],
