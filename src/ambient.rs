@@ -55,7 +55,10 @@ fn clock(hours: f64) -> String {
 /// the equation of time and the longitude).
 fn solar_events(latitude: f64, longitude: f64) -> Option<(f64, f64)> {
     let today = chrono::Local::now().date_naive();
-    let day = chrono::Datelike::ordinal(&today) as f64;
+    solar_events_on_day(latitude, longitude, chrono::Datelike::ordinal(&today) as f64)
+}
+
+fn solar_events_on_day(latitude: f64, longitude: f64, day: f64) -> Option<(f64, f64)> {
     // Fraction of the year, 0 at the start, from the day number.
     let gamma = 2.0 * std::f64::consts::PI / 365.0 * (day - 1.0);
     // Equation of time, in minutes.
@@ -112,13 +115,13 @@ mod tests {
     }
 
     #[test]
-    fn above_the_arctic_circle_there_are_days_without_events() {
-        // Longyearbyen (78.2 N) alternates between polar night and midnight
-        // sun; pick whichever side of the year today is on.
+    fn above_the_arctic_circle_there_are_fixed_polar_days() {
+        // 172 is midsummer and 355 is polar night at Longyearbyen. The result
+        // must not depend on the date the test happens to run.
         let lat = 78.2;
-        let day = chrono::Datelike::ordinal(&chrono::Local::now().date_naive());
-        let midsummer = (80..=200).contains(&day);
-        assert_eq!(solar_events(lat, 15.6).is_none(), midsummer);
+        assert!(solar_events_on_day(lat, 15.6, 172.0).is_none());
+        assert!(solar_events_on_day(lat, 15.6, 355.0).is_none());
+        assert!(solar_events_on_day(lat, 15.6, 80.0).is_some());
     }
 
     #[test]

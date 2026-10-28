@@ -645,9 +645,13 @@ impl Module for Recording {
     }
     fn control(&mut self, input: Input) -> Option<Control> {
         match input {
-            Input::Right => Some(Control::run(
+            Input::Right if crate::recording::can_stop() => Some(Control::run(
                 "clip-stop",
                 Some(("niruclip".into(), vec!["--stop".into()])),
+            )),
+            Input::Right if crate::recording::can_recover() => Some(Control::run(
+                "clip-recover",
+                Some(("niruclip".into(), vec!["--recover".into()])),
             )),
             Input::Middle => Some(Control::ui(
                 "clip-panel",
