@@ -629,6 +629,7 @@ impl Module for Bluetooth {
 }
 
 pub struct Microphone {
+    pub icons: status::Icons,
     monitor: crate::microphone::Monitor,
     visibility: String,
 }
@@ -641,7 +642,11 @@ impl Module for Microphone {
         Side::Right
     }
     fn render(&mut self) -> String {
-        crate::microphone::text(&self.monitor.snapshot(), "mic", &self.visibility)
+        crate::microphone::text(
+            &self.monitor.snapshot(),
+            self.icons.microphone,
+            &self.visibility,
+        )
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         Some((
@@ -1507,6 +1512,7 @@ pub fn build(
                 monitor: crate::bluetooth::Monitor::new(),
             })),
             "microphone" => out.push(Box::new(Microphone {
+                icons,
                 monitor: crate::microphone::Monitor::new(),
                 visibility: cfg.microphone_visibility.clone(),
             })),

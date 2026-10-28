@@ -1967,6 +1967,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         } else {
             plain.layout
         },
+        microphone: if ok(nerd.microphone) {
+            nerd.microphone
+        } else {
+            plain.microphone
+        },
         bluetooth: if ok(nerd.bluetooth) {
             nerd.bluetooth
         } else {

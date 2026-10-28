@@ -41,6 +41,8 @@ pub struct Icons {
     pub mode: &'static str,
     /// The current NIRUWM layout module.
     pub layout: &'static str,
+    /// The optional microphone module.
+    pub microphone: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
     /// The optional power-profile module.
@@ -78,6 +80,7 @@ impl Icons {
             display: "\u{f108}", // nf-fa-desktop
             mode: "\u{f017}",    // clock face
             layout: "\u{f009}",  // nf-fa-th-large
+            microphone: "\u{f130}", // nf-fa-microphone
             bluetooth: "\u{f293}", // nf-fa-bluetooth
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
@@ -106,6 +109,7 @@ impl Icons {
             display: "disp",
             mode: "mode",
             layout: "layout",
+            microphone: "mic",
             bluetooth: "bt",
             powerprofile: "pwr",
             notifications: "ntf",
