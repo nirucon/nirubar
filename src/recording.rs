@@ -67,11 +67,7 @@ fn read() -> Option<State> {
 fn proc_start(pid: u32) -> Option<u64> {
     let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let close = text.rfind(')')?;
-    text[close + 1..]
-        .split_whitespace()
-        .nth(19)?
-        .parse()
-        .ok()
+    text[close + 1..].split_whitespace().nth(19)?.parse().ok()
 }
 
 fn alive(pid: u32, pid_start: u64) -> bool {
@@ -103,8 +99,7 @@ fn classify(state: &State, partial_exists: bool, alive: bool) -> View {
                 seconds: now.saturating_sub(started),
             }
         }
-        "recording" | "starting" | "finalizing" | "countdown"
-        | "failed" | "interrupted"
+        "recording" | "starting" | "finalizing" | "countdown" | "failed" | "interrupted"
             if state.recoverable && partial_exists =>
         {
             View::Recover
@@ -120,7 +115,11 @@ fn current() -> (State, View) {
     let Some(state) = read() else {
         return (State::default(), View::Hidden);
     };
-    let view = classify(&state, partial_usable(&state.partial), alive(state.pid, state.pid_start));
+    let view = classify(
+        &state,
+        partial_usable(&state.partial),
+        alive(state.pid, state.pid_start),
+    );
     (state, view)
 }
 
@@ -190,22 +189,40 @@ mod tests {
 
     #[test]
     fn a_dead_recorder_without_a_validated_partial_is_a_failure() {
-        assert_eq!(classify(&state("recording", false), false, false), View::Failed);
-        assert_eq!(classify(&state("recording", true), false, false), View::Failed);
+        assert_eq!(
+            classify(&state("recording", false), false, false),
+            View::Failed
+        );
+        assert_eq!(
+            classify(&state("recording", true), false, false),
+            View::Failed
+        );
     }
 
     #[test]
     fn only_a_validated_partial_is_offered_for_recovery() {
-        assert_eq!(classify(&state("interrupted", true), true, false), View::Recover);
-        assert_eq!(classify(&state("interrupted", false), true, false), View::Failed);
+        assert_eq!(
+            classify(&state("interrupted", true), true, false),
+            View::Recover
+        );
+        assert_eq!(
+            classify(&state("interrupted", false), true, false),
+            View::Failed
+        );
         assert_eq!(classify(&state("failed", true), true, false), View::Recover);
         assert_eq!(classify(&state("failed", false), true, false), View::Failed);
     }
 
     #[test]
     fn finished_and_cancelled_sessions_hide_the_module() {
-        assert_eq!(classify(&state("finished", false), true, false), View::Hidden);
-        assert_eq!(classify(&state("cancelled", false), false, false), View::Hidden);
+        assert_eq!(
+            classify(&state("finished", false), true, false),
+            View::Hidden
+        );
+        assert_eq!(
+            classify(&state("cancelled", false), false, false),
+            View::Hidden
+        );
     }
 
     #[test]
