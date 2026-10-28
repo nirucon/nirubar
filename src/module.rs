@@ -628,6 +628,42 @@ impl Module for Bluetooth {
     }
 }
 
+pub struct Recording;
+
+impl Module for Recording {
+    fn name(&self) -> &'static str {
+        "recording"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::recording::text()
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some(("NIRUCLIP recording".into(), crate::recording::detail()))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Right => Some(Control::run(
+                "clip-stop",
+                Some(("niruclip".into(), vec!["--stop".into()])),
+            )),
+            Input::Middle => Some(Control::ui(
+                "clip-panel",
+                Some(("nirulauncher".into(), vec!["--clip".into()])),
+            )),
+            _ => None,
+        }
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "clip-controls",
+            Some(("nirulauncher".into(), vec!["--clip".into()])),
+        ))
+    }
+}
+
 pub struct Microphone {
     pub icons: status::Icons,
     monitor: crate::microphone::Monitor,
@@ -1511,6 +1547,7 @@ pub fn build(
                 icons,
                 monitor: crate::bluetooth::Monitor::new(),
             })),
+            "recording" => out.push(Box::new(Recording)),
             "microphone" => out.push(Box::new(Microphone {
                 icons,
                 monitor: crate::microphone::Monitor::new(),

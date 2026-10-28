@@ -200,6 +200,7 @@ enabled = true
 # Add "notifications" for an unread indicator backed by nirunotify.
 # Add "tasks" for running/waiting NIRU actions and OpenCode tasks.
 # Add "microphone" for input gain/mute; this does not monitor recording activity.
+# Add "recording" to show active NIRUCLIP recording state; right-click stops.
 # Add "bluetooth" for adapter/device status; hidden when no adapter exists.
 # Add "powerprofile" for Power saver/Balanced/Performance when PPD is available.
 # Add "layout" for the current NIRUWM layout; click it to list all layouts.

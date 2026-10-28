@@ -20,6 +20,7 @@ mod popup;
 mod powerprofile;
 mod probe;
 mod pulse;
+mod recording;
 mod render;
 mod scroll;
 mod sni;
