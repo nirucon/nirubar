@@ -420,6 +420,7 @@ impl Bar {
             "_NIRUBAR_REDRAW",
             "_NIRU_CONFIG_SERIAL",
             "_NIRUWM_COMMAND",
+            "_NIRU_TRAY_ACTIVATE",
         ] {
             atoms.insert(n, c.intern_atom(false, n.as_bytes())?.reply()?.atom);
         }
@@ -1274,6 +1275,21 @@ impl Bar {
             .find(|(_, item)| item.address == hit.address)
     }
 
+    fn mark_tray_activation(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as u32)
+            .unwrap_or(0);
+        let _ = self.c.change_property32(
+            PropMode::REPLACE,
+            self.root,
+            self.atom("_NIRU_TRAY_ACTIVATE"),
+            AtomEnum::CARDINAL,
+            &[now],
+        );
+        let _ = self.c.flush();
+    }
+
     fn sni_left(
         &mut self,
         index: usize,
@@ -1294,6 +1310,7 @@ impl Bar {
             return self.close_popup();
         }
         self.close_popup()?;
+        self.mark_tray_activation();
         if sni::left_click_opens_menu(&item) {
             return self.open_sni_menu(&item, hit_x);
         }
@@ -1312,6 +1329,7 @@ impl Bar {
         root_y: i16,
     ) -> Result<()> {
         self.close_popup()?;
+        self.mark_tray_activation();
         if item.menu.is_some() {
             return self.open_sni_menu(&item, hit_x);
         }
@@ -1380,6 +1398,7 @@ impl Bar {
         });
         self.close_popup()?;
         if let Some((address, menu_path, id)) = action {
+            self.mark_tray_activation();
             if let Some(host) = &self.sni {
                 host.menu_action(&address, &menu_path, id);
             }
