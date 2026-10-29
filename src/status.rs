@@ -84,7 +84,7 @@ impl Icons {
             layout: "\u{f009}",  // nf-fa-th-large
             microphone: "\u{f130}", // nf-fa-microphone
             bluetooth: "\u{f293}", // nf-fa-bluetooth
-            tailscale: "\u{f0582}", // nf-md-vpn
+            tailscale: "\u{f0e8}", // nf-fa-sitemap (mesh)
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
