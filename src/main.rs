@@ -2003,6 +2003,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         } else {
             plain.tailscale
         },
+        quicksettings: if ok(nerd.quicksettings) {
+            nerd.quicksettings
+        } else {
+            plain.quicksettings
+        },
         powerprofile: if ok(nerd.powerprofile) {
             nerd.powerprofile
         } else {

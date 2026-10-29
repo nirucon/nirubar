@@ -41,6 +41,7 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | `sun` | Sunrise and sunset | Click for daylight progress |
 | `weather` | Cached temperature, condition and next-hour rain | Click for an eight-hour rain timeline and daylight progress |
 | `tasks` | Running or waiting NIRU/OpenCode tasks | Click for recent task states and results; Return/Open controls opens NIRU Actions |
+| `quicksettings` | Quick Settings entry | Opens volume, microphone, Wi-Fi, Bluetooth, displays, power, theme, DND, idle and lock controls in the launcher |
 | `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |
 | `display` | With two screens, which one this bar is: `2 below`, `2 above`, `2 left`, `2 right` | Click for info, Return/Open controls for display profiles, middle-click for the same quick route |
 

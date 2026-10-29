@@ -276,6 +276,7 @@ impl Default for Bar {
                 "network".into(),
                 "tasks".into(),
                 "battery".into(),
+                "quicksettings".into(),
                 "clock".into(),
             ],
             tags: (1..=10).map(|n| n.to_string()).collect(),

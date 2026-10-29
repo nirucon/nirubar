@@ -525,6 +525,42 @@ impl Module for Tailscale {
     }
 }
 
+/// A compact entry point to the launcher's combined Quick Settings view.
+pub struct QuickSettings {
+    pub icons: status::Icons,
+}
+
+impl Module for QuickSettings {
+    fn name(&self) -> &'static str {
+        "quicksettings"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.icons.quicksettings.to_string()
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Quick Settings".into(),
+            vec![
+                "volume, microphone and night light".into(),
+                "Wi-Fi, Bluetooth, displays and power".into(),
+                "themes, DND, idle inhibition and lock".into(),
+                String::new(),
+                "click: open Quick Settings".into(),
+            ],
+        ))
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "quick-settings",
+            Some(("nirulauncher".into(), vec!["--quick".into()])),
+        ))
+    }
+}
+
+/// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// adapter, and it opens the launcher's Wi-Fi view on left click.
@@ -1592,6 +1628,7 @@ pub fn build(
                 icons,
                 value: layout.clone(),
             })),
+            "quicksettings" => out.push(Box::new(QuickSettings { icons })),
             "tailscale" => out.push(Box::new(Tailscale {
                 icons,
                 use_icons: cfg.icons,
@@ -1805,6 +1842,7 @@ mod tests {
                         | "clock"
                         | "battery"
                         | "tailscale"
+                        | "quicksettings"
                         | "network"
                         | "wifi"
                         | "volume"

@@ -45,6 +45,8 @@ pub struct Icons {
     pub microphone: &'static str,
     /// The optional Tailscale module.
     pub tailscale: &'static str,
+    /// The Quick Settings launcher entry.
+    pub quicksettings: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
     /// The optional power-profile module.
@@ -85,6 +87,7 @@ impl Icons {
             microphone: "\u{f130}", // nf-fa-microphone
             bluetooth: "\u{f293}", // nf-fa-bluetooth
             tailscale: "\u{f0e8}", // nf-fa-sitemap (mesh)
+            quicksettings: "\u{f013}", // nf-fa-cog
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
@@ -115,6 +118,7 @@ impl Icons {
             microphone: "mic",
             bluetooth: "bt",
             tailscale: "ts",
+            quicksettings: "q",
             powerprofile: "pwr",
             notifications: "ntf",
             music: "mus",

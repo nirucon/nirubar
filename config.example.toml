@@ -188,6 +188,7 @@ enabled = true
 #   tailscale   online Tailscale peers; hidden when tailscale is absent
 #   network     wired link (and Wi-Fi when `wifi = false`)
 #   wifi        Wi-Fi radio and connection; opens the Wi-Fi selector
+#   quicksettings  launcher entry for volume, network, Bluetooth, power and theme
 #   updates     packages that can be upgraded, NIRUX release/activation status
 #   pulse       cpu and memory, with a graph in the panel
 #   uptime      how long the machine has been on
@@ -208,7 +209,7 @@ enabled = true
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "tailscale", "network", "wifi", "mode", "tasks", "battery", "clock"]
+modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "tailscale", "network", "wifi", "mode", "tasks", "battery", "quicksettings", "clock"]
 # Missing input/provider stays visible even with "muted" visibility.
 microphone_visibility = "always" # "always" or "muted"
 # Left: information. Right: mute. Scroll: gain (never unmutes).
