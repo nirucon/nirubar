@@ -920,10 +920,22 @@ impl Module for Updates {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match updates::cached(self.every) {
-            Some(n) => updates::text(n, self.icons.updates),
-            None => String::new(),
+        let mut parts = Vec::new();
+        if let Some(n) = updates::cached(self.every) {
+            let text = updates::text(n, self.icons.updates);
+            if !text.is_empty() {
+                parts.push(text);
+            }
         }
+        if let Some(version) = crate::nirux_update::activation_pending() {
+            parts.push(crate::nirux_update::activation_text(
+                Some(&version),
+                self.icons.updates,
+            ));
+        } else if let Some(latest) = crate::nirux_update::available() {
+            parts.push(crate::nirux_update::text(Some(&latest), self.icons.updates));
+        }
+        parts.join("  ")
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         let manager = updates::Manager::detect();
@@ -933,19 +945,27 @@ impl Module for Updates {
             updates::Manager::Apt => "sudo apt upgrade",
             updates::Manager::Unknown => "no package manager found",
         };
-        Some((
-            "Updates".into(),
-            vec![
-                match updates::query() {
-                    Some(0) => "everything is up to date".to_string(),
-                    Some(1) => "1 package can be upgraded".to_string(),
-                    Some(n) => format!("{n} packages can be upgraded"),
-                    None => "cannot read the package database".to_string(),
-                },
-                String::new(),
-                how.to_string(),
-            ],
-        ))
+        let mut lines = vec![
+            match updates::query() {
+                Some(0) => "everything is up to date".to_string(),
+                Some(1) => "1 package can be upgraded".to_string(),
+                Some(n) => format!("{n} packages can be upgraded"),
+                None => "cannot read the package database".to_string(),
+            },
+            String::new(),
+            how.to_string(),
+        ];
+        if let Some(version) = crate::nirux_update::activation_pending() {
+            lines.push(String::new());
+            lines.push(format!("NIRUX {version} is installed"));
+            lines.push("log out and back in to activate it".into());
+        } else if let Some(latest) = crate::nirux_update::available() {
+            lines.push(String::new());
+            lines.push(format!("NIRUX {latest} is available"));
+            lines.push("run nirux update".into());
+            lines.push("then log out and back in".into());
+        }
+        Some(("Updates".into(), lines))
     }
 }
 
@@ -965,12 +985,24 @@ impl Module for NiruxUpdate {
         Side::Right
     }
     fn render(&mut self) -> String {
+        if let Some(version) = crate::nirux_update::activation_pending() {
+            return crate::nirux_update::activation_text(Some(&version), self.icons.notifications);
+        }
         crate::nirux_update::text(
             crate::nirux_update::available().as_deref(),
             self.icons.notifications,
         )
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        if let Some(version) = crate::nirux_update::activation_pending() {
+            return Some((
+                "NIRUX activation".into(),
+                vec![
+                    format!("NIRUX {version} is installed"),
+                    "log out and back in to activate it".into(),
+                ],
+            ));
+        }
         let latest = crate::nirux_update::available()?;
         Some((
             "NIRUX update".into(),

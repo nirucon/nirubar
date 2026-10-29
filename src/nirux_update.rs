@@ -17,7 +17,7 @@
 //!    maintain and three ways to break.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
@@ -66,6 +66,79 @@ fn is_version(text: &str) -> bool {
         && text
             .split('.')
             .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The generation directory that `current` points at, if it is a real link.
+fn current_generation() -> Option<PathBuf> {
+    let base = std::env::var_os("HOME").map(PathBuf::from)?;
+    std::fs::read_link(base.join(".local/share/nirux/current")).ok()
+}
+
+/// The executable behind the first running process named `name`.
+///
+/// `/proc/<pid>/comm` is short and exact; the executable link resolves the
+/// generation directory, which is what the activation check needs.
+fn running_exe(name: &str) -> Option<PathBuf> {
+    for entry in std::fs::read_dir("/proc").ok()? {
+        let entry = entry.ok()?;
+        let pid = entry.file_name();
+        let pid = pid.to_str()?;
+        if !pid.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let comm = std::fs::read_to_string(entry.path().join("comm")).ok()?;
+        if comm.trim_end() != name {
+            continue;
+        }
+        let exe = std::fs::read_link(entry.path().join("exe")).ok()?;
+        return Some(exe);
+    }
+    None
+}
+
+/// `Some(version)` when the active generation differs from the running WM or
+/// bar. The comparison is path-based, so an update that is installed but not
+/// yet activated is reported without running the installer.
+fn pending_for(
+    current: &Path,
+    running_wm: Option<&Path>,
+    running_bar: Option<&Path>,
+) -> Option<String> {
+    let installed = current.file_name()?.to_string_lossy().to_string();
+    let installed = installed.split('-').next()?.to_string();
+    if !is_version(&installed) {
+        return None;
+    }
+    let wm = current.join("bin/niruwm");
+    let bar = current.join("bin/nirubar");
+    let stale_wm =
+        running_wm.is_some_and(|path| path.canonicalize().ok() != wm.canonicalize().ok());
+    let stale_bar =
+        running_bar.is_some_and(|path| path.canonicalize().ok() != bar.canonicalize().ok());
+    // Only report a generation when a process is actually running: a fresh
+    // login has not started them yet and must not show a stale warning.
+    (running_wm.is_some() || running_bar.is_some())
+        .then_some(installed)
+        .filter(|_| stale_wm || stale_bar)
+}
+
+/// The installed-but-not-active NIRUX generation, if any.
+pub fn activation_pending() -> Option<String> {
+    if cfg!(test) || std::env::var_os("NIRUBAR_NO_UPDATE_CHECK").is_some() {
+        return None;
+    }
+    let current = current_generation()?;
+    let wm = running_exe("niruwm");
+    let bar = running_exe("nirubar");
+    pending_for(&current, wm.as_deref(), bar.as_deref())
+}
+
+/// Text for an installed generation that needs a logout/login or bar restart.
+pub fn activation_text(version: Option<&str>, glyph: &str) -> String {
+    match version {
+        Some(v) => format!("{glyph} NIRUX {v} ↻"),
+        None => String::new(),
+    }
 }
 
 /// True when `candidate` is newer than `installed`, comparing each numeric part.
@@ -178,6 +251,37 @@ pub fn text(latest: Option<&str>, glyph: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_changed_generation_needs_activation() {
+        let root = std::env::temp_dir().join(format!("nux-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let current = root.join("0.12.96-AbCdEf");
+        let previous = root.join("0.12.95-Old123");
+        std::fs::create_dir_all(current.join("bin")).unwrap();
+        std::fs::create_dir_all(previous.join("bin")).unwrap();
+        std::fs::write(current.join("bin/niruwm"), "").unwrap();
+        std::fs::write(current.join("bin/nirubar"), "").unwrap();
+        std::fs::write(previous.join("bin/niruwm"), "").unwrap();
+        std::fs::write(previous.join("bin/nirubar"), "").unwrap();
+        assert_eq!(
+            pending_for(
+                &current,
+                Some(&previous.join("bin/niruwm")),
+                Some(&current.join("bin/nirubar"))
+            ),
+            Some("0.12.96".into())
+        );
+        assert_eq!(
+            pending_for(
+                &current,
+                Some(&current.join("bin/niruwm")),
+                Some(&current.join("bin/nirubar"))
+            ),
+            None
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
 
     #[test]
     fn newer_versions_are_recognised() {

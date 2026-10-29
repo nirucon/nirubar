@@ -55,7 +55,11 @@ fn clock(hours: f64) -> String {
 /// the equation of time and the longitude).
 fn solar_events(latitude: f64, longitude: f64) -> Option<(f64, f64)> {
     let today = chrono::Local::now().date_naive();
-    solar_events_on_day(latitude, longitude, chrono::Datelike::ordinal(&today) as f64)
+    solar_events_on_day(
+        latitude,
+        longitude,
+        chrono::Datelike::ordinal(&today) as f64,
+    )
 }
 
 fn solar_events_on_day(latitude: f64, longitude: f64, day: f64) -> Option<(f64, f64)> {
