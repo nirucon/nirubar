@@ -25,6 +25,7 @@ mod render;
 mod scroll;
 mod sni;
 mod status;
+mod tailscale;
 mod tray;
 mod updates;
 mod weather;
@@ -1996,6 +1997,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.bluetooth
         } else {
             plain.bluetooth
+        },
+        tailscale: if ok(nerd.tailscale) {
+            nerd.tailscale
+        } else {
+            plain.tailscale
         },
         powerprofile: if ok(nerd.powerprofile) {
             nerd.powerprofile

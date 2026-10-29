@@ -272,6 +272,7 @@ impl Default for Bar {
                 "volume".into(),
                 "brightness".into(),
                 "display".into(),
+                "tailscale".into(),
                 "network".into(),
                 "tasks".into(),
                 "battery".into(),

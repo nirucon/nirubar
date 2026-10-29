@@ -4,7 +4,7 @@
 //! A module produces text (and optionally a popup with more detail) and knows
 //! its own width, so adding one later does not touch the layout code.
 
-use crate::{ambient, av, config, status, updates, weather};
+use crate::{ambient, av, config, status, tailscale, updates, weather};
 use chrono::Datelike;
 use std::sync::{Arc, Mutex};
 
@@ -476,6 +476,56 @@ impl Module for Network {
     }
 }
 
+/// Tailscale peers, visible only when the command is installed.
+pub struct Tailscale {
+    pub icons: status::Icons,
+    pub use_icons: bool,
+    checked: Option<std::time::Instant>,
+    snapshot: Option<tailscale::Snapshot>,
+}
+
+impl Tailscale {
+    fn refresh(&mut self) {
+        let now = std::time::Instant::now();
+        if self
+            .checked
+            .map(|then| now.duration_since(then).as_secs() >= 5)
+            .unwrap_or(true)
+        {
+            self.checked = Some(now);
+            self.snapshot = tailscale::installed().then(tailscale::snapshot).flatten();
+        }
+    }
+}
+
+impl Module for Tailscale {
+    fn name(&self) -> &'static str {
+        "tailscale"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.refresh();
+        tailscale::text(self.snapshot.as_ref(), self.icons.tailscale, self.use_icons)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        self.refresh();
+        let lines = match &self.snapshot {
+            Some(snapshot) => tailscale::detail(snapshot),
+            None => vec!["tailscale is not running".into()],
+        };
+        Some(("Tailscale".into(), lines))
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "tailscale",
+            Some(("nirulauncher".into(), vec!["--tailscale".into()])),
+        ))
+    }
+}
+
+/// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// adapter, and it opens the launcher's Wi-Fi view on left click.
 pub struct Wifi {
@@ -1542,6 +1592,12 @@ pub fn build(
                 icons,
                 value: layout.clone(),
             })),
+            "tailscale" => out.push(Box::new(Tailscale {
+                icons,
+                use_icons: cfg.icons,
+                checked: None,
+                snapshot: None,
+            })),
             "network" => {
                 out.push(Box::new(Network {
                     icons,
@@ -1748,6 +1804,7 @@ mod tests {
                     "workspaces"
                         | "clock"
                         | "battery"
+                        | "tailscale"
                         | "network"
                         | "wifi"
                         | "volume"

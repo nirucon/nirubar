@@ -43,6 +43,8 @@ pub struct Icons {
     pub layout: &'static str,
     /// The optional microphone module.
     pub microphone: &'static str,
+    /// The optional Tailscale module.
+    pub tailscale: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
     /// The optional power-profile module.
@@ -82,6 +84,7 @@ impl Icons {
             layout: "\u{f009}",  // nf-fa-th-large
             microphone: "\u{f130}", // nf-fa-microphone
             bluetooth: "\u{f293}", // nf-fa-bluetooth
+            tailscale: "\u{f0582}", // nf-md-vpn
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
@@ -111,6 +114,7 @@ impl Icons {
             layout: "layout",
             microphone: "mic",
             bluetooth: "bt",
+            tailscale: "ts",
             powerprofile: "pwr",
             notifications: "ntf",
             music: "mus",
