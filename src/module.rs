@@ -1019,6 +1019,7 @@ impl Module for Updates {
                 self.icons.updates,
             ));
         } else if let Some(latest) = crate::nirux_update::available() {
+            crate::nirux_update::play_update_sound(&latest);
             parts.push(crate::nirux_update::text(Some(&latest), self.icons.updates));
         }
         parts.join("  ")
@@ -1074,10 +1075,11 @@ impl Module for NiruxUpdate {
         if let Some(version) = crate::nirux_update::activation_pending() {
             return crate::nirux_update::activation_text(Some(&version), self.icons.notifications);
         }
-        crate::nirux_update::text(
-            crate::nirux_update::available().as_deref(),
-            self.icons.notifications,
-        )
+        let latest = crate::nirux_update::available();
+        if let Some(version) = latest.as_deref() {
+            crate::nirux_update::play_update_sound(version);
+        }
+        crate::nirux_update::text(latest.as_deref(), self.icons.notifications)
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         if let Some(version) = crate::nirux_update::activation_pending() {

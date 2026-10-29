@@ -133,6 +133,28 @@ pub fn activation_pending() -> Option<String> {
     pending_for(&current, wm.as_deref(), bar.as_deref())
 }
 
+/// Play the suite-update cue once for each newly discovered release.
+pub fn play_update_sound(version: &str) {
+    if cfg!(test) || std::env::var_os("NIRUBAR_NO_UPDATE_CHECK").is_some() {
+        return;
+    }
+    let marker = cache_dir().join("nirux-update-sounded");
+    if std::fs::read_to_string(&marker)
+        .ok()
+        .is_some_and(|old| old.trim() == version)
+    {
+        return;
+    }
+    let _ = std::process::Command::new("nirux")
+        .args(["sounds", "play", "update"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let _ = std::fs::create_dir_all(cache_dir());
+    let _ = std::fs::write(marker, version);
+}
+
 /// Text for an installed generation that needs a logout/login or bar restart.
 pub fn activation_text(version: Option<&str>, glyph: &str) -> String {
     match version {
