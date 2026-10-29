@@ -44,8 +44,6 @@ pub struct Popup {
     y: i16,
     width: u16,
     height: u16,
-    /// Root y where the action footer starts.
-    footer_top: i16,
     /// True when this module has a control view Return can open.
     controls: bool,
     title: String,
@@ -103,8 +101,6 @@ impl Popup {
         let root_geometry = c.get_geometry(root)?.reply()?;
         let max_y = i32::from(root_geometry.height) - i32::from(height);
         let y = (i32::from(bar_y) + i32::from(bar_height)).min(max_y.max(0)) as i16;
-        let footer_top =
-            y + i16::try_from(height).unwrap_or(0) - i16::try_from(line_height).unwrap_or(0) - 8;
         let action_top = y
             .saturating_add(10)
             .saturating_add(i16::try_from(line_height).unwrap_or(i16::MAX));
@@ -202,7 +198,6 @@ impl Popup {
             y,
             width,
             height,
-            footer_top,
             controls,
             title: title.to_string(),
             lines: lines.to_vec(),
@@ -366,10 +361,7 @@ impl Popup {
                         }
                         return Outcome::Keep;
                     }
-                    if self.controls
-                        && e.root_y >= self.footer_top
-                        && e.root_y < self.y + i16::try_from(self.height).unwrap_or(0)
-                    {
+                    if self.controls && e.detail == 1 {
                         return Outcome::Controls;
                     }
                     return Outcome::Keep;
