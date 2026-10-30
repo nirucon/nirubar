@@ -73,6 +73,7 @@ impl Popup {
         bar_x: i16,
         bar_y: i16,
         bar_width: u16,
+        open_above: bool,
         bar_window: Window,
         origin_x: i16,
         title: &str,
@@ -100,7 +101,11 @@ impl Popup {
             .clamp(i32::from(bar_x), max_x.max(i32::from(bar_x))) as i16;
         let root_geometry = c.get_geometry(root)?.reply()?;
         let max_y = i32::from(root_geometry.height) - i32::from(height);
-        let y = (i32::from(bar_y) + i32::from(bar_height)).min(max_y.max(0)) as i16;
+        let y = if open_above {
+            (i32::from(bar_y) - i32::from(height)).max(0)
+        } else {
+            (i32::from(bar_y) + i32::from(bar_height)).min(max_y.max(0))
+        } as i16;
         let action_top = y
             .saturating_add(10)
             .saturating_add(i16::try_from(line_height).unwrap_or(i16::MAX));

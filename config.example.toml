@@ -179,6 +179,9 @@ workspaces = 10
 [bar]
 # The bar is a separate process; NIRUWM starts it from PATH.
 enabled = true
+# Screen edge: "top" (default) or "bottom". NIRUWM starts the bar with this
+# edge; popups open above a bottom bar.
+position = "top"
 # Modules to show, in order. Remove one to hide it. A font without the glyphs
 # falls back to plain text.
 #

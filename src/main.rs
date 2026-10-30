@@ -40,7 +40,28 @@ struct Monitor {
     x: i16,
     y: i16,
     w: u16,
+    h: u16,
     name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Edge {
+    Top,
+    Bottom,
+}
+
+impl Edge {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "top" => Ok(Self::Top),
+            "bottom" => Ok(Self::Bottom),
+            _ => Err("--position needs top or bottom".into()),
+        }
+    }
+
+    fn bottom(self) -> bool {
+        self == Self::Bottom
+    }
 }
 
 impl Monitor {
@@ -122,29 +143,40 @@ fn follows_root_width(monitor: &Option<Monitor>, current: u16, next: u16) -> boo
     monitor.is_none() && current != next
 }
 
-/// Read `--monitor X,Y,W` from the command line.
+/// Read `--monitor X,Y,W` or `X,Y,W,H,NAME` from the command line.
 ///
 /// The window manager passes the geometry rather than a name, so the bar does
 /// not need its own RandR query and cannot disagree with the WM about where a
-/// screen is.
+/// screen is. The height is required for a bottom bar on one monitor.
 fn parse_monitor(args: &[String]) -> Result<Option<Monitor>> {
     let Some(pos) = args.iter().position(|a| a == "--monitor") else {
         return Ok(None);
     };
     let value = args.get(pos + 1).ok_or("--monitor needs X,Y,W")?;
     let parts: Vec<&str> = value.split(',').collect();
-    if parts.len() != 3 && parts.len() != 4 {
-        return Err("--monitor needs X,Y,W or X,Y,W,NAME".into());
+    if !(3..=5).contains(&parts.len()) {
+        return Err("--monitor needs X,Y,W or X,Y,W,H,NAME".into());
     }
+    let (h, name) = match parts.len() {
+        3 => (0, None),
+        4 => (0, Some(parts[3].to_string())),
+        _ => (parts[3].parse()?, Some(parts[4].to_string())),
+    };
     Ok(Some(Monitor {
         x: parts[0].parse()?,
         y: parts[1].parse()?,
         w: parts[2].parse()?,
-        name: parts
-            .get(3)
-            .filter(|n| !n.is_empty())
-            .map(|n| n.to_string()),
+        h,
+        name: name.filter(|n| !n.is_empty()),
     }))
+}
+
+fn parse_position(args: &[String]) -> Result<Edge> {
+    let Some(pos) = args.iter().position(|a| a == "--position") else {
+        return Ok(Edge::Top);
+    };
+    let value = args.get(pos + 1).ok_or("--position needs top or bottom")?;
+    Edge::parse(value)
 }
 use module::{Module, Side, Workspaces};
 use std::{collections::HashMap, os::fd::AsRawFd as _};
@@ -323,6 +355,8 @@ struct Bar {
     /// Where this bar sits, for the strut and for placing popups.
     bar_x: i16,
     bar_y: i16,
+    edge: Edge,
+    root_height: u16,
     monitor: Option<Monitor>,
     /// System tray, when enabled.
     tray: Option<tray::Tray>,
@@ -383,21 +417,38 @@ impl Bar {
 
     /// Create the bar.
     ///
-    /// `monitor` places the bar at the top of one monitor instead of the whole
-    /// X screen. With several screens the window manager starts one bar per
-    /// monitor, each with its own workspace cells.
-    fn new(monitor: Option<Monitor>) -> Result<Self> {
+    /// `monitor` places the bar on one monitor instead of the whole X screen.
+    /// With several screens the window manager starts one bar per monitor,
+    /// each with its own workspace cells. `edge` places it at the top or bottom.
+    fn new(monitor: Option<Monitor>, edge: Edge) -> Result<Self> {
         let cfg = Config::load()?;
         let theme = Theme::load(&cfg.theme)?;
         let icons = cfg.bar.icons;
         let (c, s) = x11rb::connect(None)?;
         let screen = &c.setup().roots[s];
         let root = screen.root;
-        // A bar on one monitor covers that monitor's width and sits at its top.
         let (bar_x, bar_y, width) = match &monitor {
-            Some(m) => (m.x, m.y, m.w),
-            None => (0, 0, screen.width_in_pixels),
+            Some(m) => {
+                if edge.bottom() && m.h == 0 {
+                    return Err("--position bottom with --monitor needs X,Y,W,H,NAME".into());
+                }
+                let y = if edge.bottom() {
+                    (i32::from(m.y) + i32::from(m.h) - i32::from(cfg.bar_height)).max(0) as i16
+                } else {
+                    m.y
+                };
+                (m.x, y, m.w)
+            }
+            None => {
+                let y = if edge.bottom() {
+                    screen.height_in_pixels.saturating_sub(cfg.bar_height) as i16
+                } else {
+                    0
+                };
+                (0, y, screen.width_in_pixels)
+            }
         };
+        let root_height = screen.height_in_pixels;
 
         let mut atoms = HashMap::new();
         for n in [
@@ -504,7 +555,21 @@ impl Bar {
                 &[opacity],
             )?;
         }
-        set_strut(&c, win, &atoms, cfg.bar_height, width, bar_x, bar_y == 0)?;
+        set_strut(
+            &c,
+            win,
+            &atoms,
+            cfg.bar_height,
+            width,
+            bar_x,
+            edge,
+            match edge {
+                Edge::Top => bar_y == 0,
+                Edge::Bottom => {
+                    i32::from(bar_y) + i32::from(cfg.bar_height) == i32::from(root_height)
+                }
+            },
+        )?;
         c.set_selection_owner(win, selection, x11rb::CURRENT_TIME)?;
         let legacy = atoms["_NIRUBAR_SELECTION"];
         if c.get_selection_owner(legacy)?.reply()?.owner == 0 {
@@ -587,6 +652,8 @@ impl Bar {
             last_frame: String::new(),
             bar_x,
             bar_y,
+            edge,
+            root_height,
             monitor,
             icons,
             tray,
@@ -1374,6 +1441,7 @@ impl Bar {
             self.bar_x,
             self.bar_y,
             self.width,
+            self.edge.bottom(),
             self.win,
             hit_x,
             &title,
@@ -1442,6 +1510,7 @@ impl Bar {
                     self.bar_x,
                     self.bar_y,
                     self.width,
+                    self.edge.bottom(),
                     self.win,
                     overflow.x,
                     "Hidden modules",
@@ -1505,6 +1574,7 @@ impl Bar {
                 self.bar_x,
                 self.bar_y,
                 self.width,
+                self.edge.bottom(),
                 self.win,
                 left,
                 &title,
@@ -1585,7 +1655,13 @@ impl Bar {
             cfg.bar_height,
             self.width,
             self.bar_x,
-            self.bar_y == 0,
+            self.edge,
+            match self.edge {
+                Edge::Top => self.bar_y == 0,
+                Edge::Bottom => {
+                    i32::from(self.bar_y) + i32::from(cfg.bar_height) == i32::from(self.root_height)
+                }
+            },
         )?;
         self.c.change_window_attributes(
             self.win,
@@ -1785,7 +1861,14 @@ impl Bar {
                         self.height,
                         self.width,
                         self.bar_x,
-                        self.bar_y == 0,
+                        self.edge,
+                        match self.edge {
+                            Edge::Top => self.bar_y == 0,
+                            Edge::Bottom => {
+                                i32::from(self.bar_y) + i32::from(self.height)
+                                    == i32::from(self.root_height)
+                            }
+                        },
                     )?;
                     self.last_frame.clear();
                     self.draw()?;
@@ -1871,9 +1954,10 @@ impl Bar {
 
 /// Reserve screen space for the bar.
 ///
-/// Only a bar on the top edge reserves space: `_NET_WM_STRUT` has no way to
-/// describe a bar in the middle of a tall virtual screen, and a monitor below
-/// the primary one must not take space from the primary screen's work area.
+/// A bar reserves space only when it touches that edge of the root screen.
+/// A monitor bar in the middle of a tall virtual screen must not take space
+/// from another screen's work area; NIRUWM reserves the per-monitor space.
+#[allow(clippy::too_many_arguments)]
 fn set_strut(
     c: &RustConnection,
     win: Window,
@@ -1881,8 +1965,19 @@ fn set_strut(
     height: u16,
     width: u16,
     x: i16,
-    top_edge: bool,
+    edge: Edge,
+    reserve: bool,
 ) -> Result<()> {
+    let start = x.max(0) as u32;
+    let end = start + u32::from(width.saturating_sub(1));
+    let (top, bottom, top_start, top_end, bottom_start, bottom_end) = if reserve {
+        match edge {
+            Edge::Top => (u32::from(height), 0, start, end, 0, 0),
+            Edge::Bottom => (0, u32::from(height), 0, 0, start, end),
+        }
+    } else {
+        (0, 0, 0, 0, 0, 0)
+    };
     c.change_property32(
         PropMode::REPLACE,
         win,
@@ -1891,16 +1986,16 @@ fn set_strut(
         &[
             0,
             0,
-            if top_edge { u32::from(height) } else { 0 },
+            top,
+            bottom,
             0,
             0,
             0,
             0,
-            0,
-            x.max(0) as u32,
-            (x.max(0) as u32) + u32::from(width.saturating_sub(1)),
-            0,
-            0,
+            top_start,
+            top_end,
+            bottom_start,
+            bottom_end,
         ],
     )?;
     c.change_property32(
@@ -1908,7 +2003,7 @@ fn set_strut(
         win,
         atoms["_NET_WM_STRUT"],
         AtomEnum::CARDINAL,
-        &[0, 0, if top_edge { u32::from(height) } else { 0 }, 0],
+        &[0, 0, top, bottom],
     )?;
     Ok(())
 }
@@ -2074,11 +2169,18 @@ fn main() {
             std::process::exit(2)
         }
     };
-    if monitor.is_none() && !args.is_empty() {
-        eprintln!("Usage: nirubar [--version|--check-config|--reset-config] [--monitor X,Y,W]");
+    let edge = match parse_position(&args) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("nirubar: {e}");
+            std::process::exit(2)
+        }
+    };
+    if monitor.is_none() && !args.is_empty() && !args.iter().any(|a| a == "--position") {
+        eprintln!("Usage: nirubar [--version|--check-config|--reset-config] [--monitor X,Y,W[,H,NAME]] [--position top|bottom]");
         std::process::exit(2)
     }
-    if let Err(e) = Bar::new(monitor).and_then(|mut b| b.run()) {
+    if let Err(e) = Bar::new(monitor, edge).and_then(|mut b| b.run()) {
         eprintln!("nirubar: {e}");
         std::process::exit(1)
     }
@@ -2100,6 +2202,7 @@ mod tests {
             x: 0,
             y: 0,
             w: 2560,
+            h: 1440,
             name: None,
         });
         assert!(!super::follows_root_width(&monitor, 2560, 5120));
@@ -2130,12 +2233,14 @@ mod tests {
             x: 0,
             y: 0,
             w: 800,
+            h: 600,
             name: Some("left".into()),
         });
         let right = Some(super::Monitor {
             x: 800,
             y: 0,
             w: 800,
+            h: 600,
             name: Some("right".into()),
         });
         assert_eq!(
@@ -2168,12 +2273,14 @@ mod tests {
             x: 0,
             y: 0,
             w: 800,
+            h: 600,
             name: Some("left".into()),
         });
         let right = Some(super::Monitor {
             x: 800,
             y: 0,
             w: 800,
+            h: 600,
             name: Some("right".into()),
         });
         assert_eq!(
@@ -2184,6 +2291,20 @@ mod tests {
             super::parse_monitor_layout(text, &right).and_then(|l| l.layout),
             Some("monocle".to_string())
         );
+    }
+
+    #[test]
+    fn monitor_argument_accepts_height_and_name() {
+        let args = vec![
+            "--monitor".to_string(),
+            "10,20,800,600,eDP-1".to_string(),
+            "--position".to_string(),
+            "bottom".to_string(),
+        ];
+        let m = super::parse_monitor(&args).unwrap().unwrap();
+        assert_eq!((m.x, m.y, m.w, m.h), (10, 20, 800, 600));
+        assert_eq!(m.name.as_deref(), Some("eDP-1"));
+        assert!(super::parse_position(&args).unwrap().bottom());
     }
 
     #[test]

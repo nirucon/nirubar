@@ -105,6 +105,7 @@ weather_latitude = 58.22
 weather_longitude = 11.92
 
 [bar]
+position = "top"   # "bottom" places it at the bottom; popups open above
 modules = ["workspaces", "network", "wifi", "mode", "tasks", "battery", "clock"]
 tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 icons = true

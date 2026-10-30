@@ -813,3 +813,144 @@ fn one_bar_per_monitor_shares_a_screen_and_uses_global_desktops() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated X server, font and xdotool"]
+fn bottom_bar_reserves_the_bottom_edge_and_opens_popups_above() {
+    let directory = std::env::temp_dir().join(format!("nirubar-bottom-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "[bar]\nmodules = [\"clock\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let width = c.setup().roots[screen].width_in_pixels;
+    let height = c.setup().roots[screen].height_in_pixels;
+    let width32 = u32::from(width);
+    let height32 = u32::from(height);
+    let monitor = format!("0,0,{width},{height},test");
+    let bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .args(["--monitor", &monitor, "--position", "bottom"])
+            .spawn()
+            .unwrap(),
+    );
+    let selection = c
+        .intern_atom(false, b"_NIRUBAR_SELECTION")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut win = 0;
+    while win == 0 {
+        win = c
+            .get_selection_owner(selection)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .owner;
+        assert!(Instant::now() < until, "bottom bar did not start");
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(100));
+    let geometry = c.get_geometry(win).unwrap().reply().unwrap();
+    assert_eq!(
+        geometry.y as u32,
+        height32 - u32::from(geometry.height),
+        "bar was not placed on the bottom edge"
+    );
+    let strut = c
+        .intern_atom(false, b"_NET_WM_STRUT_PARTIAL")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let values: Vec<u32> = c
+        .get_property(false, win, strut, AtomEnum::CARDINAL, 0, 12)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .value32()
+        .unwrap()
+        .collect();
+    assert_eq!(values.get(2), Some(&0), "bottom bar reserved the top");
+    assert_eq!(
+        values.get(3),
+        Some(&28),
+        "bottom bar did not reserve the bottom"
+    );
+    assert_eq!(
+        values.get(10),
+        Some(&0),
+        "bottom strut starts at the wrong x"
+    );
+    assert_eq!(
+        values.get(11),
+        Some(&(width32.saturating_sub(1))),
+        "bottom strut ends at the wrong x"
+    );
+    let spy = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        spy,
+        root,
+        0,
+        0,
+        10,
+        10,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    c.map_window(spy).unwrap();
+    c.set_input_focus(InputFocus::PARENT, spy, x11rb::CURRENT_TIME)
+        .unwrap();
+    c.send_event(
+        false,
+        win,
+        EventMask::BUTTON_PRESS,
+        ButtonPressEvent {
+            response_type: BUTTON_PRESS_EVENT,
+            detail: 1,
+            sequence: 0,
+            time: x11rb::CURRENT_TIME,
+            root,
+            event: win,
+            child: 0,
+            root_x: (width - 40) as i16,
+            root_y: (height - 18) as i16,
+            event_x: (width - 40) as i16,
+            event_y: 10,
+            state: KeyButMask::default(),
+            same_screen: true,
+        },
+    )
+    .unwrap();
+    c.flush().unwrap();
+    let mut focused = spy;
+    let until = Instant::now() + Duration::from_secs(5);
+    while focused == spy || focused == 0 || focused == root {
+        focused = c.get_input_focus().unwrap().reply().unwrap().focus;
+        assert!(Instant::now() < until, "bottom popup never received focus");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let popup = c.get_geometry(focused).unwrap().reply().unwrap();
+    assert!(
+        popup.y + i16::try_from(popup.height).unwrap() <= geometry.y,
+        "popup did not open above the bottom bar: {popup:?} bar={geometry:?}"
+    );
+    assert!(popup.y >= 0, "popup escaped the top of the screen");
+    assert!(Command::new("xdotool")
+        .args(["key", "Escape"])
+        .status()
+        .unwrap()
+        .success());
+    drop(bar);
+    std::fs::remove_dir_all(directory).unwrap();
+}

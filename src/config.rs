@@ -89,6 +89,9 @@ pub struct Bar {
     /// `true` renders the bar as a dock window (NIRUWM only). Ignored by
     /// standalone use.
     pub enabled: bool,
+    /// Screen edge: `top` (default) or `bottom`. NIRUWM tells NIRUBAR which
+    /// edge to use; an unknown value behaves as `top`.
+    pub position: String,
     /// Show a short hint of the focused window's title between the tags and
     /// the clock. Both `show_title` and `title` are accepted in the file.
     #[serde(alias = "title")]
@@ -260,6 +263,7 @@ impl Default for Bar {
     fn default() -> Self {
         Self {
             enabled: true,
+            position: "top".into(),
             show_title: false,
             title_max: 60,
             cell_width: 30,
