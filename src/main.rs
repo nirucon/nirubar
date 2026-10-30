@@ -1124,9 +1124,24 @@ impl Bar {
                 .min()
                 .or_else(|| self.overflow.map(|p| p.x))
                 .unwrap_or(right_edge);
-            let start = workspace_width;
             let end = first_x - gap * 2;
+            let start = workspace_width + gap * 2;
             if end > start {
+                if !separator.is_empty() {
+                    // Keep the same hairline language as the right modules,
+                    // with one gap on each side of it.
+                    self.renderer.fill(
+                        &self.c,
+                        self.gc,
+                        Rectangle {
+                            x: workspace_width + gap,
+                            y: (self.height as i16) / 5,
+                            width: 1,
+                            height: (self.height / 2).max(4),
+                        },
+                        border,
+                    )?;
+                }
                 self.renderer
                     .text(&self.c, self.gc, start, &title, muted, bg, end)?;
             }
