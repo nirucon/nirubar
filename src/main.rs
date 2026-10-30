@@ -401,6 +401,21 @@ struct Bar {
     title_since: std::time::Instant,
 }
 
+/// Keep a title compact. The limit includes the ellipsis.
+fn truncate_title(text: &str, max: usize) -> String {
+    let max = max.max(1);
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max {
+        return text.to_string();
+    }
+    if max == 1 {
+        return "…".into();
+    }
+    let mut out: String = chars.into_iter().take(max - 1).collect();
+    out.push('…');
+    out
+}
+
 impl Bar {
     fn atom(&self, n: &str) -> Atom {
         self.atoms[n]
@@ -826,10 +841,7 @@ impl Bar {
         } else {
             name
         };
-        String::from_utf8_lossy(&name)
-            .chars()
-            .take(self.cfg.bar.title_max)
-            .collect()
+        truncate_title(&String::from_utf8_lossy(&name), self.cfg.bar.title_max)
     }
 
     /// The active window, if the title should be shown right now.
@@ -2121,6 +2133,23 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
     }
 }
 
+/// Tell a running bar that the shared config changed.
+fn signal_config_reload() -> Result<()> {
+    let (c, s) = x11rb::connect(None)?;
+    let root = c.setup().roots[s].root;
+    let atom = c.intern_atom(false, b"_NIRU_CONFIG_SERIAL")?.reply()?.atom;
+    let current = c
+        .get_property(false, root, atom, AtomEnum::CARDINAL, 0, 1)?
+        .reply()?
+        .value32()
+        .and_then(|mut values| values.next())
+        .unwrap_or(0);
+    let serial = current.wrapping_add(1).max(1);
+    c.change_property32(PropMode::REPLACE, root, atom, AtomEnum::CARDINAL, &[serial])?;
+    c.flush()?;
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg = args.first().map(String::as_str).unwrap_or_default();
@@ -2142,6 +2171,25 @@ fn main() {
                     "Reset [bar] in {}. Restart with: niructl restart-bar",
                     path.display()
                 );
+                return;
+            }
+            Err(e) => {
+                eprintln!("nirubar: {e}");
+                std::process::exit(1)
+            }
+        }
+    }
+    if arg == "--toggle-title" {
+        if args.len() != 1 {
+            eprintln!("Usage: nirubar --toggle-title");
+            std::process::exit(2);
+        }
+        match config::toggle_title() {
+            Ok(enabled) => {
+                if let Err(e) = signal_config_reload() {
+                    eprintln!("nirubar: title saved, but reload signal failed: {e}");
+                }
+                println!("window title {}", if enabled { "on" } else { "off" });
                 return;
             }
             Err(e) => {
@@ -2177,7 +2225,7 @@ fn main() {
         }
     };
     if monitor.is_none() && !args.is_empty() && !args.iter().any(|a| a == "--position") {
-        eprintln!("Usage: nirubar [--version|--check-config|--reset-config] [--monitor X,Y,W[,H,NAME]] [--position top|bottom]");
+        eprintln!("Usage: nirubar [--version|--check-config|--reset-config|--toggle-title] [--monitor X,Y,W[,H,NAME]] [--position top|bottom]");
         std::process::exit(2)
     }
     if let Err(e) = Bar::new(monitor, edge).and_then(|mut b| b.run()) {
@@ -2188,6 +2236,20 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn title_is_limited_including_the_ellipsis() {
+        assert_eq!(super::truncate_title("short", 20), "short");
+        assert_eq!(
+            super::truncate_title("12345678901234567890", 20),
+            "12345678901234567890"
+        );
+        assert_eq!(
+            super::truncate_title("123456789012345678901", 20),
+            "1234567890123456789…"
+        );
+        assert_eq!(super::truncate_title("abc", 1), "…");
+    }
+
     #[test]
     fn the_tray_follows_the_primary_monitor() {
         assert!(super::tray_belongs_here(Some("DP-4"), Some("DP-4")));

@@ -265,7 +265,7 @@ impl Default for Bar {
             enabled: true,
             position: "top".into(),
             show_title: false,
-            title_max: 60,
+            title_max: 20,
             cell_width: 30,
             transparent: true,
             opacity: DEFAULT_BAR_OPACITY,
@@ -329,6 +329,37 @@ pub fn active_path() -> PathBuf {
             primary
         }
     }
+}
+
+/// Toggle the focused-window title segment in the shared `[bar]` table.
+///
+/// The edit keeps comments and unrelated keys. Enabling also selects the
+/// compact 20-character form, including the ellipsis when the title is longer.
+pub fn toggle_title() -> Result<bool> {
+    let path = active_path();
+    let original = fs::read_to_string(&path).unwrap_or_default();
+    let mut document: toml_edit::DocumentMut = original
+        .parse()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let item = document
+        .entry("bar")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let table = item.as_table_mut().ok_or("bar must be a TOML table")?;
+    let enabled = !table
+        .get("title")
+        .or_else(|| table.get("show_title"))
+        .and_then(toml_edit::Item::as_bool)
+        .unwrap_or(false);
+    table["title"] = toml_edit::value(enabled);
+    if enabled {
+        table["title_max"] = toml_edit::value(20);
+    }
+    let parent = path.parent().ok_or("configuration directory is missing")?;
+    fs::create_dir_all(parent)?;
+    let temp = parent.join(format!(".config.toml.{}", std::process::id()));
+    fs::write(&temp, document.to_string())?;
+    fs::rename(&temp, &path)?;
+    Ok(enabled)
 }
 
 /// Replace only the shared `[bar]` table with current compiled defaults.
