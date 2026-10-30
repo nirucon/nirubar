@@ -392,7 +392,7 @@ impl Display {
             .unwrap_or(true)
         {
             self.checked = Some(now);
-            self.outputs = status::display_outputs_async();
+            self.outputs = status::display_outputs();
         }
     }
 }
@@ -1309,7 +1309,7 @@ pub struct Notifications {
 }
 
 fn notification_count() -> Option<usize> {
-    let out = crate::probe::run_async(
+    let out = crate::probe::run(
         "nirunotify",
         &["--count"],
         &[],
@@ -1323,7 +1323,7 @@ fn notification_count() -> Option<usize> {
 }
 
 fn notification_history() -> Vec<String> {
-    let Some(out) = crate::probe::run_async(
+    let Some(out) = crate::probe::run(
         "nirunotify",
         &["--history"],
         &[],

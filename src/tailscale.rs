@@ -19,7 +19,7 @@ pub struct Snapshot {
 }
 
 pub fn installed() -> bool {
-    crate::probe::run_async(
+    crate::probe::run(
         "tailscale",
         &["version"],
         &[],
@@ -30,7 +30,7 @@ pub fn installed() -> bool {
 }
 
 pub fn snapshot() -> Option<Snapshot> {
-    let out = crate::probe::run_async(
+    let out = crate::probe::run(
         "tailscale",
         &["status", "--json"],
         &[],
