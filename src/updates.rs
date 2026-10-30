@@ -79,7 +79,7 @@ pub fn query() -> Option<usize> {
     if !which(program) {
         return None;
     }
-    let out = crate::probe::run(
+    let out = crate::probe::run_async(
         program,
         args,
         &[("LC_ALL", "C"), ("LANG", "C")],

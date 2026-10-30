@@ -12,7 +12,7 @@ use std::process::Command;
 
 /// Run a bounded command and return trimmed stdout, or `None`.
 fn run(program: &str, args: &[&str]) -> Option<String> {
-    let out = crate::probe::run(
+    let out = crate::probe::run_async(
         program,
         args,
         &[],

@@ -5,13 +5,16 @@
 //! output is drained and discarded so the child cannot block on a full pipe.
 
 use std::{
+    collections::HashMap,
     io::Read,
     os::unix::process::CommandExt,
     process::{Command, ExitStatus, Stdio},
+    sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
 
+#[derive(Clone)]
 pub struct Output {
     pub status: ExitStatus,
     pub stdout: Vec<u8>,
@@ -36,6 +39,82 @@ fn read_capped(mut pipe: impl Read, cap: usize) -> Vec<u8> {
 }
 
 /// Run a program with a deadline and bounded stdout/stderr.
+#[derive(Default)]
+struct AsyncEntry {
+    running: bool,
+    checked: Option<Instant>,
+    last: Option<Output>,
+}
+
+fn async_cache() -> &'static Mutex<HashMap<String, AsyncEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, AsyncEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Return the most recent sample immediately and refresh it in the background.
+///
+/// The event loop must never wait for an external program. Input is processed
+/// at mouse/keyboard speed; a slow `curl`, `playerctl`, `iw` or `xrandr` only
+/// delays its own next sample, never the bar's event loop. The first call
+/// returns `None`; the worker publishes a result for the next frame.
+pub fn run_async(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    timeout: Duration,
+    cap: usize,
+) -> Option<Output> {
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    let envs: Vec<(String, String)> = envs
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+        .collect();
+    let key = format!("{}|{:?}|{:?}|{}", program, args, envs, cap);
+    let now = Instant::now();
+    let mut cache = async_cache().lock().ok()?;
+    let entry = cache.entry(key.clone()).or_default();
+    let should_refresh = !entry.running
+        && entry
+            .checked
+            .map(|checked| now.duration_since(checked) >= Duration::from_secs(1))
+            .unwrap_or(true);
+    if should_refresh {
+        entry.running = true;
+        let worker_key = key.clone();
+        let program = program.to_string();
+        let args_for_worker = args.clone();
+        let envs_for_worker = envs.clone();
+        drop(cache);
+        let spawned = thread::Builder::new()
+            .name("nirubar-probe".into())
+            .spawn(move || {
+                let arg_refs: Vec<&str> = args_for_worker.iter().map(String::as_str).collect();
+                let env_refs: Vec<(&str, &str)> = envs_for_worker
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str()))
+                    .collect();
+                let result = run(&program, &arg_refs, &env_refs, timeout, cap);
+                if let Ok(mut cache) = async_cache().lock() {
+                    if let Some(entry) = cache.get_mut(&worker_key) {
+                        entry.last = result;
+                        entry.checked = Some(Instant::now());
+                        entry.running = false;
+                    }
+                }
+            })
+            .is_ok();
+        if !spawned {
+            if let Ok(mut cache) = async_cache().lock() {
+                if let Some(entry) = cache.get_mut(&key) {
+                    entry.running = false;
+                }
+            }
+        }
+        return None;
+    }
+    entry.last.clone()
+}
+
 pub fn run(
     program: &str,
     args: &[&str],

@@ -18,6 +18,8 @@
 
 use std::{
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    thread,
     time::{Duration, SystemTime},
 };
 
@@ -224,11 +226,56 @@ fn fresh(path: &std::path::Path, max_age: Duration) -> bool {
         .unwrap_or(false)
 }
 
+fn check_running() -> &'static Mutex<bool> {
+    static RUNNING: OnceLock<Mutex<bool>> = OnceLock::new();
+    RUNNING.get_or_init(|| Mutex::new(false))
+}
+
+/// Perform one check outside the bar's event loop.
+fn refresh_check(installed: String) {
+    let latest = fetch_latest();
+    let dir = cache_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    if let Some(latest) = latest.as_deref() {
+        if is_newer(latest, &installed) {
+            let _ = std::fs::write(cache_path(), latest);
+        } else {
+            let _ = std::fs::remove_file(cache_path());
+        }
+    }
+    // A failed request is not news, but it must not cause a request on every
+    // redraw. The next attempt is allowed after CHECK_INTERVAL.
+    let _ = std::fs::write(state_path(), installed);
+    if let Ok(mut running) = check_running().lock() {
+        *running = false;
+    }
+}
+
+fn start_check(installed: String) {
+    let Ok(mut running) = check_running().lock() else {
+        return;
+    };
+    if *running {
+        return;
+    }
+    *running = true;
+    drop(running);
+    if thread::Builder::new()
+        .name("nirubar-nirux-update".into())
+        .spawn(move || refresh_check(installed))
+        .is_err()
+    {
+        if let Ok(mut running) = check_running().lock() {
+            *running = false;
+        }
+    }
+}
+
 /// The newer version, if any. `None` means "nothing to say": no suite is
 /// installed, the check has not run yet, or the last check failed.
 ///
-/// The check itself runs at most once per `CHECK_INTERVAL`. Until it has run,
-/// the module stays silent rather than showing a spinner or an error.
+/// The check runs in a worker. A redraw only reads the cached answer, so a
+/// slow GitHub request can never hold up input or another module.
 pub fn available() -> Option<String> {
     // Only a real desktop asks GitHub. A unit test, a `--check-config` run or a
     // login shell on a headless machine must not wait for a network request,
@@ -237,21 +284,8 @@ pub fn available() -> Option<String> {
         return None;
     }
     let installed = installed_version()?;
-    let stamp = state_path();
-    if !fresh(&stamp, CHECK_INTERVAL) {
-        let Some(latest) = fetch_latest() else {
-            // Leave the previous answer alone: a failed request is not news.
-            return cached_answer(&installed);
-        };
-        let dir = cache_dir();
-        let _ = std::fs::create_dir_all(&dir);
-        if is_newer(&latest, &installed) {
-            let _ = std::fs::write(cache_path(), &latest);
-        } else {
-            let _ = std::fs::remove_file(cache_path());
-        }
-        let _ = std::fs::write(&stamp, &installed);
-        return is_newer(&latest, &installed).then_some(latest);
+    if !fresh(&state_path(), CHECK_INTERVAL) {
+        start_check(installed.clone());
     }
     cached_answer(&installed)
 }

@@ -466,7 +466,7 @@ fn wifi_link(interface: &str) -> (bool, Option<String>, Option<u8>) {
         if !Path::new(program).exists() {
             continue;
         }
-        let Some(output) = crate::probe::run(
+        let Some(output) = crate::probe::run_async(
             program,
             &["dev", interface, "link"],
             &[],
@@ -967,6 +967,20 @@ pub fn display_outputs() -> Option<Vec<DisplayOutput>> {
         .then(|| display_outputs_from(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// Non-blocking variant used by the bar's render loop.
+pub fn display_outputs_async() -> Option<Vec<DisplayOutput>> {
+    let out = crate::probe::run_async(
+        "xrandr",
+        &["--query"],
+        &[],
+        std::time::Duration::from_secs(2),
+        64 * 1024,
+    )?;
+    out.status
+        .success()
+        .then(|| display_outputs_from(&String::from_utf8_lossy(&out.stdout)))
+}
+
 /// Name this bar's screen, and where it sits when there are several.
 ///
 /// With more than one screen the count alone does not say which bar is which,
@@ -1166,7 +1180,7 @@ fn active_interfaces() -> Vec<(String, Link)> {
 fn interface_address(iface: &str) -> Option<String> {
     // `getifaddrs` through /proc is awkward; using `ip` is portable across the
     // three supported distributions and only runs when the popup is opened.
-    let out = crate::probe::run(
+    let out = crate::probe::run_async(
         "ip",
         &["-4", "-o", "addr", "show", "dev", iface],
         &[],
@@ -1186,7 +1200,7 @@ fn interface_address(iface: &str) -> Option<String> {
 /// SSID from the wireless interface, without NetworkManager.
 fn wifi_ssid(iface: &str) -> Option<String> {
     // iw is the standard tool for cfg80211; fall back to nothing.
-    let out = crate::probe::run(
+    let out = crate::probe::run_async(
         "iw",
         &["dev", iface, "link"],
         &[],
