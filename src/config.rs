@@ -778,6 +778,14 @@ struct MonitorsValidation {
     /// accept what the window manager writes after a workspace change.
     #[serde(default)]
     layouts: Vec<String>,
+    /// Per-workspace master ratios written by NIRUWM. Accepted, not used.
+    #[serde(default)]
+    #[allow(dead_code)]
+    master_ratios: Vec<f32>,
+    /// Per-workspace master counts written by NIRUWM. Accepted, not used.
+    #[serde(default)]
+    #[allow(dead_code)]
+    nmasters: Vec<usize>,
 }
 
 impl Default for MonitorsValidation {
@@ -786,6 +794,8 @@ impl Default for MonitorsValidation {
             workspaces: 10,
             profiles: Vec::new(),
             layouts: Vec::new(),
+            master_ratios: Vec::new(),
+            nmasters: Vec::new(),
         }
     }
 }
@@ -800,6 +810,14 @@ struct MonitorProfileValidation {
     /// This screen's own workspace layouts, written by NIRUWM.
     #[serde(default)]
     layouts: Vec<String>,
+    /// This screen's per-workspace ratios, written by NIRUWM.
+    #[serde(default)]
+    #[allow(dead_code)]
+    master_ratios: Vec<f32>,
+    /// This screen's per-workspace master counts, written by NIRUWM.
+    #[serde(default)]
+    #[allow(dead_code)]
+    nmasters: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1183,6 +1201,21 @@ action = "terminal"
     #[test]
     fn reject_bad_theme_name() {
         assert!(Theme::load("../bad").is_err());
+    }
+
+    #[test]
+    fn accepts_niruwm_workspace_state_arrays() {
+        let c: Config = toml::from_str(
+            "[scratchpad]\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\n[monitors]\nmaster_ratios = [0.55, 0.7]\nnmasters = [1, 2]\n",
+        )
+        .unwrap();
+        c.validate().unwrap_or_else(|e| panic!("{e}"));
+        let c: Config = toml::from_str(
+            "[scratchpad]\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\n[monitors]\nmaster_ratios = [0.95]\n",
+        )
+        .unwrap();
+        // The bar only has to accept the schema; NIRUWM validates live values.
+        assert!(c.validate().is_ok());
     }
 
     #[test]

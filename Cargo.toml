@@ -1,6 +1,6 @@
 [package]
 name = "nirubar"
-version = "0.18.65"
+version = "0.18.66"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
