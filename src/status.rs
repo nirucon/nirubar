@@ -47,6 +47,8 @@ pub struct Icons {
     pub tailscale: &'static str,
     /// The Quick Settings launcher entry.
     pub quicksettings: &'static str,
+    /// The compact OpenCode agent prompt entry.
+    pub agent: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
     /// The optional power-profile module.
@@ -88,6 +90,7 @@ impl Icons {
             bluetooth: "\u{f293}", // nf-fa-bluetooth
             tailscale: "\u{f0e8}", // nf-fa-sitemap (mesh)
             quicksettings: "\u{f013}", // nf-fa-cog
+            agent: "\u{f17b}",   // nf-fa-android: a small friendly robot
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
@@ -119,6 +122,7 @@ impl Icons {
             bluetooth: "bt",
             tailscale: "ts",
             quicksettings: "q",
+            agent: "agent",
             powerprofile: "pwr",
             notifications: "ntf",
             music: "mus",

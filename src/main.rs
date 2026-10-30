@@ -1558,7 +1558,7 @@ impl Bar {
             if self
                 .modules
                 .get(index)
-                .is_some_and(|module| module.name() == "wifi")
+                .is_some_and(|module| matches!(module.name(), "wifi" | "agent"))
             {
                 self.close_popup()?;
                 return self.controls(index);
@@ -2129,6 +2129,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.quicksettings
         } else {
             plain.quicksettings
+        },
+        agent: if ok(nerd.agent) {
+            nerd.agent
+        } else {
+            plain.agent
         },
         powerprofile: if ok(nerd.powerprofile) {
             nerd.powerprofile

@@ -560,6 +560,30 @@ impl Module for QuickSettings {
     }
 }
 
+/// A compact entry point to OpenCode. The icon is deliberately action-only:
+/// clicking it opens the launcher's prompt view, which owns the text input.
+pub struct Agent {
+    pub icons: status::Icons,
+}
+
+impl Module for Agent {
+    fn name(&self) -> &'static str {
+        "agent"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.icons.agent.to_string()
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "agent-prompt",
+            Some(("nirulauncher".into(), vec!["--agent".into()])),
+        ))
+    }
+}
+
 /// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// A separate Wi-Fi segment. It exists only when the machine has a wireless
@@ -1631,6 +1655,7 @@ pub fn build(
                 value: layout.clone(),
             })),
             "quicksettings" => out.push(Box::new(QuickSettings { icons })),
+            "agent" => out.push(Box::new(Agent { icons })),
             "tailscale" => out.push(Box::new(Tailscale {
                 icons,
                 use_icons: cfg.icons,
@@ -1845,6 +1870,7 @@ mod tests {
                         | "battery"
                         | "tailscale"
                         | "quicksettings"
+                        | "agent"
                         | "network"
                         | "wifi"
                         | "volume"

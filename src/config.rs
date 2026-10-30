@@ -280,6 +280,7 @@ impl Default for Bar {
                 "network".into(),
                 "tasks".into(),
                 "battery".into(),
+                "agent".into(),
                 "quicksettings".into(),
                 "clock".into(),
             ],
