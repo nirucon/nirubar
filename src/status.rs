@@ -49,6 +49,8 @@ pub struct Icons {
     pub quicksettings: &'static str,
     /// The compact OpenCode agent prompt entry.
     pub agent: &'static str,
+    /// The NIRUSHARE inbox entry.
+    pub share: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
     /// The optional power-profile module.
@@ -91,6 +93,7 @@ impl Icons {
             tailscale: "\u{f0e8}", // nf-fa-sitemap (mesh)
             quicksettings: "\u{f013}", // nf-fa-cog
             agent: "\u{f17b}",   // nf-fa-android: a small friendly robot
+            share: "\u{f1d8}",   // nf-fa-paper-plane
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
@@ -123,6 +126,7 @@ impl Icons {
             tailscale: "ts",
             quicksettings: "q",
             agent: "agent",
+            share: "share",
             powerprofile: "pwr",
             notifications: "ntf",
             music: "mus",

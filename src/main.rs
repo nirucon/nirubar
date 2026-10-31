@@ -1558,7 +1558,7 @@ impl Bar {
             if self
                 .modules
                 .get(index)
-                .is_some_and(|module| matches!(module.name(), "wifi" | "agent"))
+                .is_some_and(|module| matches!(module.name(), "wifi" | "agent" | "share"))
             {
                 self.close_popup()?;
                 return self.controls(index);
@@ -2134,6 +2134,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.agent
         } else {
             plain.agent
+        },
+        share: if ok(nerd.share) {
+            nerd.share
+        } else {
+            plain.share
         },
         powerprofile: if ok(nerd.powerprofile) {
             nerd.powerprofile

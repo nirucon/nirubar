@@ -560,6 +560,29 @@ impl Module for QuickSettings {
     }
 }
 
+/// A compact entry point to NIRUSHARE. The inbox itself lives in the launcher.
+pub struct Share {
+    pub icons: status::Icons,
+}
+
+impl Module for Share {
+    fn name(&self) -> &'static str {
+        "share"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.icons.share.to_string()
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "share-inbox",
+            Some(("nirulauncher".into(), vec!["--share".into()])),
+        ))
+    }
+}
+
 /// A compact entry point to OpenCode. The icon is deliberately action-only:
 /// clicking it opens the launcher's prompt view, which owns the text input.
 pub struct Agent {
@@ -1656,6 +1679,7 @@ pub fn build(
             })),
             "quicksettings" => out.push(Box::new(QuickSettings { icons })),
             "agent" => out.push(Box::new(Agent { icons })),
+            "share" => out.push(Box::new(Share { icons })),
             "tailscale" => out.push(Box::new(Tailscale {
                 icons,
                 use_icons: cfg.icons,
@@ -1871,6 +1895,7 @@ mod tests {
                         | "tailscale"
                         | "quicksettings"
                         | "agent"
+                        | "share"
                         | "network"
                         | "wifi"
                         | "volume"
