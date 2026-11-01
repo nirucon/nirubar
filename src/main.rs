@@ -303,6 +303,7 @@ fn module_priority(name: &str) -> i32 {
         "notifications" => 65,
         "tasks" => 66,
         "updates" => 60,
+        "nirusec" => 59,
         "niruxupdate" => 58,
         "brightness" => 55,
         "weather" => 50,
@@ -1555,11 +1556,9 @@ impl Bar {
             .find(|p| x >= p.x && x < p.x + p.width)
             .map(|p| p.index)
         {
-            if self
-                .modules
-                .get(index)
-                .is_some_and(|module| matches!(module.name(), "wifi" | "agent" | "share"))
-            {
+            if self.modules.get(index).is_some_and(|module| {
+                matches!(module.name(), "wifi" | "agent" | "share" | "nirusec")
+            }) {
                 self.close_popup()?;
                 return self.controls(index);
             }
@@ -2154,6 +2153,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.music
         } else {
             plain.music
+        },
+        nirusec: if ok(nerd.nirusec) {
+            nerd.nirusec
+        } else {
+            plain.nirusec
         },
     }
 }

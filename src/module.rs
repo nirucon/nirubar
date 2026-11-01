@@ -7,6 +7,7 @@
 use crate::{ambient, av, config, status, tailscale, updates, weather};
 use chrono::Datelike;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Where a module sits on the bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -580,6 +581,115 @@ impl Module for Share {
             "share-inbox",
             Some(("nirulauncher".into(), vec!["--share".into()])),
         ))
+    }
+}
+
+/// A compact NIRUSEC state mark. The checker owns expensive work; the bar only
+/// reads one shared cache and, when it is stale, asks a short-lived checker to
+/// refresh it. Multiple monitors cannot start duplicate package checks because
+/// NIRUSEC itself takes the check lock.
+pub struct Nirusec {
+    pub icons: status::Icons,
+    next_spawn: Instant,
+}
+
+fn nirusec_cache_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".local/state")
+        });
+    Some(base.join("nirusec/status.json"))
+}
+
+fn nirusec_installed() -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|path| path.join("nirusec").is_file()))
+        .unwrap_or(false)
+}
+
+fn nirusec_cache() -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(nirusec_cache_path()?).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+impl Module for Nirusec {
+    fn name(&self) -> &'static str {
+        "nirusec"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        if !nirusec_installed() {
+            return String::new();
+        }
+        let cache = nirusec_cache();
+        let age = cache
+            .as_ref()
+            .and_then(|value| value.get("checked_at"))
+            .and_then(|value| value.as_i64())
+            .map(|checked| {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_secs() as i64)
+                    .unwrap_or(0);
+                (now - checked).max(0)
+            });
+        if age.map_or(true, |age| age > 300) && self.next_spawn <= Instant::now() {
+            self.next_spawn = Instant::now() + Duration::from_secs(300);
+            if let Ok(mut child) = std::process::Command::new("nirusec")
+                .args(["--check", "--if-stale", "300", "--quiet"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+        }
+        self.icons.nirusec.to_string()
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        if !nirusec_installed() {
+            return None;
+        }
+        let mut lines = Vec::new();
+        if let Some(cache) = nirusec_cache() {
+            let state = cache
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let summary = cache.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let checked = cache
+                .get("checked_at")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_secs() as i64)
+                .unwrap_or(0);
+            let age = (now - checked).max(0);
+            lines.push(format!("State: {}", state.to_uppercase()));
+            if !summary.is_empty() {
+                lines.push(summary.into());
+            }
+            lines.push(format!("Checked {} min ago", age / 60));
+        } else {
+            lines.push("Status has not been checked yet.".into());
+        }
+        lines.push(String::new());
+        lines.push("click: open NIRUSEC".into());
+        Some(("NIRUSEC".into(), lines))
+    }
+    fn controls(&self) -> Option<Control> {
+        if !nirusec_installed() {
+            return None;
+        }
+        Some(Control::ui("nirusec", Some(("nirusec".into(), Vec::new()))))
     }
 }
 
@@ -1678,6 +1788,10 @@ pub fn build(
                 value: layout.clone(),
             })),
             "quicksettings" => out.push(Box::new(QuickSettings { icons })),
+            "nirusec" => out.push(Box::new(Nirusec {
+                icons,
+                next_spawn: Instant::now() - Duration::from_secs(300),
+            })),
             "agent" => out.push(Box::new(Agent { icons })),
             "share" => out.push(Box::new(Share { icons })),
             "tailscale" => out.push(Box::new(Tailscale {
@@ -1894,6 +2008,7 @@ mod tests {
                         | "battery"
                         | "tailscale"
                         | "quicksettings"
+                        | "nirusec"
                         | "agent"
                         | "share"
                         | "network"

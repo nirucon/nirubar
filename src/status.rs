@@ -59,6 +59,8 @@ pub struct Icons {
     pub notifications: &'static str,
     /// The media module's music note.
     pub music: &'static str,
+    /// NIRUSEC's shield mark.
+    pub nirusec: &'static str,
 }
 
 impl Icons {
@@ -97,6 +99,7 @@ impl Icons {
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
             music: "\u{f001}",   // nf-fa-music
+            nirusec: "\u{f132}", // nf-fa-shield
         }
     }
 
@@ -130,6 +133,7 @@ impl Icons {
             powerprofile: "pwr",
             notifications: "ntf",
             music: "mus",
+            nirusec: "sec",
         }
     }
 }
