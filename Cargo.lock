@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "nirubar"
-version = "0.18.74"
+version = "0.18.75"
 dependencies = [
  "ab_glyph",
  "chrono",

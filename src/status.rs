@@ -815,57 +815,100 @@ mod tests {
         assert_eq!(outputs.len(), 2);
         assert_eq!(outputs[0].name, "eDP-1");
         assert_eq!(outputs[0].resolution, "1920x1080");
+        assert_eq!(outputs[0].position, (0, 0));
         assert!(outputs[0].primary);
         assert_eq!(outputs[1].name, "HDMI-1");
+        assert_eq!(outputs[1].position, (1920, 0));
         assert!(!outputs[1].primary);
-        // With two screens each bar says which one it is.
         let left = crate::module::Screen {
             name: Some("eDP-1".into()),
         };
         let right = crate::module::Screen {
             name: Some("HDMI-1".into()),
         };
-        // File order decides which screen is on the left, as xrandr lists it.
-        assert_eq!(display_text(&outputs, "D", &left), "D 2 right");
-        assert_eq!(display_text(&outputs, "D", &right), "D 2 left");
-        // Stacked screens read above/below instead of left/right.
-        let stacked = "DP-1 connected 2560x1440+0+1440 (normal left inverted right x axis y axis)\nDP-2 connected 2560x1440+0+0 (normal left inverted right x axis y axis)\n";
-        let stacked = display_outputs_from(stacked);
-        let lower = crate::module::Screen {
-            name: Some("DP-1".into()),
-        };
-        let upper = crate::module::Screen {
-            name: Some("DP-2".into()),
-        };
-        // DP-1 sits at y=1440, below DP-2. Each bar names where the other
-        // screen is: the lower screen has one above it, the upper one below.
-        assert_eq!(display_text(&stacked, "D", &lower), "D 2 above");
-        assert_eq!(display_text(&stacked, "D", &upper), "D 2 below");
-        // The same for side by side: the right screen has one to its left.
+        assert_eq!(display_text(&outputs, "D", &left), "D Left");
+        assert_eq!(display_text(&outputs, "D", &right), "D Right");
+        // One screen does not need a permanent module.
+        assert_eq!(display_text(&outputs[..1], "D", &left), "");
+        assert_eq!(display_detail(&outputs)[0], "2 connected output(s)");
+        assert_eq!(
+            display_detail(&outputs)[1],
+            "eDP-1: 1920x1080 (primary) at +0,+0"
+        );
+    }
+
+    #[test]
+    fn display_labels_follow_own_geometry_not_other_outputs() {
         let side = display_outputs_from(
-            "eDP-1 connected 1920x1080+0+0 (normal left inverted right x axis y axis)\n\
-             DP-3 connected 2560x1440+1920+0 (normal left inverted right x axis y axis)\n",
+            "eDP-1 connected 1920x1080+0+0\neDP-2 connected 1920x1080+1920+0\neDP-3 connected 1920x1080+3840+0\n",
+        );
+        for (name, expected) in [
+            ("eDP-1", "D Left"),
+            ("eDP-2", "D Center"),
+            ("eDP-3", "D Right"),
+        ] {
+            let screen = crate::module::Screen {
+                name: Some(name.into()),
+            };
+            assert_eq!(display_text(&side, "D", &screen), expected);
+        }
+        let stacked =
+            display_outputs_from("DP-1 connected 2560x1440+0+1440\nDP-2 connected 2560x1440+0+0\n");
+        for (name, expected) in [("DP-1", "D Bottom"), ("DP-2", "D Top")] {
+            let screen = crate::module::Screen {
+                name: Some(name.into()),
+            };
+            assert_eq!(display_text(&stacked, "D", &screen), expected);
+        }
+        let corner = display_outputs_from(
+            "eDP-1 connected 1920x1080+0+0\nDP-3 connected 2560x1440+1920+1080\n",
+        );
+        let top_left = crate::module::Screen {
+            name: Some("eDP-1".into()),
+        };
+        let bottom_right = crate::module::Screen {
+            name: Some("DP-3".into()),
+        };
+        assert_eq!(display_text(&corner, "D", &top_left), "D Top-left");
+        assert_eq!(display_text(&corner, "D", &bottom_right), "D Bottom-right");
+    }
+
+    #[test]
+    fn staggered_and_negative_displays_use_meaningful_labels() {
+        let staggered = display_outputs_from(
+            "eDP-1 connected 1920x1080+0+0\nDP-1 connected 2560x1440+1920+300\n",
         );
         let left = crate::module::Screen {
             name: Some("eDP-1".into()),
         };
-        let right = crate::module::Screen {
-            name: Some("DP-3".into()),
+        assert_eq!(display_text(&staggered, "D", &left), "D Left");
+        let negative =
+            display_outputs_from("DP-1 connected 1920x1080-1920+0\nDP-2 connected 1920x1080+0+0\n");
+        assert_eq!(negative[0].position, (-1920, 0));
+        let left = crate::module::Screen {
+            name: Some("DP-1".into()),
         };
-        assert_eq!(display_text(&side, "D", &left), "D 2 right");
-        assert_eq!(display_text(&side, "D", &right), "D 2 left");
-        // A screen placed diagonally reads by the vertical difference.
-        let corner = display_outputs_from(
-            "eDP-1 connected 1920x1080+0+0 (normal left inverted right x axis y axis)\n\
-             DP-3 connected 2560x1440+1920+500 (normal left inverted right x axis y axis)\n",
-        );
-        assert_eq!(display_text(&corner, "D", &left), "D 2 below");
-        // One screen does not need a permanent module.
-        let single = crate::module::Screen {
+        let right = crate::module::Screen {
+            name: Some("DP-2".into()),
+        };
+        assert_eq!(display_text(&negative, "D", &left), "D Left");
+        assert_eq!(display_text(&negative, "D", &right), "D Right");
+    }
+
+    #[test]
+    fn mirrors_and_unknown_connectors_do_not_invent_positions() {
+        let mirror =
+            display_outputs_from("eDP-1 connected 1920x1080+0+0\nDP-1 connected 1920x1080+0+0\n");
+        let screen = crate::module::Screen {
             name: Some("eDP-1".into()),
         };
-        assert_eq!(display_text(&outputs[..1], "D", &single), "");
-        assert_eq!(display_detail(&outputs)[0], "eDP-1: 1920x1080 (primary)");
+        assert_eq!(display_text(&mirror, "D", &screen), "D Mirror");
+        let missing = crate::module::Screen {
+            name: Some("HDMI-9".into()),
+        };
+        assert_eq!(display_text(&mirror, "D", &missing), "D HDMI-9");
+        let unknown = crate::module::Screen { name: None };
+        assert_eq!(display_text(&mirror, "D", &unknown), "D display");
     }
 
     #[test]
@@ -929,8 +972,46 @@ pub struct DisplayOutput {
     pub resolution: String,
     pub primary: bool,
     /// The output's top-left corner on the combined desktop, from
-    /// `2560x1440+2560+0`.
-    pub position: (i16, i16),
+    /// `2560x1440+2560+0`. Signed coordinates handle displays left/above the
+    /// primary output.
+    pub position: (i32, i32),
+}
+
+impl DisplayOutput {
+    fn rect(&self) -> (i32, i32, i32, i32) {
+        let (w, h) = self
+            .resolution
+            .split_once('x')
+            .and_then(|(w, h)| Some((w.parse::<i32>().ok()?, h.parse::<i32>().ok()?)))
+            .unwrap_or((0, 0));
+        (self.position.0, self.position.1, w.max(1), h.max(1))
+    }
+}
+
+fn parse_display_geometry(word: &str) -> Option<((i32, i32), (i32, i32))> {
+    let x_index = word.find('x')?;
+    let width = word[..x_index].parse::<i32>().ok()?;
+    let rest = &word[x_index + 1..];
+    let sign_index = rest.find(['+', '-'])?;
+    let height = rest[..sign_index].parse::<i32>().ok()?;
+    let offsets = &rest[sign_index..];
+    let mut values = Vec::new();
+    let mut index = 0;
+    while index < offsets.len() {
+        let start = index;
+        if !matches!(offsets.as_bytes()[index], b'+' | b'-') {
+            return None;
+        }
+        index += 1;
+        while index < offsets.len() && offsets.as_bytes()[index].is_ascii_digit() {
+            index += 1;
+        }
+        values.push(offsets[start..index].parse::<i32>().ok()?);
+    }
+    match values.as_slice() {
+        [x, y] => Some(((width, height), (*x, *y))),
+        _ => None,
+    }
 }
 
 fn display_outputs_from(text: &str) -> Vec<DisplayOutput> {
@@ -942,23 +1023,15 @@ fn display_outputs_from(text: &str) -> Vec<DisplayOutput> {
         let mut words = line.split_whitespace();
         let Some(name) = words.next() else { continue };
         let primary = line.contains(" primary ");
-        let geometry = line
-            .split_whitespace()
-            .find(|word| word.contains('x') && word.contains('+'));
-        let resolution = geometry
-            .and_then(|word| word.split('+').next())
-            .unwrap_or("?")
-            .to_string();
-        let position = geometry.and_then(|word| {
-            let (_, rest) = word.split_once('+')?;
-            let (x, y) = rest.split_once('+')?;
-            Some((x.parse::<i16>().ok()?, y.parse::<i16>().ok()?))
-        });
+        let geometry = words.find(|word| parse_display_geometry(word).is_some());
+        let parsed = geometry.and_then(parse_display_geometry);
         outputs.push(DisplayOutput {
             name: name.to_string(),
-            resolution,
+            resolution: parsed
+                .map(|((w, h), _)| format!("{w}x{h}"))
+                .unwrap_or_else(|| "?".into()),
             primary,
-            position: position.unwrap_or((0, 0)),
+            position: parsed.map(|(_, position)| position).unwrap_or((0, 0)),
         });
     }
     outputs
@@ -979,11 +1052,12 @@ pub fn display_outputs() -> Option<Vec<DisplayOutput>> {
         .then(|| display_outputs_from(&String::from_utf8_lossy(&out.stdout)))
 }
 
-/// Name this bar's screen, and where it sits when there are several.
+/// Show this bar's own monitor position, not where some other monitor is.
 ///
-/// With more than one screen the count alone does not say which bar is which,
-/// so the bar adds the screen's place: `2 above` when the screens are stacked,
-/// `2 right` when they are side by side. A single screen still shows nothing.
+/// A single screen stays unobtrusive. With several screens the module says
+/// `Left`, `Right`, `Top`, `Bottom`, `Top-left`, `Center`, `Mirror`, and so on.
+/// When topology is ambiguous it falls back to the connector name rather than
+/// inventing a position.
 pub fn display_text(
     outputs: &[DisplayOutput],
     icon: &str,
@@ -992,52 +1066,89 @@ pub fn display_text(
     if outputs.len() <= 1 {
         return String::new();
     }
-    let own = screen.name.as_deref().and_then(|name| {
-        outputs
-            .iter()
-            .find(|output| output.name == name)
-            .map(|output| output.position)
-    });
-    let count = outputs.len();
-    let Some((x, y)) = own else {
-        return format!("{icon} {count}");
+    let Some(index) = screen
+        .name
+        .as_deref()
+        .and_then(|name| outputs.iter().position(|output| output.name == name))
+    else {
+        return format!("{icon} {}", screen.name.as_deref().unwrap_or("display"));
     };
-    // Where the other screens are, counted on each side of this one.
-    let mut offsets: Vec<(i32, i32)> = Vec::new();
-    for output in outputs {
-        let (ox, oy) = output.position;
-        if (ox, oy) != (x, y) {
-            // Subtract in i32: two screens far apart can overflow i16.
-            offsets.push((i32::from(ox) - i32::from(x), i32::from(oy) - i32::from(y)));
-        }
-    }
-    let place = display_place(&offsets);
-    if place.is_empty() {
-        format!("{icon} {count}")
-    } else {
-        format!("{icon} {count} {place}")
+    match display_place(outputs, index) {
+        Some(place) => format!("{icon} {place}"),
+        None => format!("{icon} {}", screen.name.as_deref().unwrap_or("display")),
     }
 }
 
-/// Name where this screen sits among the others, from relative positions.
+/// Classify the geometry relative to every other output.
 ///
-/// The label says where the *other* screens are, as the bar has always read
-/// it: a screen below the top one shows `2 above`, because the second screen
-/// is above it. A screen to the right of another shows `2 left`. A stack that
-/// is also offset sideways is `above` or `below` first, since that is the
-/// arrangement a reader notices.
-fn display_place(offsets: &[(i32, i32)]) -> &'static str {
-    let any = |test: &dyn Fn(i32, i32) -> bool| offsets.iter().any(|&(dx, dy)| test(dx, dy));
-    if any(&|_, dy| dy < 0) {
-        "above"
-    } else if any(&|_, dy| dy > 0) {
-        "below"
-    } else if any(&|dx, _| dx < 0) {
-        "left"
-    } else if any(&|dx, _| dx > 0) {
-        "right"
-    } else {
-        ""
+/// `own_left` means another output is to the right of this one, and so on. A
+/// pair with no meaningful gap but a large overlap is a mirror. Positions are
+/// based on the currently applied RandR geometry, never a saved profile.
+fn display_place(outputs: &[DisplayOutput], own_index: usize) -> Option<&'static str> {
+    const TOLERANCE: i32 = 16;
+    let own = outputs.get(own_index)?.rect();
+    let (ox, oy, ow, oh) = own;
+    let own_right = ox.saturating_add(ow);
+    let own_bottom = oy.saturating_add(oh);
+    let own_area = i64::from(ow) * i64::from(oh);
+    let mut own_left = false;
+    let mut own_right_side = false;
+    let mut own_top = false;
+    let mut own_bottom_side = false;
+    let mut mirror = false;
+    for (index, output) in outputs.iter().enumerate() {
+        if index == own_index {
+            continue;
+        }
+        let (x, y, w, h) = output.rect();
+        let right = x.saturating_add(w);
+        let bottom = y.saturating_add(h);
+        let overlap_w = (right.min(own_right) - x.max(ox)).max(0);
+        let overlap_h = (bottom.min(own_bottom) - y.max(oy)).max(0);
+        let overlap_area = i64::from(overlap_w) * i64::from(overlap_h);
+        if own_area > 0 && overlap_area * 10 >= own_area * 8 {
+            mirror = true;
+            continue;
+        }
+        if right <= ox + TOLERANCE {
+            own_right_side = true;
+        }
+        if x >= own_right - TOLERANCE {
+            own_left = true;
+        }
+        if bottom <= oy + TOLERANCE {
+            own_bottom_side = true;
+        }
+        if y >= own_bottom - TOLERANCE {
+            own_top = true;
+        }
+    }
+    if mirror {
+        return Some("Mirror");
+    }
+    let horizontal = match (own_left, own_right_side) {
+        (true, false) => Some("Left"),
+        (false, true) => Some("Right"),
+        (true, true) => Some("Center"),
+        (false, false) => None,
+    };
+    let vertical = match (own_top, own_bottom_side) {
+        (true, false) => Some("Top"),
+        (false, true) => Some("Bottom"),
+        (true, true) => Some("Center"),
+        (false, false) => None,
+    };
+    match (horizontal, vertical) {
+        (Some("Left"), Some("Top")) => Some("Top-left"),
+        (Some("Left"), Some("Bottom")) => Some("Bottom-left"),
+        (Some("Right"), Some("Top")) => Some("Top-right"),
+        (Some("Right"), Some("Bottom")) => Some("Bottom-right"),
+        (Some(h), None) => Some(h),
+        (None, Some(v)) => Some(v),
+        (Some("Center"), Some("Center")) => Some("Center"),
+        (Some("Center"), Some(v)) => Some(v),
+        (Some(h), Some("Center")) => Some(h),
+        _ => None,
     }
 }
 
@@ -1045,17 +1156,18 @@ pub fn display_detail(outputs: &[DisplayOutput]) -> Vec<String> {
     if outputs.is_empty() {
         return vec!["no connected outputs".to_string()];
     }
-    outputs
-        .iter()
-        .map(|output| {
-            format!(
-                "{}: {}{}",
-                output.name,
-                output.resolution,
-                if output.primary { " (primary)" } else { "" }
-            )
-        })
-        .collect()
+    let mut lines = vec![format!("{} connected output(s)", outputs.len())];
+    lines.extend(outputs.iter().map(|output| {
+        format!(
+            "{}: {}{} at {:+},{:+}",
+            output.name,
+            output.resolution,
+            if output.primary { " (primary)" } else { "" },
+            output.position.0,
+            output.position.1
+        )
+    }));
+    lines
 }
 
 /// Active work mode and the seconds left, read from the shared state file.
