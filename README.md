@@ -44,7 +44,7 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | `agent` | OpenCode agent entry | Click to type a short prompt and start OpenCode in a centred floating terminal |
 | `quicksettings` | Quick Settings entry | Opens volume, microphone, Wi-Fi, Bluetooth, displays, power, theme, DND, idle and lock controls in the launcher |
 | `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |
-| `display` | With two screens, which one this bar is: `2 below`, `2 above`, `2 left`, `2 right` | Click for info, Return/Open controls for display profiles, middle-click for the same quick route |
+| `display` | This bar screen position: `Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`; output count and connector are in the popup | Click for info, Return/Open controls for display profiles, middle-click for the same quick route |
 
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
