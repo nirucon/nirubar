@@ -5,6 +5,52 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug, Default)]
+struct Performance {
+    fps: Option<f64>,
+    frame: Option<u64>,
+    drop_frames: Option<u64>,
+    dup_frames: Option<u64>,
+    speed: Option<f64>,
+}
+
+impl Performance {
+    fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(fps) = self.fps {
+            parts.push(format!("{fps:.1} fps"));
+        }
+        if let Some(frames) = self.frame {
+            parts.push(format!("{frames} frames"));
+        }
+        if let Some(dropped) = self.drop_frames {
+            if dropped > 0 {
+                parts.push(format!("{dropped} dropped"));
+            }
+        }
+        if let Some(duplicated) = self.dup_frames {
+            if duplicated > 0 {
+                parts.push(format!("{duplicated} duplicated"));
+            }
+        }
+        if let Some(speed) = self.speed {
+            parts.push(format!("{speed:.2}x"));
+        }
+        parts.join(", ")
+    }
+
+    fn needs_attention(&self) -> bool {
+        let frames = self.frame.unwrap_or(0);
+        let dropped = self.drop_frames.unwrap_or(0);
+        let duplicated = self.dup_frames.unwrap_or(0);
+        if frames == 0 {
+            return dropped > 0 || duplicated >= 10;
+        }
+        let frames = frames as f64;
+        dropped as f64 / frames > 0.02 || duplicated as f64 / frames > 0.05
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 struct State {
     state: String,
     pid: u32,
@@ -13,6 +59,7 @@ struct State {
     output: String,
     started: f64,
     recoverable: bool,
+    performance: Option<Performance>,
     reason: String,
 }
 
@@ -60,6 +107,17 @@ fn read() -> Option<State> {
             .get("recoverable")
             .and_then(|value| value.as_bool())
             .unwrap_or(false),
+        performance: value.get("performance").and_then(|value| {
+            value.as_object()?;
+            Some(Performance {
+                fps: number_field(value, "fps"),
+                frame: number_field(value, "frame").map(|number| number.max(0.0) as u64),
+                drop_frames: number_field(value, "drop_frames")
+                    .map(|number| number.max(0.0) as u64),
+                dup_frames: number_field(value, "dup_frames").map(|number| number.max(0.0) as u64),
+                speed: number_field(value, "speed"),
+            })
+        }),
         reason: text_field(&value, "reason").unwrap_or_default(),
     })
 }
@@ -148,6 +206,18 @@ pub fn detail() -> Vec<String> {
     if !state.reason.is_empty() {
         lines.push(format!("reason: {}", state.reason));
     }
+    if let Some(performance) = &state.performance {
+        let summary = performance.summary();
+        if !summary.is_empty() {
+            lines.push(format!("capture: {summary}"));
+        }
+        if performance.needs_attention() {
+            lines.push(
+                "warning: capture cannot keep up; try preset small or disable the camera overlay"
+                    .into(),
+            );
+        }
+    }
     match view {
         View::Recording { .. } => {
             lines.push("right-click: stop recording".into());
@@ -231,5 +301,28 @@ mod tests {
             classify(&state("recording", false), false, true),
             View::Recording { .. }
         ));
+    }
+
+    #[test]
+    fn capture_performance_flags_a_stream_that_cannot_keep_up() {
+        let healthy = Performance {
+            fps: Some(29.8),
+            frame: Some(120),
+            drop_frames: Some(0),
+            dup_frames: Some(0),
+            speed: Some(0.99),
+        };
+        assert!(!healthy.needs_attention());
+        assert!(healthy.summary().contains("29.8 fps"));
+        let struggling = Performance {
+            fps: Some(20.0),
+            frame: Some(90),
+            drop_frames: Some(4),
+            dup_frames: Some(55),
+            speed: Some(0.68),
+        };
+        assert!(struggling.needs_attention());
+        assert!(struggling.summary().contains("4 dropped"));
+        assert!(struggling.summary().contains("55 duplicated"));
     }
 }
