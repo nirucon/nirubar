@@ -13,6 +13,7 @@ mod bluetooth;
 mod config;
 mod helpers;
 mod layout;
+mod media_monitor;
 mod microphone;
 mod module;
 mod nirux_update;
@@ -192,6 +193,54 @@ const MODULE_PAD: i16 = 2;
 
 /// A pipe whose readable end becomes ready when a signal arrives.
 static EXIT_PIPE: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
+static UPDATE_PIPE: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
+
+fn update_pipe() -> Option<(i32, i32)> {
+    if let Some(fds) = UPDATE_PIPE.get() {
+        return Some(*fds);
+    }
+    let mut fds = [0i32; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
+        return None;
+    }
+    if UPDATE_PIPE.set((fds[0], fds[1])).is_err() {
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
+    UPDATE_PIPE.get().copied()
+}
+
+/// Wake the X loop when a background source publishes a changed snapshot.
+pub(crate) fn wake_update() {
+    if let Some((_, write)) = UPDATE_PIPE.get() {
+        let byte = [1u8];
+        unsafe {
+            let _ = libc_write(*write, byte.as_ptr() as *const _, 1);
+        }
+    }
+}
+
+fn drain_updates(read_fd: i32) -> bool {
+    let mut bytes = [0u8; 256];
+    let mut received = false;
+    while unsafe { libc_read(read_fd, bytes.as_mut_ptr() as *mut _, bytes.len()) } > 0 {
+        received = true;
+    }
+    received
+}
+
+/// Opt-in timing evidence; no track metadata or logging by default.
+pub(crate) fn trace_media(event: &str) {
+    if std::env::var_os("NIRUBAR_TRACE_MEDIA").is_some() {
+        let micros = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros();
+        eprintln!("nirubar: media {event} time_us={micros}");
+    }
+}
 
 extern "C" fn on_exit_signal(_sig: i32) {
     // Writing one byte is async-signal-safe. The value is ignored.
@@ -245,8 +294,8 @@ fn exit_requested(read_fd: i32) -> bool {
     false
 }
 
-/// Wait for either the X socket or the exit pipe.
-fn wait_readable2(x_fd: i32, exit_fd: i32, timeout_ms: i32) {
+/// Wait for X, termination, a source update, or the next timer deadline.
+fn wait_readable2(x_fd: i32, exit_fd: i32, update_fd: i32, timeout_ms: i32) {
     let mut pfds = [
         PollFd {
             fd: x_fd,
@@ -258,10 +307,15 @@ fn wait_readable2(x_fd: i32, exit_fd: i32, timeout_ms: i32) {
             events: 1,
             revents: 0,
         },
+        PollFd {
+            fd: update_fd,
+            events: 1,
+            revents: 0,
+        },
     ];
-    // SAFETY: two valid pollfds for the duration of the call.
+    // SAFETY: three valid pollfds for the duration of the call.
     unsafe {
-        poll(pfds.as_mut_ptr(), 2, timeout_ms);
+        poll(pfds.as_mut_ptr(), 3, timeout_ms);
     }
 }
 
@@ -440,6 +494,7 @@ impl Bar {
     /// With several screens the window manager starts one bar per monitor,
     /// each with its own workspace cells. `edge` places it at the top or bottom.
     fn new(monitor: Option<Monitor>, edge: Edge) -> Result<Self> {
+        update_pipe().ok_or("cannot create source wake pipe")?;
         let cfg = Config::load()?;
         let theme = Theme::load(&cfg.theme)?;
         let icons = cfg.bar.icons;
@@ -1761,6 +1816,7 @@ impl Bar {
         // pipe the event loop watches, which is the portable way to interrupt
         // a blocking X read.
         let (read_fd, _write_fd) = install_exit_signal()?;
+        let update_fd = update_pipe().ok_or("cannot create source wake pipe")?.0;
         self.draw()?;
         loop {
             // Sleep until X has work, but never longer than a second while a
@@ -1786,11 +1842,20 @@ impl Bar {
                     } else {
                         1000
                     };
-                    wait_readable2(self.c.stream().as_raw_fd(), read_fd, timeout);
+                    wait_readable2(self.c.stream().as_raw_fd(), read_fd, update_fd, timeout);
+                    let source_changed = drain_updates(update_fd);
+                    if source_changed {
+                        // A source can change state without changing its text
+                        // (for example play/pause at the same position).
+                        self.last_frame.clear();
+                    }
                     // Nothing arrived, so nothing below this point runs, and
                     // the bar used to go to sleep with a scrolling title in the
                     // middle of a move. Paint on the timer as well.
                     self.draw()?;
+                    if source_changed {
+                        trace_media("repaint");
+                    }
                     continue;
                 }
             };

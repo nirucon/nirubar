@@ -291,7 +291,7 @@ pub struct Media {
 /// The formatted `playerctl metadata` request reports position and length in
 /// microseconds. Keep the separator out of ordinary titles and preserve empty
 /// fields for streams without a length.
-fn media_from_snapshot(text: &str) -> Option<Media> {
+pub(crate) fn media_from_snapshot(text: &str) -> Option<Media> {
     let mut fields = text.trim_end_matches(['\r', '\n']).splitn(5, '\u{1f}');
     let status = fields.next()?;
     let position = fields.next()?;

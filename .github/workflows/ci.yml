@@ -23,6 +23,8 @@ jobs:
         run: xvfb-run -a sh tests/bluetooth-smoke.sh "$PWD/target/release/nirubar"
       - name: Bound probes while media is scrolling
         run: sh tests/resource-check.sh "$PWD/target/release/nirubar"
+      - name: Media follower fallback
+        run: xvfb-run -a sh tests/media-fallback.sh "$PWD/target/release/nirubar"
 
   distros:
     strategy:

@@ -16,6 +16,10 @@ cat > "$TEST/bin/playerctl" <<'HELPER'
 #!/bin/sh
 printf 'playerctl\n' >> "$PROBE_LOG"
 case "$*" in
+  *--follow*)
+    printf '%s\n' "$$" > "$FOLLOW_PID"
+    printf 'Playing\03730000000\037Fixture artist\037A deliberately long title for continuous scrolling in the fixture\037180000000\036\n'
+    exec sleep 60 ;;
   *--format*) printf 'Playing\03730000000\037Fixture artist\037A deliberately long title for continuous scrolling in the fixture\037180000000\n' ;;
   status) printf 'Playing\n' ;;
   'metadata artist') printf 'Fixture artist\n' ;;
@@ -37,13 +41,14 @@ icons = false
 tray = false
 media_width = 12
 CONFIG
-export DISPLAY=:96 XDG_CONFIG_HOME=$TEST/config PROBE_LOG=$TEST/probes
+export DISPLAY=:96 XDG_CONFIG_HOME=$TEST/config PROBE_LOG=$TEST/probes FOLLOW_PID=$TEST/follower.pid
 export PATH=$TEST/bin:$PATH
 Xvfb :96 -screen 0 1280x80x24 -nolisten tcp > "$TEST/xvfb.log" 2>&1 & XVFB=$!
 sleep 1
 "$BIN" > "$TEST/bar.log" 2>&1 & BAR=$!
 sleep 1
 kill -0 "$BAR"
+[ -s "$FOLLOW_PID" ] || { echo 'FAIL: media follower did not start' >&2; exit 1; }
 : > "$PROBE_LOG"
 before=$(awk '{print $14+$15}' "/proc/$BAR/stat")
 sleep 10
@@ -59,7 +64,7 @@ if [ "$MODE" != baseline ]; then
   # previous one-thread assertion rejected every current build, not a resource
   # regression. Bound the two sources' process cadence and allow only the main
   # thread, those two workers, and one optional tray/runtime worker.
-  [ "$player" -le 15 ] || { echo "FAIL: excessive media probes" >&2; exit 1; }
+  [ "$player" -le 2 ] || { echo "FAIL: media follower repeatedly restarted" >&2; exit 1; }
   [ "$volume" -le 8 ] || { echo "FAIL: excessive volume probes" >&2; exit 1; }
   [ "$threads" -le 4 ] || { echo "FAIL: unexpected thread growth" >&2; exit 1; }
   # At 100 ticks/second this permits up to 5% of a core during scrolling;
@@ -67,4 +72,14 @@ if [ "$MODE" != baseline ]; then
   hz=$(getconf CLK_TCK)
   max_ticks=$((hz / 2 + 1))
   [ "$((after-before))" -le "$max_ticks" ] || { echo "FAIL: excessive scrolling CPU" >&2; exit 1; }
+fi
+# The bar owns the follower. Exiting the bar must close it rather than leaving
+# a detached process holding the session bus or stdout pipe.
+follower=$(cat "$FOLLOW_PID")
+kill "$BAR"
+wait "$BAR" 2>/dev/null || :
+BAR=
+if kill -0 "$follower" 2>/dev/null; then
+  echo 'FAIL: media follower survived bar shutdown' >&2
+  exit 1
 fi

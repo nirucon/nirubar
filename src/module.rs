@@ -1078,8 +1078,7 @@ impl Module for Volume {
 /// Placeholder for the drawn music mark. The em space keeps the layout honest
 /// where the text width is measured; the bar paints shapes over it.
 pub struct Media {
-    sample: Cached<av::Media>,
-    player_state: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    sample: crate::media_monitor::Monitor,
     /// Selected MPRIS player; None follows the active player.
     pub player: Option<String>,
     /// Appearance contract: stop non-essential title movement.
@@ -1101,15 +1100,9 @@ impl Media {
         music: &'static str,
         width: usize,
     ) -> Self {
-        let player_state = std::sync::Arc::new(std::sync::Mutex::new(player.clone()));
-        let probe_player = player_state.clone();
-        let sample = Cached::new(std::time::Duration::from_secs(1), move || {
-            let selected = probe_player.lock().ok().and_then(|value| value.clone());
-            av::Media::read_player(selected.as_deref())
-        });
+        let sample = crate::media_monitor::Monitor::new(player.clone());
         Self {
             sample,
-            player_state,
             player,
             reduced_motion,
             music,
@@ -1120,9 +1113,7 @@ impl Media {
 
     fn select_player(&mut self, player: Option<String>) {
         self.player = player.clone();
-        if let Ok(mut selected) = self.player_state.lock() {
-            *selected = player;
-        }
+        self.sample.select(player);
     }
 }
 
@@ -1134,7 +1125,7 @@ impl Module for Media {
         Side::Right
     }
     fn render(&mut self) -> String {
-        let Some(m) = self.sample.get() else {
+        let Some(m) = self.sample.snapshot() else {
             // Nothing plays: let the next track start from its beginning, and
             // stop asking the bar to repaint.
             self.scroller.observe("");
@@ -1167,7 +1158,7 @@ impl Module for Media {
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         let players = av::Media::players();
-        let lines = match self.sample.get() {
+        let lines = match self.sample.snapshot() {
             Some(m) => vec![
                 m.title.clone(),
                 m.artist.clone(),
