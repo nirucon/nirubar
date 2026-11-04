@@ -1636,7 +1636,41 @@ pub struct Dnd {
     sample: Cached<bool>,
 }
 
+fn read_dnd_socket(path: &std::path::Path) -> Option<bool> {
+    use std::io::{Read, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(path).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(200)))
+        .ok()?;
+    stream.write_all(b"dnd status\n").ok()?;
+    let mut reply = String::new();
+    stream.take(64).read_to_string(&mut reply).ok()?;
+    parse_dnd_status(&reply)
+}
+
+fn parse_dnd_status(text: &str) -> Option<bool> {
+    match text.trim() {
+        "dnd on" => Some(true),
+        "dnd off" => Some(false),
+        _ => None,
+    }
+}
+
 fn notification_dnd() -> Option<bool> {
+    // This is the same native provider selected first by niructl dnd, but a
+    // direct bounded socket query avoids launching two processes every second.
+    // If it is absent, stalled or returns an invalid response, retain niructl's
+    // provider-aware Dunst/unavailable fallback.
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let socket = runtime.join(format!("nirunotify-{}.sock", unsafe { libc::getuid() }));
+    if let Some(state) = read_dnd_socket(&socket) {
+        return Some(state);
+    }
     let out = crate::probe::run(
         "niructl",
         &["dnd", "status"],
@@ -1647,11 +1681,7 @@ fn notification_dnd() -> Option<bool> {
     if !out.status.success() {
         return None;
     }
-    match String::from_utf8_lossy(&out.stdout).trim() {
-        "dnd on" => Some(true),
-        "dnd off" => Some(false),
-        _ => None,
-    }
+    parse_dnd_status(&String::from_utf8_lossy(&out.stdout))
 }
 
 impl Dnd {
@@ -2092,6 +2122,29 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn native_dnd_socket_reads_status_without_spawning_a_helper() {
+        use std::io::{BufRead, BufReader, Write};
+        let socket =
+            std::env::temp_dir().join(format!("nirubar-dnd-test-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&socket);
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut client, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(client.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            assert_eq!(request, "dnd status\n");
+            client.write_all(b"dnd on").unwrap();
+        });
+        assert_eq!(read_dnd_socket(&socket), Some(true));
+        server.join().unwrap();
+        std::fs::remove_file(socket).unwrap();
+        assert_eq!(parse_dnd_status("dnd off\n"), Some(false));
+        assert_eq!(parse_dnd_status("unexpected"), None);
+    }
 
     #[test]
     fn wifi_redraws_use_cached_state_without_repeating_the_probe() {
