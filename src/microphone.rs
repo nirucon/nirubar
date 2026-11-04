@@ -1,13 +1,6 @@
 //! Read-only microphone snapshots via the suite's audio CLI. All provider
 //! work runs off the X11 thread and has a deadline; painting only reads memory.
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    thread::{self, JoinHandle},
-    time::Duration,
-};
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Snapshot {
@@ -63,57 +56,20 @@ fn query() -> Snapshot {
 }
 
 pub struct Monitor {
-    state: Arc<Mutex<Snapshot>>,
-    stop: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    sample: crate::module::Cached<Snapshot>,
 }
 
 impl Monitor {
     pub fn new() -> Self {
-        let state = Arc::new(Mutex::new(Snapshot::Unavailable(
-            "checking microphone".into(),
-        )));
-        let stop = Arc::new(AtomicBool::new(false));
-        let worker_state = state.clone();
-        let worker_stop = stop.clone();
-        let worker = thread::Builder::new()
-            .name("nirubar-microphone".into())
-            .spawn(move || {
-                while !worker_stop.load(Ordering::Relaxed) {
-                    let snapshot = query();
-                    if let Ok(mut state) = worker_state.lock() {
-                        *state = snapshot;
-                    }
-                    for _ in 0..20 {
-                        if worker_stop.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        thread::sleep(Duration::from_millis(100));
-                    }
-                }
-            })
-            .ok();
         Self {
-            state,
-            stop,
-            worker,
+            sample: crate::module::Cached::new(Duration::from_secs(2), || Some(query())),
         }
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        self.state
-            .lock()
-            .map(|state| state.clone())
-            .unwrap_or_else(|_| Snapshot::Unavailable("microphone status unavailable".into()))
-    }
-}
-
-impl Drop for Monitor {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.sample
+            .get()
+            .unwrap_or_else(|| Snapshot::Unavailable("checking microphone".into()))
     }
 }
 

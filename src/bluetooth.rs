@@ -1,13 +1,6 @@
 //! Read-only BlueZ snapshots through the suite's shared CLI. The X11 thread
 //! never waits for BlueZ or bluetoothctl; one bounded worker handles provider I/O.
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    thread::{self, JoinHandle},
-    time::Duration,
-};
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
@@ -95,51 +88,18 @@ fn query() -> Snapshot {
 }
 
 pub struct Monitor {
-    state: Arc<Mutex<Snapshot>>,
-    stop: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
+    sample: crate::module::Cached<Snapshot>,
 }
 
 impl Monitor {
     pub fn new() -> Self {
-        let state = Arc::new(Mutex::new(Snapshot::default()));
-        let stop = Arc::new(AtomicBool::new(false));
-        let ws = state.clone();
-        let flag = stop.clone();
-        let worker = thread::Builder::new()
-            .name("nirubar-bluetooth".into())
-            .spawn(move || {
-                while !flag.load(Ordering::Relaxed) {
-                    let snapshot = query();
-                    if let Ok(mut state) = ws.lock() {
-                        *state = snapshot;
-                    }
-                    for _ in 0..20 {
-                        if flag.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        thread::sleep(Duration::from_millis(100));
-                    }
-                }
-            })
-            .ok();
         Self {
-            state,
-            stop,
-            worker,
+            sample: crate::module::Cached::new(Duration::from_secs(2), || Some(query())),
         }
     }
-    pub fn snapshot(&self) -> Snapshot {
-        self.state.lock().map(|s| s.clone()).unwrap_or_default()
-    }
-}
 
-impl Drop for Monitor {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(w) = self.worker.take() {
-            let _ = w.join();
-        }
+    pub fn snapshot(&self) -> Snapshot {
+        self.sample.get().unwrap_or_default()
     }
 }
 

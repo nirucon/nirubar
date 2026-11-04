@@ -765,7 +765,7 @@ impl Module for Wifi {
 /// its module show an older value, but cannot stop the bar from painting or
 /// handling input. Each enabled module owns one long-lived worker thread, not
 /// one thread per frame.
-struct Cached<T> {
+pub(crate) struct Cached<T> {
     value: std::sync::Arc<std::sync::Mutex<Option<T>>>,
     stop: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
     worker: Option<std::thread::JoinHandle<()>>,
@@ -775,7 +775,10 @@ impl<T> Cached<T>
 where
     T: Clone + Send + 'static,
 {
-    fn new(interval: std::time::Duration, probe: impl Fn() -> Option<T> + Send + 'static) -> Self {
+    pub(crate) fn new(
+        interval: std::time::Duration,
+        probe: impl Fn() -> Option<T> + Send + 'static,
+    ) -> Self {
         let value = std::sync::Arc::new(std::sync::Mutex::new(None));
         let stop = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let shared = value.clone();
@@ -806,7 +809,7 @@ where
         }
     }
 
-    fn get(&self) -> Option<T> {
+    pub(crate) fn get(&self) -> Option<T> {
         self.value.lock().ok().and_then(|value| value.clone())
     }
 }
