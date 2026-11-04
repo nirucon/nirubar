@@ -1050,7 +1050,8 @@ fn display_outputs_from(text: &str) -> Vec<DisplayOutput> {
 pub fn display_outputs() -> Option<Vec<DisplayOutput>> {
     let out = crate::probe::run(
         "xrandr",
-        &["--query"],
+        // Report the current RandR state without forcing a hardware reprobe.
+        &["--current"],
         &[],
         std::time::Duration::from_secs(2),
         64 * 1024,
