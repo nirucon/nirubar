@@ -15,7 +15,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-Xvfb :93 -screen 0 800x32x24 -nolisten tcp >"$T/xvfb.log" 2>&1 &
+# The test deliberately disconnects the last bar between themes. Prevent an
+# X server reset in that gap from racing the next bar's connection.
+Xvfb :93 -screen 0 800x32x24 -nolisten tcp -noreset >"$T/xvfb.log" 2>&1 &
 XVFB=$!
 i=0
 while [ ! -S /tmp/.X11-unix/X93 ]; do
