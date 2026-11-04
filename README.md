@@ -42,7 +42,7 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | `weather` | Cached temperature, condition and next-hour rain | Click for an eight-hour rain timeline and daylight progress |
 | `tasks` | Running or waiting NIRU/OpenCode tasks | Click for recent task states and results; Return/Open controls opens NIRU Actions |
 | `agent` | OpenCode agent entry | Click to type a short prompt and start OpenCode in a centred floating terminal |
-| `dnd` | Bell or slashed bell; reads Do Not Disturb from NIRUNOTIFY | Left click toggles DND; right click opens Quick Settings |
+| `dnd` | Bell or slashed bell; follows the configured notification provider | Left click toggles DND; right click opens Quick Settings |
 | `quicksettings` | Quick Settings entry | Opens volume, microphone, Wi-Fi, Bluetooth, displays, power, theme, DND, idle and lock controls in the launcher |
 | `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |
 | `display` | This bar screen position: `Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`; output count and connector are in the popup | Click for info, Return/Open controls for display profiles, middle-click for the same quick route |
@@ -55,6 +55,12 @@ The `wifi` segment is added automatically after `network` when a wireless
 adapter exists, even while its radio is off. Set `wifi = false` in `[bar]` to
 keep the combined `network` segment instead. The segment opens the launcher's
 Wi-Fi view; it never runs a second network editor.
+
+Media follows MPRIS changes through one supervised `playerctl --follow`
+process, with bounded one-shot queries as a fallback. Output volume follows
+PulseAudio/PipeWire sink events when `pactl` is available; if it or the server
+is unavailable, the existing bounded `wpctl`/ALSA polling path remains active.
+Followers are stopped with the bar, including when it is force-terminated.
 
 Display, power-profile, Bluetooth and microphone panels offer **Open controls**
 through Return or the footer. Each opens the existing launcher view; the bar has

@@ -69,6 +69,7 @@ fn spawn_subscriber(path: &PathBuf) -> std::io::Result<Child> {
         });
     }
     cmd.arg("subscribe")
+        .env("LC_ALL", "C")
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -199,7 +199,8 @@ position = "top"
 #   battery     laptops only; other machines show nothing
 #   clock       date and time
 #
-# `volume` and `media` need wpctl (or amixer) and playerctl; `updates` needs
+# `volume` and `media` need wpctl (or amixer) and playerctl. `pactl` is optional:
+# when available its events refresh output volume; otherwise it is polled. `updates` needs
 # the package manager it finds. Each says what is missing when clicked.
 # Add "weather" (and optionally "sun") to enable the information panels.
 # Add "notifications" for an unread indicator backed by nirunotify.
