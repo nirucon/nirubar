@@ -57,6 +57,10 @@ pub struct Icons {
     pub powerprofile: &'static str,
     /// The optional unread-indicator module.
     pub notifications: &'static str,
+    /// Do Not Disturb off: a normal bell.
+    pub dnd_off: &'static str,
+    /// Do Not Disturb on: a slashed bell.
+    pub dnd_on: &'static str,
     /// The media module's music note.
     pub music: &'static str,
     /// NIRUSEC's shield mark.
@@ -98,6 +102,8 @@ impl Icons {
             share: "\u{f1d8}",   // nf-fa-paper-plane
             powerprofile: "\u{f0e7}", // bolt
             notifications: "\u{f0f3}", // nf-fa-bell
+            dnd_off: "\u{f0f3}", // nf-fa-bell
+            dnd_on: "\u{f1f6}",  // nf-fa-bell_slash
             music: "\u{f001}",   // nf-fa-music
             nirusec: "\u{f132}", // nf-fa-shield
         }
@@ -132,6 +138,8 @@ impl Icons {
             share: "share",
             powerprofile: "pwr",
             notifications: "ntf",
+            dnd_off: "dnd",
+            dnd_on: "DND",
             music: "mus",
             nirusec: "sec",
         }

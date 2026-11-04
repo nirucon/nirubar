@@ -1545,6 +1545,86 @@ impl Module for Notifications {
     }
 }
 
+/// Do Not Disturb state, backed by the NIRUNOTIFY control socket.
+pub struct Dnd {
+    pub icons: status::Icons,
+    sample: Sample<bool>,
+}
+
+fn notification_dnd() -> Option<bool> {
+    let out = crate::probe::run(
+        "nirunotify",
+        &["--dnd", "status"],
+        &[],
+        std::time::Duration::from_secs(1),
+        64,
+    )?;
+    if !out.status.success() {
+        return None;
+    }
+    match String::from_utf8_lossy(&out.stdout).trim() {
+        "dnd on" => Some(true),
+        "dnd off" => Some(false),
+        _ => None,
+    }
+}
+
+impl Dnd {
+    pub fn new(icons: status::Icons) -> Self {
+        Self {
+            icons,
+            sample: Sample::default(),
+        }
+    }
+}
+
+impl Module for Dnd {
+    fn name(&self) -> &'static str {
+        "dnd"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        match self.sample.get(notification_dnd) {
+            Some(true) => self.icons.dnd_on.to_string(),
+            Some(false) => self.icons.dnd_off.to_string(),
+            None => String::new(),
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        let state = match self.sample.get(notification_dnd) {
+            Some(true) => "on",
+            Some(false) => "off",
+            None => "unavailable",
+        };
+        Some((
+            "Do Not Disturb".into(),
+            vec![
+                format!("DND is {state}"),
+                String::new(),
+                "left click: toggle".into(),
+                "right click: open Quick Settings".into(),
+            ],
+        ))
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::run(
+            "dnd-toggle",
+            Some(("nirunotify".into(), vec!["--dnd".into(), "toggle".into()])),
+        ))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Right => Some(Control::ui(
+                "quick-settings",
+                Some(("nirulauncher".into(), vec!["--quick".into()])),
+            )),
+            _ => None,
+        }
+    }
+}
+
 pub struct WeatherModule {
     weather: weather::Weather,
 }
@@ -1860,6 +1940,7 @@ pub fn build(
             "brightness" => out.push(Box::new(Brightness { icons })),
             "weather" => out.push(Box::new(WeatherModule::new(full))),
             "notifications" => out.push(Box::new(Notifications::new(icons))),
+            "dnd" => out.push(Box::new(Dnd::new(icons))),
             "sun" => out.push(Box::new(Sun {
                 latitude: full.weather_latitude,
                 longitude: full.weather_longitude,
@@ -2021,6 +2102,7 @@ mod tests {
                         | "sun"
                         | "weather"
                         | "notifications"
+                        | "dnd"
                         | "brightness"
                         | "display"
                         | "microphone"
