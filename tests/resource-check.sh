@@ -83,3 +83,28 @@ if kill -0 "$follower" 2>/dev/null; then
   echo 'FAIL: media follower survived bar shutdown' >&2
   exit 1
 fi
+
+# A hard WM/session crash bypasses Rust destructors. The follower must also
+# stop when its parent is killed, not merely when the bar exits gracefully.
+rm -f "$FOLLOW_PID"
+"$BIN" > "$TEST/bar-kill.log" 2>&1 & BAR=$!
+i=0
+while [ ! -s "$FOLLOW_PID" ]; do
+  kill -0 "$BAR" 2>/dev/null || { cat "$TEST/bar-kill.log"; exit 1; }
+  i=$((i + 1)); [ "$i" -le 100 ] || { echo 'FAIL: crash fixture follower did not start' >&2; exit 1; }
+  sleep 0.05
+done
+follower=$(cat "$FOLLOW_PID")
+kill -KILL "$BAR"
+wait "$BAR" 2>/dev/null || :
+BAR=
+i=0
+while kill -0 "$follower" 2>/dev/null; do
+  # A child reparented by SIGKILL may briefly be an init-owned zombie; it is
+  # no longer a running follower or holder of the session bus.
+  state=$(ps -o stat= -p "$follower" 2>/dev/null || :)
+  case "$state" in *Z*) break ;; esac
+  i=$((i + 1)); [ "$i" -le 40 ] || { echo 'FAIL: follower survived bar crash' >&2; exit 1; }
+  sleep 0.05
+done
+printf '%s\n' 'PASS: media follower stops on graceful exit and hard crash'

@@ -87,6 +87,22 @@ fn follower(selected: Option<&str>) -> std::io::Result<Child> {
     if let Some(player) = selected.filter(|player| !player.is_empty()) {
         cmd.args(["-p", player]);
     }
+    let parent = std::process::id();
+    // The WM or a session crash can terminate the bar with SIGKILL, so Drop
+    // cannot be the only owner of this long-running helper. Linux sends the
+    // child a signal when its parent dies, including immediately after fork.
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() as u32 != parent {
+                // Avoid allocation in the post-fork child.
+                return Err(std::io::Error::from_raw_os_error(libc::ECHILD));
+            }
+            Ok(())
+        });
+    }
     cmd.args(["--follow", "--format", FORMAT, "metadata"])
         .process_group(0)
         .stdin(Stdio::null())
