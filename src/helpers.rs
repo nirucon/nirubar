@@ -127,11 +127,15 @@ impl HelperPool {
 /// Tell the user that a control did not complete. Best effort: a session
 /// without a notification daemon must not turn this into another failure.
 pub(crate) fn notify_failure(detail: &str) {
+    // Do not make the bar's input/render loop wait for the notification
+    // daemon. The child is short-lived and detached; failure to report is not
+    // another UI stall.
     let _ = Command::new("notify-send")
         .args(["-a", "NIRUX", "-t", "4000", "Bar control", detail])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status();
+        .spawn();
 }
 
 #[cfg(test)]

@@ -481,20 +481,18 @@ impl Module for Network {
 pub struct Tailscale {
     pub icons: status::Icons,
     pub use_icons: bool,
-    checked: Option<std::time::Instant>,
-    snapshot: Option<tailscale::Snapshot>,
+    snapshot: Cached<tailscale::Snapshot>,
 }
 
 impl Tailscale {
-    fn refresh(&mut self) {
-        let now = std::time::Instant::now();
-        if self
-            .checked
-            .map(|then| now.duration_since(then).as_secs() >= 5)
-            .unwrap_or(true)
-        {
-            self.checked = Some(now);
-            self.snapshot = tailscale::installed().then(tailscale::snapshot).flatten();
+    pub fn new(icons: status::Icons, use_icons: bool) -> Self {
+        let snapshot = Cached::new(std::time::Duration::from_secs(5), || {
+            tailscale::installed().then(tailscale::snapshot).flatten()
+        });
+        Self {
+            icons,
+            use_icons,
+            snapshot,
         }
     }
 }
@@ -507,12 +505,12 @@ impl Module for Tailscale {
         Side::Right
     }
     fn render(&mut self) -> String {
-        self.refresh();
-        tailscale::text(self.snapshot.as_ref(), self.icons.tailscale, self.use_icons)
+        let snapshot = self.snapshot.get();
+        tailscale::text(snapshot.as_ref(), self.icons.tailscale, self.use_icons)
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        self.refresh();
-        let lines = match &self.snapshot {
+        let snapshot = self.snapshot.get();
+        let lines = match &snapshot {
             Some(snapshot) => tailscale::detail(snapshot),
             None => vec!["tailscale is not running".into()],
         };
@@ -749,39 +747,80 @@ impl Module for Wifi {
     }
 }
 
-/// Probe cadence is independent of animation cadence; failures are cached too.
-struct Sample<T> {
-    checked: Option<std::time::Instant>,
-    value: Option<T>,
+/// One bounded background refresher per module.
+///
+/// Render only clones the latest snapshot. A slow provider can therefore make
+/// its module show an older value, but cannot stop the bar from painting or
+/// handling input. Each enabled module owns one long-lived worker thread, not
+/// one thread per frame.
+struct Cached<T> {
+    value: std::sync::Arc<std::sync::Mutex<Option<T>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
-impl<T> Default for Sample<T> {
-    fn default() -> Self {
+impl<T> Cached<T>
+where
+    T: Clone + Send + 'static,
+{
+    fn new(interval: std::time::Duration, probe: impl Fn() -> Option<T> + Send + 'static) -> Self {
+        let value = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let shared = value.clone();
+        let stopping = stop.clone();
+        let worker = std::thread::Builder::new()
+            .name("nirubar-sample".into())
+            .spawn(move || {
+                let step = interval.min(std::time::Duration::from_millis(100));
+                loop {
+                    let sample = probe();
+                    if let Ok(mut latest) = shared.lock() {
+                        *latest = sample;
+                    }
+                    let mut waited = std::time::Duration::ZERO;
+                    while waited < interval {
+                        if stopping.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(step);
+                        waited += step;
+                    }
+                }
+            })
+            .ok();
         Self {
-            checked: None,
-            value: None,
+            value,
+            stop,
+            worker,
         }
+    }
+
+    fn get(&self) -> Option<T> {
+        self.value.lock().ok().and_then(|value| value.clone())
     }
 }
 
-impl<T> Sample<T> {
-    fn get(&mut self, probe: impl FnOnce() -> Option<T>) -> Option<&T> {
-        let now = std::time::Instant::now();
-        if self
-            .checked
-            .map(|t| now.duration_since(t).as_secs() >= 1)
-            .unwrap_or(true)
-        {
-            self.checked = Some(now);
-            self.value = probe();
+impl<T> Drop for Cached<T> {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
-        self.value.as_ref()
     }
 }
 
 pub struct Volume {
     pub icons: av::VolumeIcons,
-    sample: Sample<av::Volume>,
+    sample: Cached<av::Volume>,
+}
+
+impl Volume {
+    pub fn new(icons: av::VolumeIcons) -> Self {
+        Self {
+            icons,
+            sample: Cached::new(std::time::Duration::from_secs(2), av::Volume::read),
+        }
+    }
 }
 
 pub struct PowerProfile {
@@ -970,8 +1009,8 @@ impl Module for Volume {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match self.sample.get(av::Volume::read) {
-            Some(v) => av::volume_text(v, &self.icons),
+        match self.sample.get() {
+            Some(v) => av::volume_text(&v, &self.icons),
             // No audio server answers. Showing the speaker with a dash says
             // "the module is here, the sound is not", which is truer than the
             // silence of a module that vanishes.
@@ -979,7 +1018,7 @@ impl Module for Volume {
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let lines = match av::Volume::read() {
+        let lines = match self.sample.get() {
             Some(v) => vec![
                 if v.muted {
                     "muted".to_string()
@@ -1021,7 +1060,8 @@ impl Module for Volume {
 /// Placeholder for the drawn music mark. The em space keeps the layout honest
 /// where the text width is measured; the bar paints shapes over it.
 pub struct Media {
-    sample: Sample<av::Media>,
+    sample: Cached<av::Media>,
+    player_state: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// Selected MPRIS player; None follows the active player.
     pub player: Option<String>,
     /// Appearance contract: stop non-essential title movement.
@@ -1036,6 +1076,38 @@ pub struct Media {
     pub progress: Option<f32>,
 }
 
+impl Media {
+    pub fn new(
+        player: Option<String>,
+        reduced_motion: bool,
+        music: &'static str,
+        width: usize,
+    ) -> Self {
+        let player_state = std::sync::Arc::new(std::sync::Mutex::new(player.clone()));
+        let probe_player = player_state.clone();
+        let sample = Cached::new(std::time::Duration::from_secs(1), move || {
+            let selected = probe_player.lock().ok().and_then(|value| value.clone());
+            av::Media::read_player(selected.as_deref())
+        });
+        Self {
+            sample,
+            player_state,
+            player,
+            reduced_motion,
+            music,
+            scroller: crate::scroll::Scroller::new(width),
+            progress: None,
+        }
+    }
+
+    fn select_player(&mut self, player: Option<String>) {
+        self.player = player.clone();
+        if let Ok(mut selected) = self.player_state.lock() {
+            *selected = player;
+        }
+    }
+}
+
 impl Module for Media {
     fn name(&self) -> &'static str {
         "media"
@@ -1044,12 +1116,7 @@ impl Module for Media {
         Side::Right
     }
     fn render(&mut self) -> String {
-        let player = self.player.clone();
-        let Some(m) = self
-            .sample
-            .get(|| av::Media::read_player(player.as_deref()))
-            .cloned()
-        else {
+        let Some(m) = self.sample.get() else {
             // Nothing plays: let the next track start from its beginning, and
             // stop asking the bar to repaint.
             self.scroller.observe("");
@@ -1082,8 +1149,7 @@ impl Module for Media {
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         let players = av::Media::players();
-        let player = self.player.as_deref();
-        let lines = match av::Media::read_player(player) {
+        let lines = match self.sample.get() {
             Some(m) => vec![
                 m.title.clone(),
                 m.artist.clone(),
@@ -1142,7 +1208,7 @@ impl Module for Media {
                         .unwrap_or(0),
                     None => 0,
                 };
-                self.player = Some(players[next].clone());
+                self.select_player(Some(players[next].clone()));
                 // Player selection changes what the next render reads.
                 Some(Control::run("media-player", None))
             }
@@ -1462,7 +1528,8 @@ impl Module for Brightness {
 /// When the sun rises and sets, from `latitude` and `longitude`.
 pub struct Notifications {
     pub icons: status::Icons,
-    sample: Sample<usize>,
+    count: Cached<usize>,
+    history: Cached<Vec<String>>,
 }
 
 fn notification_count() -> Option<usize> {
@@ -1514,7 +1581,10 @@ impl Notifications {
     pub fn new(icons: status::Icons) -> Self {
         Self {
             icons,
-            sample: Sample::default(),
+            count: Cached::new(std::time::Duration::from_secs(1), notification_count),
+            history: Cached::new(std::time::Duration::from_secs(3), || {
+                Some(notification_history())
+            }),
         }
     }
 }
@@ -1527,13 +1597,13 @@ impl Module for Notifications {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match self.sample.get(notification_count) {
+        match self.count.get() {
             Some(0) | None => String::new(),
             Some(n) => format!("{} {n}", self.icons.notifications),
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let history = notification_history();
+        let history = self.history.get().unwrap_or_default();
         let mut lines = if history.is_empty() {
             vec!["no notifications".to_string()]
         } else {
@@ -1548,13 +1618,13 @@ impl Module for Notifications {
 /// Do Not Disturb state, backed by the NIRUNOTIFY control socket.
 pub struct Dnd {
     pub icons: status::Icons,
-    sample: Sample<bool>,
+    sample: Cached<bool>,
 }
 
 fn notification_dnd() -> Option<bool> {
     let out = crate::probe::run(
-        "nirunotify",
-        &["--dnd", "status"],
+        "niructl",
+        &["dnd", "status"],
         &[],
         std::time::Duration::from_secs(1),
         64,
@@ -1573,7 +1643,7 @@ impl Dnd {
     pub fn new(icons: status::Icons) -> Self {
         Self {
             icons,
-            sample: Sample::default(),
+            sample: Cached::new(std::time::Duration::from_secs(1), notification_dnd),
         }
     }
 }
@@ -1586,14 +1656,14 @@ impl Module for Dnd {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match self.sample.get(notification_dnd) {
+        match self.sample.get() {
             Some(true) => self.icons.dnd_on.to_string(),
             Some(false) => self.icons.dnd_off.to_string(),
             None => String::new(),
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let state = match self.sample.get(notification_dnd) {
+        let state = match self.sample.get() {
             Some(true) => "on",
             Some(false) => "off",
             None => "unavailable",
@@ -1611,7 +1681,7 @@ impl Module for Dnd {
     fn controls(&self) -> Option<Control> {
         Some(Control::run(
             "dnd-toggle",
-            Some(("nirunotify".into(), vec!["--dnd".into(), "toggle".into()])),
+            Some(("niructl".into(), vec!["dnd".into(), "toggle".into()])),
         ))
     }
     fn control(&mut self, input: Input) -> Option<Control> {
@@ -1874,12 +1944,7 @@ pub fn build(
             })),
             "agent" => out.push(Box::new(Agent { icons })),
             "share" => out.push(Box::new(Share { icons })),
-            "tailscale" => out.push(Box::new(Tailscale {
-                icons,
-                use_icons: cfg.icons,
-                checked: None,
-                snapshot: None,
-            })),
+            "tailscale" => out.push(Box::new(Tailscale::new(icons, cfg.icons))),
             "network" => {
                 out.push(Box::new(Network {
                     icons,
@@ -1909,10 +1974,7 @@ pub fn build(
                 every: std::time::Duration::from_secs(u64::from(cfg.update_check_minutes) * 60),
             })),
             "niruxupdate" => out.push(Box::new(NiruxUpdate { icons })),
-            "volume" => out.push(Box::new(Volume {
-                icons: cfg.volume_icons(),
-                sample: Sample::default(),
-            })),
+            "volume" => out.push(Box::new(Volume::new(cfg.volume_icons()))),
             "powerprofile" => out.push(Box::new(PowerProfile {
                 icons,
                 monitor: crate::powerprofile::Monitor::new(),
@@ -1927,14 +1989,12 @@ pub fn build(
                 monitor: crate::microphone::Monitor::new(),
                 visibility: cfg.microphone_visibility.clone(),
             })),
-            "media" => out.push(Box::new(Media {
-                sample: Sample::default(),
-                player: None,
-                reduced_motion: config::appearance_reduced_motion(),
-                music: icons.music,
-                scroller: crate::scroll::Scroller::new(cfg.media_width),
-                progress: None,
-            })),
+            "media" => out.push(Box::new(Media::new(
+                None,
+                config::appearance_reduced_motion(),
+                icons.music,
+                cfg.media_width,
+            ))),
             "pulse" => out.push(Box::new(Pulse::new(cfg.graph_width, icons))),
             "uptime" => out.push(Box::new(Uptime { icons })),
             "brightness" => out.push(Box::new(Brightness { icons })),
@@ -2022,39 +2082,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn samples_cache_success_and_failure_independently_of_redraws() {
-        let mut sample = super::Sample::default();
-        let mut calls = 0;
-        for _ in 0..100 {
-            assert_eq!(
-                sample.get(|| {
-                    calls += 1;
-                    Some(42)
-                }),
-                Some(&42)
-            );
-        }
-        assert_eq!(calls, 1);
-        sample.checked = sample
-            .checked
-            .map(|t| t - std::time::Duration::from_secs(2));
-        assert_eq!(
-            sample.get(|| {
-                calls += 1;
-                None
-            }),
-            None
-        );
-        assert_eq!(
-            sample.get(|| {
-                calls += 1;
-                Some(99)
-            }),
-            None
-        );
-        assert_eq!(calls, 2);
-    }
     use super::*;
 
     #[test]
@@ -2321,14 +2348,7 @@ mod tests {
 
     #[test]
     fn media_controls_are_explicit_and_player_aware() {
-        let mut media = Media {
-            sample: Sample::default(),
-            player: Some("mpv".into()),
-            reduced_motion: false,
-            music: ">",
-            scroller: crate::scroll::Scroller::new(10),
-            progress: None,
-        };
+        let mut media = Media::new(Some("mpv".into()), false, ">", 10);
         let right = media.control(Input::Right).and_then(|c| c.command);
         assert_eq!(
             right,
@@ -2357,10 +2377,7 @@ mod tests {
 
     #[test]
     fn volume_controls_exist_even_when_the_provider_is_missing() {
-        let mut volume = Volume {
-            icons: crate::av::VolumeIcons::plain(),
-            sample: Sample::default(),
-        };
+        let mut volume = Volume::new(crate::av::VolumeIcons::plain());
         for input in [
             Input::Right,
             Input::Middle,

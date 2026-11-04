@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
 use system_tray::client::{ActivateRequest, Client};
 use system_tray::data::BaseMap;
 use system_tray::item::{IconPixmap, Status, StatusNotifierItem};
@@ -108,36 +107,25 @@ enum Command {
 }
 
 impl Host {
-    /// Start the host, or return `None` when there is no usable session bus.
+    /// Start the SNI host without delaying the first bar frame.
     ///
-    /// The wait is bounded: a missing or wedged bus must not delay the bar.
+    /// The worker owns the bus connection and publishes items as they arrive.
+    /// A missing or wedged bus is logged by that worker; it must not prevent the
+    /// bar, workspace cells and clock from appearing.
     pub fn new() -> Result<Option<Self>> {
         let snapshot = Arc::new(Mutex::new(Vec::new()));
-        let (ready_tx, ready_rx) = std_mpsc::channel();
+        let (ready_tx, _ready_rx) = std_mpsc::channel();
         let (commands, command_rx) = mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
         let thread_snapshot = snapshot.clone();
         thread::Builder::new()
             .name("nirubar-sni".into())
             .spawn(move || run(thread_snapshot, command_rx, shutdown_rx, ready_tx))?;
-
-        match ready_rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(Ok(())) => Ok(Some(Self {
-                snapshot,
-                commands,
-                shutdown,
-            })),
-            Ok(Err(error)) => {
-                eprintln!("nirubar: sni: {error}");
-                let _ = shutdown.send(true);
-                Ok(None)
-            }
-            Err(_) => {
-                eprintln!("nirubar: sni: timed out connecting to the session bus");
-                let _ = shutdown.send(true);
-                Ok(None)
-            }
-        }
+        Ok(Some(Self {
+            snapshot,
+            commands,
+            shutdown,
+        }))
     }
 
     /// Current items, left to right. The order is stable across refreshes.
@@ -215,15 +203,14 @@ fn run(
         let client = match Client::new().await {
             Ok(client) => Arc::new(client),
             Err(error) => {
+                eprintln!("nirubar: sni: session bus unavailable: {error}");
                 let _ = ready_tx.send(Err(format!("session bus unavailable: {error}")));
                 return;
             }
         };
         let mut events = client.subscribe();
         refresh(&client, &snapshot);
-        if ready_tx.send(Ok(())).is_err() {
-            return;
-        }
+        let _ = ready_tx.send(Ok(()));
 
         let command_client = client.clone();
         tokio::spawn(async move {
