@@ -206,17 +206,29 @@ mod tests {
 
     #[test]
     fn an_escaped_descendant_is_cut_off_at_the_shared_deadline() {
+        let marker =
+            std::env::temp_dir().join(format!("nirubar-probe-escaped-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let marker_text = marker.to_string_lossy().to_string();
         let start = Instant::now();
         let out = run(
             "sh",
-            &["-c", "setsid sh -c 'sleep 0.3' & exit 0"],
-            &[],
-            Duration::from_millis(100),
+            &["-c", "setsid sh -c 'printf %s $$ > \"$PROBE_READY\"; exec sleep 2' & while [ ! -s \"$PROBE_READY\" ]; do sleep 0.005; done"],
+            &[("PROBE_READY", &marker_text)],
+            Duration::from_millis(300),
             1024,
         );
+        let pid: i32 = std::fs::read_to_string(&marker)
+            .expect("escaped child did not signal readiness")
+            .parse()
+            .unwrap();
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+        let _ = std::fs::remove_file(marker);
         assert!(out.is_none());
         assert!(
-            start.elapsed() < Duration::from_millis(500),
+            start.elapsed() < Duration::from_secs(1),
             "escaped pipe holder defeated the deadline: {:?}",
             start.elapsed()
         );
