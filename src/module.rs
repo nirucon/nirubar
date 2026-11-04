@@ -829,14 +829,14 @@ impl<T> Drop for Cached<T> {
 
 pub struct Volume {
     pub icons: av::VolumeIcons,
-    sample: Cached<av::Volume>,
+    sample: crate::audio_monitor::Monitor,
 }
 
 impl Volume {
     pub fn new(icons: av::VolumeIcons) -> Self {
         Self {
             icons,
-            sample: Cached::new(std::time::Duration::from_secs(2), av::Volume::read),
+            sample: crate::audio_monitor::Monitor::new(),
         }
     }
 }
@@ -1027,7 +1027,7 @@ impl Module for Volume {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match self.sample.get() {
+        match self.sample.snapshot() {
             Some(v) => av::volume_text(&v, &self.icons),
             // No audio server answers. Showing the speaker with a dash says
             // "the module is here, the sound is not", which is truer than the
@@ -1036,7 +1036,7 @@ impl Module for Volume {
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let lines = match self.sample.get() {
+        let lines = match self.sample.snapshot() {
             Some(v) => vec![
                 if v.muted {
                     "muted".to_string()

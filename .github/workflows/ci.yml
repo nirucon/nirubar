@@ -25,6 +25,8 @@ jobs:
         run: sh tests/resource-check.sh "$PWD/target/release/nirubar"
       - name: Media follower fallback
         run: xvfb-run -a sh tests/media-fallback.sh "$PWD/target/release/nirubar"
+      - name: Audio event follower
+        run: xvfb-run -a sh tests/audio-follow.sh "$PWD/target/release/nirubar"
 
   distros:
     strategy:

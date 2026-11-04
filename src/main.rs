@@ -8,6 +8,7 @@
 //! manager with it.
 
 mod ambient;
+mod audio_monitor;
 mod av;
 mod bluetooth;
 mod config;
