@@ -716,12 +716,21 @@ impl Module for Agent {
 }
 
 /// A separate Wi-Fi segment. It exists only when the machine has a wireless
-/// A separate Wi-Fi segment. It exists only when the machine has a wireless
-/// A separate Wi-Fi segment. It exists only when the machine has a wireless
 /// adapter, and it opens the launcher's Wi-Fi view on left click.
 pub struct Wifi {
     pub icons: status::Icons,
     pub use_icons: bool,
+    sample: Cached<status::WifiState>,
+}
+
+impl Wifi {
+    fn new(icons: status::Icons, use_icons: bool) -> Self {
+        Self {
+            icons,
+            use_icons,
+            sample: Cached::new(Duration::from_secs(1), || Some(status::wifi_state())),
+        }
+    }
 }
 
 impl Module for Wifi {
@@ -732,10 +741,13 @@ impl Module for Wifi {
         Side::Right
     }
     fn render(&mut self) -> String {
-        status::wifi_text(status::wifi_state(), &self.icons, self.use_icons)
+        self.sample
+            .get()
+            .map(|state| status::wifi_text(state, &self.icons, self.use_icons))
+            .unwrap_or_default()
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let state = status::wifi_state();
+        let state = self.sample.get()?;
         if !state.present {
             return None;
         }
@@ -755,7 +767,7 @@ impl Module for Wifi {
 /// one thread per frame.
 struct Cached<T> {
     value: std::sync::Arc<std::sync::Mutex<Option<T>>>,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stop: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -765,26 +777,25 @@ where
 {
     fn new(interval: std::time::Duration, probe: impl Fn() -> Option<T> + Send + 'static) -> Self {
         let value = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         let shared = value.clone();
         let stopping = stop.clone();
         let worker = std::thread::Builder::new()
             .name("nirubar-sample".into())
-            .spawn(move || {
-                let step = interval.min(std::time::Duration::from_millis(100));
-                loop {
-                    let sample = probe();
-                    if let Ok(mut latest) = shared.lock() {
-                        *latest = sample;
-                    }
-                    let mut waited = std::time::Duration::ZERO;
-                    while waited < interval {
-                        if stopping.load(std::sync::atomic::Ordering::Relaxed) {
-                            return;
-                        }
-                        std::thread::sleep(step);
-                        waited += step;
-                    }
+            .spawn(move || loop {
+                let sample = probe();
+                if let Ok(mut latest) = shared.lock() {
+                    *latest = sample;
+                }
+                let (lock, wake) = &*stopping;
+                let Ok(stopped) = lock.lock() else {
+                    return;
+                };
+                let Ok((stopped, _)) = wake.wait_timeout_while(stopped, interval, |v| !*v) else {
+                    return;
+                };
+                if *stopped {
+                    return;
                 }
             })
             .ok();
@@ -802,7 +813,11 @@ where
 
 impl<T> Drop for Cached<T> {
     fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (lock, wake) = &*self.stop;
+        if let Ok(mut stopped) = lock.lock() {
+            *stopped = true;
+            wake.notify_one();
+        }
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -1955,18 +1970,12 @@ pub fn build(
                     && status::wifi_present()
                     && !cfg.modules.iter().any(|module| module == "wifi")
                 {
-                    out.push(Box::new(Wifi {
-                        icons,
-                        use_icons: cfg.icons,
-                    }));
+                    out.push(Box::new(Wifi::new(icons, cfg.icons)));
                 }
             }
             "wifi" => {
                 if cfg.wifi && status::wifi_present() {
-                    out.push(Box::new(Wifi {
-                        icons,
-                        use_icons: cfg.icons,
-                    }));
+                    out.push(Box::new(Wifi::new(icons, cfg.icons)));
                 }
             }
             "updates" => out.push(Box::new(Updates {
@@ -2083,6 +2092,53 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn wifi_redraws_use_cached_state_without_repeating_the_probe() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let sample = Cached::new(Duration::from_secs(30), move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Some(status::WifiState {
+                present: true,
+                powered: true,
+                connected: true,
+                hard_blocked: false,
+                soft_blocked: false,
+                ssid: Some("test network".into()),
+                signal: Some(75),
+            })
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while sample.get().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut wifi = Wifi {
+            icons: status::Icons::plain(),
+            use_icons: false,
+            sample,
+        };
+        for _ in 0..100 {
+            assert_eq!(wifi.render(), "wifi");
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(wifi
+            .popup()
+            .unwrap()
+            .1
+            .iter()
+            .any(|line| line.contains("test network")));
+        let started = Instant::now();
+        drop(wifi);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "worker shutdown must wake promptly"
+        );
+    }
 
     #[test]
     fn task_state_icons_are_not_colour_only() {
