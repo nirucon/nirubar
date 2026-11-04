@@ -100,29 +100,41 @@ fn popup_and_reload_cycles_release_server_pixmaps() {
             .data
     };
     for cycle in 0..4 {
-        c.send_event(
-            false,
-            window,
-            EventMask::BUTTON_PRESS,
-            ButtonPressEvent {
-                response_type: BUTTON_PRESS_EVENT,
-                detail: 1,
-                sequence: 0,
-                time: x11rb::CURRENT_TIME,
-                root,
-                event: window,
-                child: 0,
-                root_x: (width - 40) as i16,
-                root_y: 10,
-                event_x: (width - 40) as i16,
-                event_y: 10,
-                state: KeyButMask::default(),
-                same_screen: true,
-            },
-        )
-        .unwrap();
-        c.flush().unwrap();
-        wait(&mut || children() > baseline_children);
+        // A reloaded media module obtains its first snapshot asynchronously.
+        // Retry the click until the module is rendered instead of assuming it
+        // exists immediately after the theme's background pixel changes.
+        let mut last_click = Instant::now() - Duration::from_secs(1);
+        wait(&mut || {
+            if children() > baseline_children {
+                return true;
+            }
+            if last_click.elapsed() >= Duration::from_millis(200) {
+                c.send_event(
+                    false,
+                    window,
+                    EventMask::BUTTON_PRESS,
+                    ButtonPressEvent {
+                        response_type: BUTTON_PRESS_EVENT,
+                        detail: 1,
+                        sequence: 0,
+                        time: x11rb::CURRENT_TIME,
+                        root,
+                        event: window,
+                        child: 0,
+                        root_x: (width - 40) as i16,
+                        root_y: 10,
+                        event_x: (width - 40) as i16,
+                        event_y: 10,
+                        state: KeyButMask::default(),
+                        same_screen: true,
+                    },
+                )
+                .unwrap();
+                c.flush().unwrap();
+                last_click = Instant::now();
+            }
+            false
+        });
         assert!(Command::new("xdotool")
             .args(["key", "Escape"])
             .status()

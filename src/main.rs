@@ -353,6 +353,9 @@ struct Bar {
     atoms: HashMap<&'static str, Atom>,
     renderer: render::Renderer,
     last_frame: String,
+    /// EWMH workspace/client state only needs rereading after X properties
+    /// change, not on every animation frame.
+    snapshot_dirty: bool,
     icons: status::Icons,
     /// Where this bar sits, for the strut and for placing popups.
     bar_x: i16,
@@ -667,6 +670,7 @@ impl Bar {
             atoms,
             renderer,
             last_frame: String::new(),
+            snapshot_dirty: true,
             bar_x,
             bar_y,
             edge,
@@ -790,6 +794,16 @@ impl Bar {
             .and_then(|r| r.value32().map(|v| v.collect::<Vec<_>>()))
             .unwrap_or_default();
         for w in clients {
+            // Client desktop/title changes may not rewrite a root property on
+            // other EWMH window managers. Property selection is per X client.
+            if let Ok(cookie) = self.c.change_window_attributes(
+                w,
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+            ) {
+                // A client may disappear between the client-list read and
+                // subscription; consume that normal BadWindow race here.
+                let _ = cookie.check();
+            }
             if let Some(t) = self.values(w, "_NET_WM_DESKTOP").first() {
                 if *t >= offset && *t < offset + count as u32 {
                     occupied[(*t - offset) as usize] = true;
@@ -1217,7 +1231,10 @@ impl Bar {
         for failure in self.helpers.reap() {
             helpers::notify_failure(&failure);
         }
-        self.snapshot();
+        if self.snapshot_dirty {
+            self.snapshot_dirty = false;
+            self.snapshot();
+        }
         let frame = self.frame_key();
         if frame == self.last_frame {
             return Ok(());
@@ -1716,6 +1733,7 @@ impl Bar {
         self.workspaces = Workspaces::new(&cfg.bar);
         self.cells = cfg.bar.cell_width as i16;
         self.cfg = cfg;
+        self.snapshot_dirty = true;
         self.last_frame.clear();
         self.draw()
     }
@@ -1909,6 +1927,7 @@ impl Bar {
                 }
                 Event::NoExposure(_) => {}
                 Event::PropertyNotify(_) => {
+                    self.snapshot_dirty = true;
                     self.last_frame.clear();
                     self.draw()?;
                 }
