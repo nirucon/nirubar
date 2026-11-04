@@ -54,5 +54,16 @@ threads=$(awk '/Threads:/{print $2}' "/proc/$BAR/status")
 rss=$(awk '/VmRSS:/{print $2}' "/proc/$BAR/status")
 printf '10s scrolling: playerctl=%s wpctl=%s threads=%s CPU_ticks=%s RSS_KiB=%s\n' "$player" "$volume" "$threads" "$((after-before))" "$rss"
 if [ "$MODE" != baseline ]; then
-  [ "$player" -le 66 ] && [ "$volume" -le 11 ] && [ "$threads" = 1 ]
+  # The media and volume sources deliberately use background workers. The
+  # previous one-thread assertion rejected every current build, not a resource
+  # regression. Bound the two sources' process cadence and allow only the main
+  # thread, those two workers, and one optional tray/runtime worker.
+  [ "$player" -le 55 ] || { echo "FAIL: excessive media probes" >&2; exit 1; }
+  [ "$volume" -le 8 ] || { echo "FAIL: excessive volume probes" >&2; exit 1; }
+  [ "$threads" -le 4 ] || { echo "FAIL: unexpected thread growth" >&2; exit 1; }
+  # At 100 ticks/second this permits up to 5% of a core during scrolling;
+  # account for platforms with a different CLK_TCK.
+  hz=$(getconf CLK_TCK)
+  max_ticks=$((hz / 2 + 1))
+  [ "$((after-before))" -le "$max_ticks" ] || { echo "FAIL: excessive scrolling CPU" >&2; exit 1; }
 fi
