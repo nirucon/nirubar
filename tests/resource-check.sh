@@ -16,6 +16,7 @@ cat > "$TEST/bin/playerctl" <<'HELPER'
 #!/bin/sh
 printf 'playerctl\n' >> "$PROBE_LOG"
 case "$*" in
+  *--format*) printf 'Playing\03730000000\037Fixture artist\037A deliberately long title for continuous scrolling in the fixture\037180000000\n' ;;
   status) printf 'Playing\n' ;;
   'metadata artist') printf 'Fixture artist\n' ;;
   'metadata title') printf 'A deliberately long title for continuous scrolling in the fixture\n' ;;
@@ -58,7 +59,7 @@ if [ "$MODE" != baseline ]; then
   # previous one-thread assertion rejected every current build, not a resource
   # regression. Bound the two sources' process cadence and allow only the main
   # thread, those two workers, and one optional tray/runtime worker.
-  [ "$player" -le 55 ] || { echo "FAIL: excessive media probes" >&2; exit 1; }
+  [ "$player" -le 15 ] || { echo "FAIL: excessive media probes" >&2; exit 1; }
   [ "$volume" -le 8 ] || { echo "FAIL: excessive volume probes" >&2; exit 1; }
   [ "$threads" -le 4 ] || { echo "FAIL: unexpected thread growth" >&2; exit 1; }
   # At 100 ticks/second this permits up to 5% of a core during scrolling;

@@ -288,6 +288,37 @@ pub struct Media {
     pub position: Option<(u64, u64)>,
 }
 
+/// The formatted `playerctl metadata` request reports position and length in
+/// microseconds. Keep the separator out of ordinary titles and preserve empty
+/// fields for streams without a length.
+fn media_from_snapshot(text: &str) -> Option<Media> {
+    let mut fields = text.trim_end_matches(['\r', '\n']).splitn(5, '\u{1f}');
+    let status = fields.next()?;
+    let position = fields.next()?;
+    let artist = fields.next()?;
+    let title = fields.next()?;
+    let length = fields.next()?;
+    if status.is_empty() || title.is_empty() {
+        return None;
+    }
+    let position = position
+        .parse::<f64>()
+        .ok()
+        .zip(length.parse::<f64>().ok())
+        .and_then(|(pos, len)| {
+            (len > 1_000_000.0).then_some((
+                (pos.max(0.0) / 1_000_000.0) as u64,
+                (len / 1_000_000.0) as u64,
+            ))
+        });
+    Some(Media {
+        artist: artist.to_string(),
+        title: title.to_string(),
+        playing: status == "Playing",
+        position,
+    })
+}
+
 impl Media {
     /// Ask the running player through MPRIS.
     ///
@@ -298,6 +329,32 @@ impl Media {
     pub fn read_player(player: Option<&str>) -> Option<Self> {
         if !which("playerctl") {
             return None;
+        }
+        // One formatted metadata request can return all five values. A
+        // missing player or one without metadata stays silent; older providers
+        // with incompatible format support retain the previous query path.
+        const FORMAT: &str =
+            "{{status}}\u{1f}{{position}}\u{1f}{{artist}}\u{1f}{{title}}\u{1f}{{mpris:length}}";
+        let mut args = player_args(player);
+        args.extend(["--format".into(), FORMAT.into(), "metadata".into()]);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        if let Some(out) = crate::probe::run(
+            "playerctl",
+            &refs,
+            &[],
+            std::time::Duration::from_secs(2),
+            64 * 1024,
+        ) {
+            if out.status.success() {
+                if let Some(media) = media_from_snapshot(&String::from_utf8_lossy(&out.stdout)) {
+                    return Some(media);
+                }
+            } else {
+                let error = String::from_utf8_lossy(&out.stderr);
+                if error.contains("No players found") || error.contains("No player could handle") {
+                    return None;
+                }
+            }
         }
         let playing = player_query(player, &["status"]).as_deref() == Some("Playing");
         let artist = player_query(player, &["metadata", "artist"]).unwrap_or_default();
@@ -478,6 +535,22 @@ const NOTE_MARK: [char; 3] = ['\u{2588}', '\u{2584}', '\u{2588}'];
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combined_media_snapshot_parses_microseconds_and_optional_length() {
+        let snapshot =
+            media_from_snapshot("Playing\u{1f}30500000\u{1f}Artist\u{1f}Title\u{1f}180000000\n")
+                .unwrap();
+        assert_eq!(
+            (snapshot.playing, snapshot.position),
+            (true, Some((30, 180)))
+        );
+        assert_eq!((&*snapshot.artist, &*snapshot.title), ("Artist", "Title"));
+        let stream = media_from_snapshot("Paused\u{1f}0\u{1f}\u{1f}Stream\u{1f}\n").unwrap();
+        assert!(!stream.playing);
+        assert_eq!(stream.position, None);
+        assert!(media_from_snapshot("Playing\u{1f}0\u{1f}Artist\u{1f}\u{1f}0").is_none());
+    }
 
     #[test]
     fn volume_text_shows_a_percentage() {
