@@ -353,6 +353,8 @@ struct Bar {
     atoms: HashMap<&'static str, Atom>,
     renderer: render::Renderer,
     last_frame: String,
+    snapshot_dirty: bool,
+    watched_clients: std::collections::HashSet<Window>,
     icons: status::Icons,
     /// Where this bar sits, for the strut and for placing popups.
     bar_x: i16,
@@ -667,6 +669,8 @@ impl Bar {
             atoms,
             renderer,
             last_frame: String::new(),
+            snapshot_dirty: true,
+            watched_clients: std::collections::HashSet::new(),
             bar_x,
             bar_y,
             edge,
@@ -789,7 +793,31 @@ impl Bar {
             .and_then(|r| r.reply().ok())
             .and_then(|r| r.value32().map(|v| v.collect::<Vec<_>>()))
             .unwrap_or_default();
+        self.watched_clients
+            .retain(|window| clients.contains(window));
+        if self.monitor_managed && !self.watched_clients.is_empty() {
+            // NIRUWM publishes desktop-placement changes on the root. Avoid
+            // subscribing to every client's unrelated high-rate properties.
+            for window in self.watched_clients.drain() {
+                if let Ok(cookie) = self.c.change_window_attributes(
+                    window,
+                    &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
+                ) {
+                    let _ = cookie.check();
+                }
+            }
+        }
         for w in clients {
+            if !self.monitor_managed && !self.watched_clients.contains(&w) {
+                if let Ok(cookie) = self.c.change_window_attributes(
+                    w,
+                    &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
+                ) {
+                    if cookie.check().is_ok() {
+                        self.watched_clients.insert(w);
+                    }
+                }
+            }
             if let Some(t) = self.values(w, "_NET_WM_DESKTOP").first() {
                 if *t >= offset && *t < offset + count as u32 {
                     occupied[(*t - offset) as usize] = true;
@@ -1217,7 +1245,10 @@ impl Bar {
         for failure in self.helpers.reap() {
             helpers::notify_failure(&failure);
         }
-        self.snapshot();
+        if self.snapshot_dirty {
+            self.snapshot_dirty = false;
+            self.snapshot();
+        }
         let frame = self.frame_key();
         if frame == self.last_frame {
             return Ok(());
@@ -1716,6 +1747,7 @@ impl Bar {
         self.workspaces = Workspaces::new(&cfg.bar);
         self.cells = cfg.bar.cell_width as i16;
         self.cfg = cfg;
+        self.snapshot_dirty = true;
         self.last_frame.clear();
         self.draw()
     }
@@ -1908,7 +1940,18 @@ impl Bar {
                     self.draw()?;
                 }
                 Event::NoExposure(_) => {}
-                Event::PropertyNotify(_) => {
+                Event::PropertyNotify(e)
+                    if e.window == self.root || e.atom == self.atom("_NET_WM_DESKTOP") =>
+                {
+                    self.snapshot_dirty = true;
+                    self.last_frame.clear();
+                    self.draw()?;
+                }
+                Event::PropertyNotify(e)
+                    if self.title_shown == Some(e.window)
+                        && (e.atom == self.atom("_NET_WM_NAME")
+                            || e.atom == u32::from(AtomEnum::WM_NAME)) =>
+                {
                     self.last_frame.clear();
                     self.draw()?;
                 }
