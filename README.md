@@ -13,7 +13,7 @@ NetworkManager is required.
   own workspace cells and its own clock.
 - Font-aware layout and semantic theme colours drawn from the active NIRUX
   theme, with ten built-in theme palettes when NIRUX is not installed.
-- Panels with measured hitboxes, Escape/click-outside dismissal and a timeout.
+- Panels with measured hitboxes (a module is clickable across its whole cell, padding included, up to the separator), Escape/click-outside dismissal and a timeout.
 - XEmbed and D-Bus StatusNotifierItem trays, on the primary monitor.
 - Narrow-width overflow: low-priority modules collapse into a clickable `+N`.
 - Bounded provider queries and caching for package updates and weather.

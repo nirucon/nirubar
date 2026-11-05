@@ -65,6 +65,9 @@ pub struct Icons {
     pub music: &'static str,
     /// NIRUSEC's shield mark.
     pub nirusec: &'static str,
+    /// A new NIRUX release is available: a download arrow, so it never looks
+    /// like the notification or Do Not Disturb bell.
+    pub download: &'static str,
 }
 
 impl Icons {
@@ -106,6 +109,7 @@ impl Icons {
             dnd_on: "\u{f1f6}",  // nf-fa-bell_slash
             music: "\u{f001}",   // nf-fa-music
             nirusec: "\u{f132}", // nf-fa-shield
+            download: "\u{f019}", // nf-fa-download
         }
     }
 
@@ -142,6 +146,7 @@ impl Icons {
             dnd_on: "DND",
             music: "mus",
             nirusec: "sec",
+            download: "new",
         }
     }
 }

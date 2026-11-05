@@ -14,7 +14,7 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 | `battery` | Aggregated battery packs; panel shows charge, state and remaining time when available |
 | `volume` | Output level or mute; click for info, scroll to change, right-click mute, middle-click microphone mute |
 | `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |
-| `recording` | NIRUCLIP active indicator/timer; right-click stop, middle-click capture panel |
+| `recording` | NIRUCLIP indicator: `● rec MM:SS` while recording, `○ paused MM:SS` while paused (recorded time, pauses excluded); right-click stop and save, middle-click capture panel |
 | `brightness` | Backlight percentage; hidden without a readable backlight |
 | `media` | Playing title; right-click play/pause, scroll previous/next, middle-click next player |
 | `powerprofile` | Active power profile; right-click next profile, middle-click launcher selector |

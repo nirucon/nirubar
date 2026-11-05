@@ -160,7 +160,8 @@ pub fn play_update_sound(version: &str) {
 /// Text for an installed generation that needs a logout/login or bar restart.
 pub fn activation_text(version: Option<&str>, glyph: &str) -> String {
     match version {
-        Some(v) => format!("{glyph} NIRUX {v} ↻"),
+        // Words, not a trailing arrow: U+21BB is missing from common bar fonts.
+        Some(v) => format!("{glyph} activate NIRUX {v}"),
         None => String::new(),
     }
 }

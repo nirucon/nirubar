@@ -340,7 +340,16 @@ fn event_is_from(event: &Event, window: Window) -> bool {
 struct Placed {
     index: usize,
     x: i16,
-    width: i16,
+    /// Click target: the text plus the padding on both sides, up to the
+    /// separator hairline, so a module is hit anywhere in its own cell.
+    hit_x: i16,
+    hit_width: i16,
+}
+
+impl Placed {
+    fn contains(&self, x: i16) -> bool {
+        x >= self.hit_x && x < self.hit_x + self.hit_width
+    }
 }
 
 /// Which optional module gives way first when the bar is narrow.
@@ -1140,7 +1149,8 @@ impl Bar {
             placed.push(Placed {
                 index: *index,
                 x,
-                width: w,
+                hit_x: x - gap,
+                hit_width: w + gap * 2,
             });
             if !separator.is_empty() && w > 0 && !text.starts_with(' ') {
                 // A hairline at the midpoint of the gap, so both sides have
@@ -1187,7 +1197,8 @@ impl Bar {
             Placed {
                 index: usize::MAX,
                 x,
-                width,
+                hit_x: x - gap,
+                hit_width: width + gap,
             }
         });
         if self.overflow.is_none() {
@@ -1397,12 +1408,7 @@ impl Bar {
 
     /// Run an explicit non-left control on the module under the pointer.
     fn control(&mut self, x: i16, input: module::Input) -> Result<()> {
-        let Some(index) = self
-            .placed
-            .iter()
-            .find(|p| x >= p.x && x < p.x + p.width)
-            .map(|p| p.index)
-        else {
+        let Some(index) = self.placed.iter().find(|p| p.contains(x)).map(|p| p.index) else {
             return Ok(());
         };
         let Some(control) = self.modules.get_mut(index).and_then(|m| m.control(input)) else {
@@ -1607,7 +1613,7 @@ impl Bar {
             return self.select_workspace(tag);
         }
         if let Some(overflow) = self.overflow {
-            if x >= overflow.x && x < overflow.x + overflow.width {
+            if overflow.contains(x) {
                 if let Some(open) = &self.popup {
                     if open.module == usize::MAX {
                         return self.close_popup();
@@ -1638,12 +1644,7 @@ impl Bar {
                 return Ok(());
             }
         }
-        if let Some(index) = self
-            .placed
-            .iter()
-            .find(|p| x >= p.x && x < p.x + p.width)
-            .map(|p| p.index)
-        {
+        if let Some(index) = self.placed.iter().find(|p| p.contains(x)).map(|p| p.index) {
             if self.modules.get(index).is_some_and(|module| {
                 matches!(
                     module.name(),
@@ -1660,7 +1661,7 @@ impl Bar {
         let hit = self
             .placed
             .iter()
-            .find(|p| x >= p.x && x < p.x + p.width)
+            .find(|p| p.contains(x))
             .map(|p| (p.index, p.x));
         let Some((index, left)) = hit else {
             self.close_popup()?;
@@ -1954,7 +1955,7 @@ impl Bar {
                         let same_module = self
                             .placed
                             .iter()
-                            .find(|pl| e.event_x >= pl.x && e.event_x < pl.x + pl.width)
+                            .find(|pl| pl.contains(e.event_x))
                             .map(|pl| pl.index == p.module)
                             .unwrap_or(false);
                         p.destroy(&self.c, self.root)?;
@@ -2271,6 +2272,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.nirusec
         } else {
             plain.nirusec
+        },
+        download: if ok(nerd.download) {
+            nerd.download
+        } else {
+            plain.download
         },
         dnd_off: if ok(nerd.dnd_off) {
             nerd.dnd_off

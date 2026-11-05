@@ -11,6 +11,8 @@ struct Performance {
     drop_frames: Option<u64>,
     dup_frames: Option<u64>,
     speed: Option<f64>,
+    /// Progress of the current segment, in microseconds.
+    out_time_us: Option<f64>,
 }
 
 impl Performance {
@@ -61,11 +63,15 @@ struct State {
     recoverable: bool,
     performance: Option<Performance>,
     reason: String,
+    /// Recorded seconds in segments finished before the current one. NIRUCLIP
+    /// writes it once a recording has been paused.
+    elapsed_before: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
     Recording { seconds: u64 },
+    Paused { seconds: u64 },
     Recover,
     Failed,
     Hidden,
@@ -116,9 +122,11 @@ fn read() -> Option<State> {
                     .map(|number| number.max(0.0) as u64),
                 dup_frames: number_field(value, "dup_frames").map(|number| number.max(0.0) as u64),
                 speed: number_field(value, "speed"),
+                out_time_us: number_field(value, "out_time_us"),
             })
         }),
         reason: text_field(&value, "reason").unwrap_or_default(),
+        elapsed_before: number_field(&value, "elapsed_before"),
     })
 }
 
@@ -145,26 +153,49 @@ fn partial_usable(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Recorded time. Once a recording has been paused, wall-clock time since the
+/// start would count the pauses, so the finished segments plus the current
+/// segment's progress are used instead.
+fn recorded_seconds(state: &State, now: u64) -> u64 {
+    match state.elapsed_before {
+        Some(before) => {
+            let current = match state.state.as_str() {
+                "paused" => 0.0,
+                _ => state
+                    .performance
+                    .as_ref()
+                    .and_then(|performance| performance.out_time_us)
+                    .map(|us| us / 1e6)
+                    .unwrap_or(0.0),
+            };
+            (before.max(0.0) + current.max(0.0)) as u64
+        }
+        None => now.saturating_sub(state.started.max(0.0) as u64),
+    }
+}
+
 fn classify(state: &State, partial_exists: bool, alive: bool) -> View {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
     match state.state.as_str() {
-        "recording" | "starting" | "finalizing" | "countdown" if alive => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_secs())
-                .unwrap_or(0);
-            let started = state.started.max(0.0) as u64;
+        "recording" | "starting" | "pausing" | "finalizing" | "countdown" if alive => {
             View::Recording {
-                seconds: now.saturating_sub(started),
+                seconds: recorded_seconds(state, now),
             }
         }
-        "recording" | "starting" | "finalizing" | "countdown" | "failed" | "interrupted"
+        "paused" if alive => View::Paused {
+            seconds: recorded_seconds(state, now),
+        },
+        "recording" | "starting" | "pausing" | "paused" | "finalizing" | "countdown" | "failed"
+        | "interrupted"
             if state.recoverable && partial_exists =>
         {
             View::Recover
         }
-        "recording" | "starting" | "finalizing" | "countdown" | "failed" | "interrupted" => {
-            View::Failed
-        }
+        "recording" | "starting" | "pausing" | "paused" | "finalizing" | "countdown" | "failed"
+        | "interrupted" => View::Failed,
         _ => View::Hidden,
     }
 }
@@ -185,6 +216,9 @@ pub fn text() -> String {
     let (_, view) = current();
     match view {
         View::Recording { seconds } => format!("● rec {:02}:{:02}", seconds / 60, seconds % 60),
+        View::Paused { seconds } => {
+            format!("○ paused {:02}:{:02}", seconds / 60, seconds % 60)
+        }
         View::Recover => "● recover".into(),
         View::Failed => "● failed".into(),
         View::Hidden => String::new(),
@@ -223,6 +257,11 @@ pub fn detail() -> Vec<String> {
             lines.push("right-click: stop recording".into());
             lines.push("middle-click: open capture panel".into());
         }
+        View::Paused { .. } => {
+            lines.push("paused: nothing is being captured".into());
+            lines.push("right-click: stop and save the recording".into());
+            lines.push("middle-click: open capture panel (resume)".into());
+        }
         View::Recover => {
             lines.push("right-click: validate and recover the partial file".into());
             lines.push("left-click: open capture panel".into());
@@ -237,7 +276,7 @@ pub fn detail() -> Vec<String> {
 }
 
 pub fn can_stop() -> bool {
-    matches!(current().1, View::Recording { .. })
+    matches!(current().1, View::Recording { .. } | View::Paused { .. })
 }
 
 pub fn can_recover() -> bool {
@@ -296,6 +335,36 @@ mod tests {
     }
 
     #[test]
+    fn a_paused_recording_stays_visible_with_recorded_time() {
+        let mut paused = state("paused", true);
+        paused.elapsed_before = Some(75.4);
+        assert_eq!(classify(&paused, true, true), View::Paused { seconds: 75 });
+        // A paused recorder that died is treated like any other dead recorder.
+        assert_eq!(classify(&paused, true, false), View::Recover);
+        assert_eq!(
+            classify(&state("paused", false), false, false),
+            View::Failed
+        );
+    }
+
+    #[test]
+    fn time_after_a_resume_excludes_the_pause() {
+        let mut resumed = state("recording", false);
+        resumed.elapsed_before = Some(60.0);
+        resumed.performance = Some(Performance {
+            out_time_us: Some(15_000_000.0),
+            ..Performance::default()
+        });
+        assert_eq!(recorded_seconds(&resumed, 10_000), 75);
+        // Without pauses, wall-clock time since the start is used.
+        assert_eq!(recorded_seconds(&state("recording", false), 70), 60);
+        assert!(matches!(
+            classify(&state("pausing", false), false, true),
+            View::Recording { .. }
+        ));
+    }
+
+    #[test]
     fn an_active_pid_shows_recording() {
         assert!(matches!(
             classify(&state("recording", false), false, true),
@@ -311,6 +380,7 @@ mod tests {
             drop_frames: Some(0),
             dup_frames: Some(0),
             speed: Some(0.99),
+            out_time_us: None,
         };
         assert!(!healthy.needs_attention());
         assert!(healthy.summary().contains("29.8 fps"));
@@ -320,6 +390,7 @@ mod tests {
             drop_frames: Some(4),
             dup_frames: Some(55),
             speed: Some(0.68),
+            out_time_us: None,
         };
         assert!(struggling.needs_attention());
         assert!(struggling.summary().contains("4 dropped"));
