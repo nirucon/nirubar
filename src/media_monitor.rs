@@ -19,8 +19,95 @@ use std::{
 use crate::av::{self, Media};
 
 const FORMAT: &str =
-    "{{status}}\u{1f}{{position}}\u{1f}{{artist}}\u{1f}{{title}}\u{1f}{{mpris:length}}\u{1e}";
+    "{{status}}\u{1f}{{position}}\u{1f}{{artist}}\u{1f}{{title}}\u{1f}{{mpris:length}}\u{1f}{{playerName}}\u{1e}";
 const MAX_RECORD: usize = 64 * 1024;
+
+struct FollowEvent {
+    media: Media,
+    player: String,
+}
+
+fn parse_record(bytes: &[u8]) -> Option<FollowEvent> {
+    let text = String::from_utf8_lossy(bytes);
+    let (sample, player) = text.rsplit_once('\u{1f}')?;
+    if player.is_empty()
+        || player.len() > 200
+        || !player
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    {
+        return None;
+    }
+    Some(FollowEvent {
+        media: av::media_from_snapshot(sample)?,
+        player: player.into(),
+    })
+}
+
+/// A follower's interpolated position may assume 1x playback even when the
+/// MPRIS player runs at another rate. Read the actual Position property over
+/// the existing D-Bus stack without a per-second process launch.
+struct PositionReader {
+    runtime: tokio::runtime::Runtime,
+    connection: Option<zbus::Connection>,
+}
+
+impl PositionReader {
+    fn new() -> Option<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        Some(Self {
+            runtime,
+            connection: None,
+        })
+    }
+
+    fn read(&mut self, player: &str) -> Option<u64> {
+        if self.connection.is_none() {
+            let connection = self
+                .runtime
+                .block_on(async {
+                    tokio::time::timeout(Duration::from_millis(200), zbus::Connection::session())
+                        .await
+                })
+                .ok()?
+                .ok()?;
+            self.connection = Some(connection);
+        }
+        let connection = self.connection.as_ref()?;
+        let destination = format!("org.mpris.MediaPlayer2.{player}");
+        let position = self
+            .runtime
+            .block_on(async {
+                tokio::time::timeout(Duration::from_millis(200), async {
+                    let proxy = zbus::proxy::Builder::<zbus::Proxy<'_>>::new(connection)
+                        .destination(destination.as_str())
+                        .ok()?
+                        .path("/org/mpris/MediaPlayer2")
+                        .ok()?
+                        .interface("org.mpris.MediaPlayer2.Player")
+                        .ok()?
+                        .cache_properties(zbus::proxy::CacheProperties::No)
+                        .build()
+                        .await
+                        .ok()?;
+                    proxy.get_property::<i64>("Position").await.ok()
+                })
+                .await
+            })
+            .ok()
+            .flatten();
+        match position {
+            Some(value) if value >= 0 => Some(value as u64 / 1_000_000),
+            _ => {
+                self.connection = None;
+                None
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 struct RecordDecoder {
@@ -30,13 +117,11 @@ struct RecordDecoder {
 }
 
 impl RecordDecoder {
-    fn feed(&mut self, bytes: &[u8], mut changed: impl FnMut(Option<Media>)) {
+    fn feed(&mut self, bytes: &[u8], mut changed: impl FnMut(Option<FollowEvent>)) {
         for &byte in bytes {
             if byte == 0x1e {
                 if !self.oversized {
-                    changed(av::media_from_snapshot(&String::from_utf8_lossy(
-                        &self.record,
-                    )));
+                    changed(parse_record(&self.record));
                 }
                 self.record.clear();
                 self.oversized = false;
@@ -73,7 +158,13 @@ fn update(state: &Mutex<State>, media: Option<Media>) {
                 Some(_) => "paused",
                 None => "absent",
             };
-            crate::trace_media(&format!("state {label}"));
+            let position = state
+                .media
+                .as_ref()
+                .and_then(|media| media.position)
+                .map(|(position, _)| position.to_string())
+                .unwrap_or_else(|| "none".into());
+            crate::trace_media(&format!("state {label} pos={position}"));
         }
         drop(state);
         if changed {
@@ -146,6 +237,7 @@ impl Monitor {
         let worker = thread::Builder::new()
             .name("nirubar-media".into())
             .spawn(move || {
+                let mut position_reader = PositionReader::new();
                 while !stop_worker.load(Ordering::Acquire) {
                     let player = selected_worker.lock().ok().and_then(|p| p.clone());
                     match follower(player.as_deref()) {
@@ -192,8 +284,25 @@ impl Monitor {
                                 }
                                 match stdout.read(&mut chunk) {
                                     Ok(0) => break,
-                                    Ok(n) => decoder
-                                        .feed(&chunk[..n], |media| update(&state_worker, media)),
+                                    Ok(n) => decoder.feed(&chunk[..n], |event| match event {
+                                        Some(mut event) => {
+                                            if let Some((_, length)) = event.media.position {
+                                                let position = position_reader
+                                                    .as_mut()
+                                                    .and_then(|reader| reader.read(&event.player));
+                                                if let Some(position) = position {
+                                                    event.media.position =
+                                                        Some((position.min(length), length));
+                                                } else if let Some(fallback) =
+                                                    av::Media::read_player(Some(&event.player))
+                                                {
+                                                    event.media = fallback;
+                                                }
+                                            }
+                                            update(&state_worker, Some(event.media));
+                                        }
+                                        None => update(&state_worker, None),
+                                    }),
                                     Err(error)
                                         if matches!(
                                             error.kind(),
@@ -290,6 +399,14 @@ impl Drop for Monitor {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        // A worker panic can leave its child in the shared slot. Reap it even
+        // though parent-death signaling has already stopped it.
+        if let Ok(mut slot) = self.child.lock() {
+            if let Some(mut child) = slot.take() {
+                stop_child(&mut child);
+                let _ = child.wait();
+            }
+        }
     }
 }
 
@@ -305,8 +422,10 @@ mod tests {
             events.push(v)
         });
         assert!(events.is_empty());
-        decoder.feed(b"continued\x1f120000000\x1e\n", |v| events.push(v));
-        let media = events[0].as_ref().unwrap();
+        decoder.feed(b"continued\x1f120000000\x1ftest_player\x1e\n", |v| {
+            events.push(v)
+        });
+        let media = &events[0].as_ref().unwrap().media;
         assert_eq!(media.title, "Title\ncontinued");
         assert_eq!(media.position, Some((30, 120)));
         decoder.feed(b"\n", |v| events.push(v));
@@ -319,10 +438,11 @@ mod tests {
         let mut decoder = RecordDecoder::default();
         let mut events = Vec::new();
         decoder.feed(&vec![b'x'; MAX_RECORD + 5], |v| events.push(v));
-        decoder.feed(b"\x1e\nPaused\x1f0\x1f\x1fNext\x1f\x1e\n", |v| {
-            events.push(v)
-        });
+        decoder.feed(
+            b"\x1e\nPaused\x1f0\x1f\x1fNext\x1f\x1ftest_player\x1e\n",
+            |v| events.push(v),
+        );
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].as_ref().unwrap().title, "Next");
+        assert_eq!(events[0].as_ref().unwrap().media.title, "Next");
     }
 }

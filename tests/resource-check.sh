@@ -18,7 +18,7 @@ printf 'playerctl\n' >> "$PROBE_LOG"
 case "$*" in
   *--follow*)
     printf '%s\n' "$$" > "$FOLLOW_PID"
-    printf 'Playing\03730000000\037Fixture artist\037A deliberately long title for continuous scrolling in the fixture\037180000000\036\n'
+    printf 'Playing\03730000000\037Fixture artist\037A deliberately long title for continuous scrolling in the fixture\037180000000\037fixture\036\n'
     exec sleep 60 ;;
   *--format*) printf 'Playing\03730000000\037Fixture artist\037A deliberately long title for continuous scrolling in the fixture\037180000000\n' ;;
   status) printf 'Playing\n' ;;

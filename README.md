@@ -57,7 +57,9 @@ keep the combined `network` segment instead. The segment opens the launcher's
 Wi-Fi view; it never runs a second network editor.
 
 Media follows MPRIS changes through one supervised `playerctl --follow`
-process, with bounded one-shot queries as a fallback. Output volume follows
+process. The actual MPRIS position is read over the session bus so progress
+also follows playback rates other than 1×; bounded one-shot queries remain a
+fallback. Output volume follows
 PulseAudio/PipeWire sink events when `pactl` is available; if it or the server
 is unavailable, the existing bounded `wpctl`/ALSA polling path remains active.
 Followers are stopped with the bar, including when it is force-terminated.
