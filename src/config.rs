@@ -281,6 +281,7 @@ impl Default for Bar {
                 "tasks".into(),
                 "battery".into(),
                 "agent".into(),
+                "dictation".into(),
                 "quicksettings".into(),
                 "clock".into(),
             ],

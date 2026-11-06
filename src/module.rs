@@ -28,6 +28,15 @@ pub enum Input {
     ScrollDown,
 }
 
+/// Text colour for a module: the theme foreground, its accent, or a red that
+/// reads on light and dark themes alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tint {
+    Normal,
+    Accent,
+    Alert,
+}
+
 /// A command requested by a module after an explicit input.
 pub struct Control {
     /// Coalescing key: the same control cannot run twice concurrently.
@@ -95,6 +104,10 @@ pub trait Module {
     /// Reading a panel never reaches this method.
     fn control(&mut self, _input: Input) -> Option<Control> {
         None
+    }
+    /// The colour of the module's text.
+    fn tint(&self) -> Tint {
+        Tint::Normal
     }
     /// The existing control view this module can open, if it has one.
     ///
@@ -924,6 +937,63 @@ impl Module for Bluetooth {
         Some(Control::ui(
             "bluetooth-controls",
             Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
+        ))
+    }
+}
+
+/// NIRUDICTATE: a red dot while recording, an accent mark while transcribing.
+pub struct Dictation {
+    reader: crate::dictation::Reader,
+    view: crate::dictation::View,
+}
+
+impl Dictation {
+    pub fn new() -> Self {
+        Self {
+            reader: crate::dictation::Reader::new(),
+            view: crate::dictation::View::Hidden,
+        }
+    }
+}
+
+impl Module for Dictation {
+    fn name(&self) -> &'static str {
+        "dictation"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.view = self.reader.view();
+        crate::dictation::text(self.view).to_string()
+    }
+    fn tint(&self) -> Tint {
+        match self.view {
+            crate::dictation::View::Recording => Tint::Alert,
+            crate::dictation::View::Transcribing => Tint::Accent,
+            crate::dictation::View::Hidden => Tint::Normal,
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some(("NIRUDICTATE".into(), self.reader.detail()))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Right if self.view == crate::dictation::View::Recording => Some(Control::run(
+                "dictation-stop",
+                Some(("nirudictate".into(), vec!["stop".into()])),
+            )),
+            Input::Middle => Some(Control::ui(
+                "dictation-settings",
+                Some(("nirudictate".into(), vec!["settings".into()])),
+            )),
+            _ => None,
+        }
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "dictation-settings",
+            Some(("nirudictate".into(), vec!["settings".into()])),
         ))
     }
 }
@@ -2020,6 +2090,7 @@ pub fn build(
                 monitor: crate::bluetooth::Monitor::new(),
             })),
             "recording" => out.push(Box::new(Recording)),
+            "dictation" => out.push(Box::new(Dictation::new())),
             "microphone" => out.push(Box::new(Microphone {
                 icons,
                 monitor: crate::microphone::Monitor::new(),
@@ -2191,6 +2262,22 @@ mod tests {
     }
 
     #[test]
+    fn dictation_is_empty_without_nirudictate_and_tinted_when_active() {
+        let mut d = Dictation::new();
+        // No NIRUDICTATE state in a test environment: nothing to draw.
+        if d.render().is_empty() {
+            assert_eq!(d.tint(), Tint::Normal);
+        }
+        d.view = crate::dictation::View::Recording;
+        assert_eq!(d.tint(), Tint::Alert);
+        assert!(d.control(Input::Right).is_some());
+        d.view = crate::dictation::View::Transcribing;
+        assert_eq!(d.tint(), Tint::Accent);
+        assert!(d.control(Input::Right).is_none());
+        assert!(d.control(Input::Middle).is_some());
+    }
+
+    #[test]
     fn task_state_icons_are_not_colour_only() {
         assert_eq!(Tasks::state_icon("running"), "…");
         assert_eq!(Tasks::state_icon("waiting"), "?");
@@ -2244,6 +2331,7 @@ mod tests {
                         | "mode"
                         | "tasks"
                         | "layout"
+                        | "dictation"
                 ),
                 "example config names an unknown module {name:?}"
             );

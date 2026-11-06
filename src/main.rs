@@ -12,6 +12,7 @@ mod audio_monitor;
 mod av;
 mod bluetooth;
 mod config;
+mod dictation;
 mod helpers;
 mod layout;
 mod media_monitor;
@@ -353,9 +354,23 @@ impl Placed {
 }
 
 /// Which optional module gives way first when the bar is narrow.
+/// A red for alert marks (dictation recording) that reads on the theme's
+/// background: darker on light themes, softer on dark ones.
+fn alert_pixel(bg: u32) -> u32 {
+    let (r, g, b) = ((bg >> 16) & 0xff, (bg >> 8) & 0xff, bg & 0xff);
+    let luminance = (2126 * r + 7152 * g + 722 * b) / 10_000;
+    if luminance > 140 {
+        0xc42b2b
+    } else {
+        0xeb5757
+    }
+}
+
 fn module_priority(name: &str) -> i32 {
     match name {
         "clock" => 100,
+        // Empty while idle; while recording it must not be the one hidden.
+        "dictation" => 92,
         "battery" => 90,
         "network" => 85,
         "volume" => 80,
@@ -964,6 +979,7 @@ impl Bar {
         let muted = Theme::pixel(&self.theme.muted)?;
         let border = Theme::pixel(&self.theme.border)?;
         let accent = Theme::pixel(&self.theme.focus)?;
+        let alert = alert_pixel(bg);
         let sni_items = self
             .sni
             .as_ref()
@@ -1040,6 +1056,7 @@ impl Bar {
             0
         };
         let mut texts: Vec<(usize, String)> = Vec::new();
+        let mut tints: Vec<module::Tint> = Vec::new();
         let mut marks: Vec<Option<crate::av::MediaIcons>> = Vec::new();
         let mut progress: Vec<Option<f32>> = Vec::new();
         for (index, m) in self.modules.iter().enumerate() {
@@ -1052,6 +1069,7 @@ impl Bar {
             };
             if !text.is_empty() {
                 texts.push((index, text));
+                tints.push(m.tint());
                 marks.push(m.mark());
                 progress.push(m.progress());
             }
@@ -1098,18 +1116,23 @@ impl Bar {
             let Some((x, w)) = placements[slot] else {
                 continue;
             };
+            let colour = match tints.get(slot).copied().unwrap_or(module::Tint::Normal) {
+                module::Tint::Normal => fg,
+                module::Tint::Accent => accent,
+                module::Tint::Alert => alert,
+            };
             if text.chars().count() == 1 {
                 self.renderer.single_glyph(
                     &self.c,
                     self.gc,
                     x,
                     text.chars().next().unwrap(),
-                    fg,
+                    colour,
                     bg,
                 )?;
             } else {
                 self.renderer
-                    .text(&self.c, self.gc, x, text, fg, bg, right_edge)?;
+                    .text(&self.c, self.gc, x, text, colour, bg, right_edge)?;
             }
             // The media module's mark is drawn, not typed: three bars of the
             // theme's foreground, sitting where its placeholder is.
@@ -2389,6 +2412,17 @@ fn main() {
     if let Err(e) = Bar::new(monitor, edge).and_then(|mut b| b.run()) {
         eprintln!("nirubar: {e}");
         std::process::exit(1)
+    }
+}
+
+#[cfg(test)]
+mod alert_tests {
+    use super::alert_pixel;
+
+    #[test]
+    fn alert_red_follows_the_background() {
+        assert_eq!(alert_pixel(0x0f0f10), 0xeb5757);
+        assert_eq!(alert_pixel(0xf3ece0), 0xc42b2b);
     }
 }
 
