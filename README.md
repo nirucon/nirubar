@@ -1,79 +1,57 @@
 # NIRUBAR
 
-**Part of [NIRUX - A minimal X11 desktop by Nicklas Rudolfsson](https://github.com/nirucon/nirux).**
+Native X11 status bar for the NIRUX desktop: one bar per monitor, clickable panels and a system tray.
 
-**Early beta.** A native X11 status bar for the NIRUX X11 desktop. It is a separate
-process, draws only when values change, reserves screen space with an X11 strut
-and reads system state directly from `/sys` where possible. No daemon or
-NetworkManager is required.
+**Status: beta** · Part of the [NIRUX](https://github.com/nirucon/nirux) suite · [MIT License](LICENSE)
+
+![NIRUBAR](docs/screenshots/main.png)
+
+## About
+
+NIRUBAR is the bar of NIRUX. It runs as its own process next to NIRUWM, draws
+only when a value changes, reserves screen space with an X11 strut and reads
+system state directly from `/sys` where it can. It needs no extra daemon and no
+NetworkManager.
+
+It shares its configuration, theme and font with NIRUWM, so there is one file
+to edit and no duplicated palette. Panels never become a second settings app:
+where a real control view exists, the panel hands over to NIRU Launcher.
 
 ## Features
 
-- One bar per monitor with monitor-local workspaces, so each screen shows its
-  own workspace cells and its own clock.
-- Font-aware layout and semantic theme colours drawn from the active NIRUX
-  theme, with ten built-in theme palettes when NIRUX is not installed.
-- Panels with measured hitboxes (a module is clickable across its whole cell, padding included, up to the separator), Escape/click-outside dismissal and a timeout.
-- XEmbed and D-Bus StatusNotifierItem trays, on the primary monitor.
+- One bar per monitor with monitor-local workspace cells and its own clock.
+- Font-aware layout and semantic theme colours from the active NIRUX theme,
+  with the ten built-in palettes when NIRUX is not installed.
+- Panels with measured hitboxes (a module is clickable across its whole cell),
+  Escape/click-outside dismissal and a timeout.
+- XEmbed and D-Bus StatusNotifierItem trays with real icons and menus, on the
+  primary monitor.
 - Narrow-width overflow: low-priority modules collapse into a clickable `+N`.
-- Bounded provider queries and caching for package updates and weather.
-- Shared configuration with NIRUWM; no duplicated palette or font settings.
+- Event-driven media (MPRIS via `playerctl --follow`) and volume (`pactl`
+  events), with bounded polling fallbacks.
+- Bounded, cached provider queries for package updates and weather.
+- Optional transparency through the compositor and HiDPI scaling from `Xft.dpi`.
 
-## Modules
+## Requirements
 
-Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
+- Debian, Arch or Void Linux (glibc), x86_64, with X11.
+- NIRUWM for the workspace cells and dock behaviour (the bar can also run on
+  its own).
+- Optional providers per module: `playerctl` (media), `pactl` or `wpctl`
+  (volume and microphone), BlueZ (Bluetooth), `power-profiles-daemon`
+  (power profiles), `tailscale` (Tailscale), `picom` (transparency).
+- A Nerd Font for icons; set `icons = false` for plain ASCII labels.
+- Building from source: a Rust toolchain (`cargo`).
 
-| Module | Shows | Interaction |
-|---|---|---|
-| `workspaces` | Ten workspace cells with active/occupied state and occupancy markers | Click a cell to switch workspace |
-| `network` | Wired link; `!` means link up without a default route. Wireless is shown here only with `wifi = false` | Click for interface, link, route and address |
-| `wifi` | Wi-Fi radio and connection; `!` means radio off or not connected | Click to open the Wi-Fi selector in `nirulauncher` |
-| `battery` | Aggregated battery charge and state | Click for charge, state and remaining time when available |
-| `volume` | Output level or mute icon | Click for info, scroll volume, right-click mute, middle-click microphone mute |
-| `microphone` | Input mute and gain; `mic none`/`mic --` when unavailable | Click for input and gain, right-click mute, scroll gain, middle-click source selector |
-| `brightness` | Backlight percentage; hidden without a readable backlight | Click for details |
-| `media` | Playing title with progress hairline | Right-click play/pause, scroll previous/next, middle-click next player |
-| `powerprofile` | Active power profile | Right-click next profile, middle-click launcher selector |
-| `bluetooth` | Off, on or connected device | Right-click power, middle-click device selector |
-| `updates` | Available package upgrades | Click for package-manager detail |
-| `pulse` | CPU and memory blocks | Click for a one-minute graph |
-| `uptime` | System uptime | Click for memory use and fullest filesystem |
-| `sun` | Sunrise and sunset | Click for daylight progress |
-| `weather` | Cached temperature, condition and next-hour rain | Click for an eight-hour rain timeline and daylight progress |
-| `tasks` | Running or waiting NIRU/OpenCode tasks | Click for recent task states and results; Return/Open controls opens NIRU Actions |
-| `agent` | OpenCode agent entry | Click to type a short prompt and start OpenCode in a centred floating terminal |
-| `dnd` | Bell or slashed bell; follows the configured notification provider | Left click toggles DND; right click opens Quick Settings |
-| `scratchpad` | [NIRUWM](https://github.com/nirucon/niruwm) scratchpads: a terminal mark while at least one exists, with a count when there are several, in the accent colour while one is shown; nothing otherwise | Click for a panel listing each one (key, slot, title, shown/hidden); click a row to show or hide it; right-click shows or hides the default scratchpad |
-| `dictation` | [NIRUDICTATE](https://github.com/nirucon/nirudictate): a red `●` while recording, an accent `…` while transcribing; nothing when idle or not installed | Click for state and language, right-click stop and insert, middle-click NIRUDICTATE settings |
-| `quicksettings` | Quick Settings entry | Opens volume, microphone, Wi-Fi, Bluetooth, displays, power, theme, DND, idle and lock controls in the launcher |
-| `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |
-| `display` | This bar screen position: `Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`; output count and connector are in the popup | Click for info, Return/Open controls for display profiles, middle-click for the same quick route |
+## Installation
 
-The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
-`apt list --upgradable` on Debian. Results are cached in
-`~/.cache/nirubar/updates` for `update_check_minutes`.
+### With NIRUX
 
-The `wifi` segment is added automatically after `network` when a wireless
-adapter exists, even while its radio is off. Set `wifi = false` in `[bar]` to
-keep the combined `network` segment instead. The segment opens the launcher's
-Wi-Fi view; it never runs a second network editor.
+NIRUBAR is a core component. `nirux install` installs it with the rest of the
+suite and `nirux update` keeps it current. See the
+[NIRUX README](https://github.com/nirucon/nirux#installation).
 
-Media follows MPRIS changes through one supervised `playerctl --follow`
-process. The actual MPRIS position is read over the session bus so progress
-also follows playback rates other than 1×; bounded one-shot queries remain a
-fallback. Output volume follows
-PulseAudio/PipeWire sink events when `pactl` is available; if it or the server
-is unavailable, the existing bounded `wpctl`/ALSA polling path remains active.
-Followers are stopped with the bar, including when it is force-terminated.
-
-Display, power-profile, Bluetooth and microphone panels offer **Open controls**
-through Return or the footer. Each opens the existing launcher view; the bar has
-no second editor of its own.
-
-## Install
-
-Use [NIRUX](https://github.com/nirucon/nirux#install) for the complete desktop
-and dependencies. Standalone:
+### Standalone
 
 ```sh
 git clone https://github.com/nirucon/nirubar
@@ -81,106 +59,174 @@ cd nirubar
 ./install.sh
 ```
 
-Prefix: `NIRUBAR_PREFIX` (default `~/.local`). Existing settings are preserved.
-NIRUX-owned installations are maintained with `nirux update`.
+`install.sh` builds the release binary with `cargo build --release --locked`
+and installs it into `~/.local/bin` (override with `NIRUBAR_PREFIX`). Existing
+configuration is preserved. On a NIRUX system use `nirux update` instead.
 
-## Use
+## Usage
 
-NIRUWM starts the bar at login; it can also run on its own.
+NIRUWM starts one bar per monitor at login. Mouse conventions are the same in
+every module:
 
-- Left click opens information and never changes playback or mute.
-- Right click and scroll perform the explicit playback, mute and volume actions.
-- Middle click opens the keyboard-first detail view where one exists.
-- One panel is open at a time. Escape or a click elsewhere closes it.
-- A panel footer says whether it is informational or has controls. Where a
-  control view exists, Return or a click on that footer opens it. Informational
-  text is never a hidden button.
-- A failed or stuck helper is reported instead of looking like a successful
-  click. Controls are bounded and coalesced so the bar cannot spawn a storm.
-- The optional `tasks` module reads the bounded task list written by `niructl`;
-  it stays empty when no task is running or waiting and needs no daemon.
-- Media titles longer than `media_width` scroll and rest at the beginning.
-- Battery packs are aggregated by energy when available; unknown values are not
-  shown as zero.
+- **Left click** opens information and never changes playback or mute.
+- **Right click** and **scroll** perform the explicit actions (play/pause,
+  mute, volume, next profile).
+- **Middle click** opens the keyboard-first detail view where one exists.
+- One panel is open at a time; Escape or a click elsewhere closes it. A panel
+  footer says whether it is informational or has controls; Return or a click
+  on that footer opens the control view.
 
-## Configure
+### Modules
 
-Shared settings live in `~/.config/niruwm/config.toml`. Weather is opt-in in
-`~/.config/nirubar/config.toml`. Start from [config.example.toml](config.example.toml)
-and see [configuration](docs/CONFIGURATION.md) for the module and settings
-reference.
+Add, remove or reorder modules in `[bar] modules`:
+
+| Module | Shows |
+|---|---|
+| `workspaces` | Ten workspace cells with active/occupied state; click to switch |
+| `media` | Playing title with a progress hairline; right-click play/pause, scroll previous/next |
+| `volume` | Output level or mute; scroll to change, right-click mute, middle-click microphone mute |
+| `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |
+| `brightness` | Backlight percentage; hidden without a readable backlight |
+| `display` | This bar's screen position; Open controls for display profiles |
+| `tailscale` | Tailscale peers, only when Tailscale is installed |
+| `network` | Wired link (`!` = link up without a default route) |
+| `wifi` | Wi-Fi radio and connection; click opens the Wi-Fi selector |
+| `bluetooth` | Off, on or connected device; right-click power |
+| `powerprofile` | Active power profile; right-click next profile |
+| `battery` | Aggregated battery charge and state |
+| `updates` | Available package upgrades (`apt`, `pacman` or `xbps`) |
+| `niruxupdate` | A newer NIRUX release, or one that needs a new login |
+| `pulse` | CPU and memory; click for a one-minute graph |
+| `uptime`, `sun`, `weather` | Uptime, sunrise/sunset, cached weather with an eight-hour rain timeline |
+| `mode`, `layout` | Active work mode; current NIRUWM layout |
+| `tasks`, `agent` | NIRU/OpenCode task status; OpenCode prompt entry |
+| `scratchpad` | NIRUWM scratchpads; click a row to show or hide one |
+| `dictation` | NIRUDICTATE recording/transcribing mark |
+| `recording` | NIRUCLIP recording timer; right-click stop and save |
+| `share`, `nirusec` | NIRUSHARE inbox entry; NIRUSEC state mark |
+| `dnd`, `notifications` | Do Not Disturb toggle; notification history |
+| `quicksettings` | Gear that opens Quick Settings (volume, Wi-Fi, Bluetooth, displays, power, theme, DND, idle, lock) |
+| `clock` | Date and time; click for a Monday-first calendar with ISO week numbers |
+
+The full module and panel reference is in
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
+### Commands
+
+```sh
+nirubar --check-config   # validate the [bar] settings
+nirubar --reset-config   # replace only [bar] with the defaults; keeps config.toml.nirubar-backup
+nirubar --version
+niructl restart-bar      # restart all bars
+niructl bar top|bottom|hide|show|toggle
+```
+
+## Configuration
+
+Bar settings live in the `[bar]` table of the shared NIRUWM file,
+`~/.config/niruwm/config.toml`; colours and font come from the shared theme.
+Start from [config.example.toml](config.example.toml).
 
 ```toml
 theme = "niru-noir"
 font_size = 15.0
-weather_latitude = 58.22
-weather_longitude = 11.92
+weather_latitude = 59.33     # for the sun module
+weather_longitude = 18.07
 
 [bar]
-position = "top"   # "bottom" places it at the bottom; popups open above
-modules = ["workspaces", "network", "wifi", "mode", "tasks", "battery", "agent", "quicksettings", "clock"]
-tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+position = "top"             # or "bottom"; popups then open above
+modules = ["workspaces", "media", "volume", "network", "wifi", "battery", "quicksettings", "clock"]
+workspace_layout = 1         # 1 numbers (default), 2 icons, 3 text
 icons = true
 popups = true
-popup_timeout_seconds = 8
+popup_timeout_seconds = 4    # 0 keeps a panel open until dismissed
 tray = true
+transparent = true           # see-through through the compositor
+opacity = 94                 # 1-100
 ```
+
+Other useful keys: `show_title`, `title_max`, `cell_width`, `separator`,
+`date_format`, `time_format`, `media_width`, `update_check_minutes`,
+`graph_width`, `microphone_visibility` (`always` or `muted`), and
+`battery`/`network`/`wifi` switches. Set `NIRU_UI_SCALE` (0.75–2.5) to
+override HiDPI detection.
+
+Weather is opt-in: add `weather` to `modules` and create
+`~/.config/nirubar/config.toml` from [weather.example.toml](weather.example.toml).
+
+After editing, press `Super+R` or run `niructl reload`.
+
+## Files and paths
+
+| Path | Purpose |
+|---|---|
+| `~/.config/niruwm/config.toml` | Shared configuration, `[bar]` table |
+| `~/.config/nirubar/config.toml` | Optional weather settings |
+| `~/.config/niruwm/config.toml.nirubar-backup` | Backup written by `--reset-config` |
+| `~/.cache/nirubar/updates` | Cached package-update result |
+| `~/.local/bin/nirubar` | Program |
+
+## Troubleshooting
+
+- **Icons show as boxes.** The font lacks Nerd Font glyphs; install one or set
+  `icons = false`.
+- **The bar is not transparent.** Transparency needs a compositor (picom);
+  without one the bar stays opaque.
+- **A module is missing.** Modules without a provider hide themselves
+  (brightness without a backlight, battery on a desktop, Bluetooth without an
+  adapter). Unknown module names are reported on stderr.
+- **A setting has no effect.** Run `nirubar --check-config`.
+- **The bar runs an old version after an update.** `niructl restart-bar`
+  restarts it; a new NIRUWM still needs a new login.
+
+## Uninstall
+
+With NIRUX, use `nirux uninstall`. A standalone install is one file:
 
 ```sh
-nirubar --check-config
-niructl reload
-niructl restart-bar
+rm ~/.local/bin/nirubar
 ```
 
-Workspace labels are chosen with one value, `workspace_layout`:
-
-```toml
-[bar]
-workspace_layout = 1   # 1 numbers (default), 2 icons, 3 text
-```
-
-Only the labels change; the workspace count and the Super+1..0 shortcuts are
-the same in every preset. An unknown number falls back to numbers, and an
-explicit `tags` list is still honoured when no preset is set.
-
-The bar is see-through by default in the NIRUX look. It paints opaque pixels
-and publishes `_NET_WM_WINDOW_OPACITY`, which the compositor (picom in NIRUX)
-applies:
-
-```toml
-[bar]
-transparent = true   # false keeps the bar fully opaque
-opacity = 94         # 1-100; out of range falls back to 94
-```
-
-Without a compositor the bar stays opaque, because X11 has no alpha of its own
-for an ordinary window.
-
-To discard bar-only edits and return to the current defaults:
+## Building from source
 
 ```sh
-nirubar --reset-config
-niructl restart-bar
-```
-
-Only the shared `[bar]` table is replaced. A timestamp-free
-`config.toml.nirubar-backup` is kept for recovery.
-
-Themes: Niru Noir, Nord, Satie, Carl Larsson, Forest Vigil, Blood of Urdr,
-Root and Stone, Blue Horizon, The Norns, Winter Nights and custom themes. Colours and font
-come from the shared NIRUWM appearance.
-
-## NIRUX suite
-
-[NIRUX](https://github.com/nirucon/nirux) · [NIRUWM](https://github.com/nirucon/niruwm) · [NIRUBAR](https://github.com/nirucon/nirubar) · [NIRUSCREENSAVER](https://github.com/nirucon/niruscreensaver) · [NIRULOCK](https://github.com/nirucon/nirulock) · [NIRULAUNCHER](https://github.com/nirucon/nirulauncher) · [NIRUNOTIFY](https://github.com/nirucon/nirunotify) · [NIRUSHOT](https://github.com/nirucon/nirushot)
-
-## Development
-
-```sh
+cargo build --release --locked
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 sh tests/config-agreement.sh
 ```
 
-MIT. Copyright 2026 Nicklas Rudolfsson.
+## Status, disclaimer and how it's made
+
+**Status: beta.** NIRUBAR is on every screen I use, every day; new modules
+arrive often and some of them are still rough.
+
+NIRUX and every niru* project are made by me, Nicklas Rudolfsson
+([@nirucon](https://github.com/nirucon)), for me. They are tailored to my own
+needs, preferences and workflows, on my own machines. If they fit yours too,
+that's a nice bonus.
+
+- **Free and open source.** Anyone is free to use, study, change and share
+  it under the [MIT License](LICENSE).
+- **No guarantees.** There is no warranty of any kind. Use it at your own
+  risk, read what you install and keep backups of anything that matters.
+- **How it's made.** Some of these projects I built from scratch by hand. In
+  more recent releases I have used Claude, Anthropic's AI, to do much of the
+  heavy lifting under my direction: I decide what to build and how it should
+  behave, and I test it on my own machines. It saves me a lot of time, and
+  the result is quite OK.
+- **Alpha, beta, dev, and maybe forever.** Most things here are alpha, beta
+  or dev, and may stay that way. Maybe one day there will be a real stable
+  release, but given how fast development moves, and how I am as a person,
+  maybe never :)
+
+| Label | Meaning |
+|---|---|
+| dev | Under active construction; may not build, install or work yet. |
+| alpha | Works on my machines, but incomplete or rough; expect breaking changes. |
+| beta | In daily use on my machines and mostly complete; rough edges remain. |
+
+## License
+
+MIT License, see [LICENSE](LICENSE). Copyright (c) 2026 Nicklas Rudolfsson.

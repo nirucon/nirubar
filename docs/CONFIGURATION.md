@@ -28,6 +28,17 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 | `sun` | Sunrise and sunset for the configured coordinates |
 | `weather` | Cached temperature, condition and rain; panel shows an eight-hour timeline |
 | `clock` | Date and time |
+| `display` | This bar's screen position (`Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`); click for outputs, Return/Open controls for display profiles |
+| `tailscale` | Tailscale peers; shown only when `tailscale` is installed. Click for peer state, Open controls opens `nirulauncher --tailscale` |
+| `mode` | Active NIRU work mode (focus/presentation) and minutes left; click shows `niructl mode stop` |
+| `tasks` | Running or waiting NIRU/OpenCode tasks from `niructl task list`; click for recent states, Open controls opens NIRU Actions |
+| `agent` | OpenCode entry; click to type a short prompt and start OpenCode in a centred floating terminal |
+| `dnd` | Bell or slashed bell; left click toggles DND, right click opens Quick Settings |
+| `notifications` | NIRUNOTIFY history count; click for recent notifications |
+| `quicksettings` | Gear entry that opens Quick Settings in the launcher |
+| `share` | NIRUSHARE entry; opens the inbox with `nirulauncher --share` |
+| `nirusec` | NIRUSEC state mark from its shared cache (refreshed with `nirusec --check --if-stale 300`) |
+| `niruxupdate` | A newer NIRUX release than the installed one, or an installed release that needs a new login; silent otherwise |
 
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
@@ -131,4 +142,3 @@ keeps its last successful result.
 Reload after editing with `niructl reload` or Super+R. Validate with
 `nirubar --check-config`.
 
-MIT. Copyright 2026 Nicklas Rudolfsson.
