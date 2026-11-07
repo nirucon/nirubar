@@ -922,6 +922,10 @@ struct ScratchpadValidation {
     command: Vec<String>,
     width: f32,
     height: f32,
+    /// NIRUWM 0.17.7: hide the shown scratchpad when another window gets the
+    /// focus. Read by NIRUWM only; accepted here because the file is shared.
+    #[allow(dead_code)]
+    hide_on_focus_loss: bool,
     slot: Vec<ScratchpadSlotValidation>,
 }
 
@@ -960,6 +964,7 @@ impl Default for ScratchpadValidation {
             command: vec!["kitty".into(), "--class".into(), "scratchpad".into()],
             width: 0.6,
             height: 0.6,
+            hide_on_focus_loss: false,
             slot: Vec::new(),
         }
     }
@@ -1385,7 +1390,7 @@ action = "terminal"
     #[test]
     fn numbered_scratchpads_from_niruwm_are_accepted() {
         let c: Config = toml::from_str(
-            "[scratchpad]\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\n\n\
+            "[scratchpad]\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\nhide_on_focus_loss = true\n\n\
              [[scratchpad.slot]]\nnumber = 1\ncommand = [\"kitty\", \"--class\", \"scratch-btop\", \"-e\", \"btop\"]\nwidth = 0.8\nheight = 0.8\n\n\
              [[scratchpad.slot]]\nnumber = 4\n",
         )

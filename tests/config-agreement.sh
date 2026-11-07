@@ -114,6 +114,7 @@ cat >>"$XDG_CONFIG_HOME/niruwm/config.toml" <<'EOF'
 
 [scratchpad]
 command = ["kitty", "--class", "scratchpad"]
+hide_on_focus_loss = false
 EOF
 "$BINDIR/nirubar" --check-config >/tmp/agree-bar.out 2>&1 ||
   { cat /tmp/agree-bar.out; fail "nirubar refuses a window-manager section"; }
