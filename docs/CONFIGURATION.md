@@ -49,8 +49,8 @@ The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 ```toml
 theme = "niru-noir"
 font_size = 15.0
-weather_latitude = 58.22
-weather_longitude = 11.92
+weather_latitude = 59.33
+weather_longitude = 18.07
 
 [bar]
 modules = ["workspaces", "network", "wifi", "battery", "clock"]

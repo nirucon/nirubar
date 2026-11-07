@@ -559,16 +559,16 @@ mod tests {
         assert_eq!(condition(3, true), "overcast");
         let settings = Settings {
             configured: true,
-            location: "Ljungskile".into(),
-            latitude: 58.2,
-            longitude: 11.9,
+            location: "Stockholm".into(),
+            latitude: 59.3,
+            longitude: 18.1,
             refresh: Duration::from_secs(1800),
         };
         let mut weather = Weather::new(settings);
         weather.cache = Some((now_secs(), api));
         assert_eq!(weather.summary(), "overcast 9°");
         let (_, lines) = weather.panel();
-        assert!(lines.iter().any(|l| l.contains("Ljungskile")));
+        assert!(lines.iter().any(|l| l.contains("Stockholm")));
         assert!(lines.iter().any(|l| l.contains("sunrise")));
     }
 
@@ -622,9 +622,9 @@ mod tests {
         let api: Api = serde_json::from_str(FIXTURE).unwrap();
         let settings = Settings {
             configured: true,
-            location: "Ljungskile".into(),
-            latitude: 58.2,
-            longitude: 11.9,
+            location: "Stockholm".into(),
+            latitude: 59.3,
+            longitude: 18.1,
             refresh: Duration::from_secs(1800),
         };
         let mut weather = Weather::new(settings);
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     #[ignore = "requires a live Open-Meteo request"]
     fn live_open_meteo_response_parses() {
-        let api = fetch(58.2, 11.9).expect("live weather request");
+        let api = fetch(59.3, 18.1).expect("live weather request");
         assert!(api.current.temperature_2m.is_some());
         assert!(!api.hourly.time.is_empty());
     }
