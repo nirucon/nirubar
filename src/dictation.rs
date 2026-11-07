@@ -7,6 +7,10 @@
 //! size changed; a stale file from a dead service is ignored by checking the
 //! recorded PID and its start time. Without NIRUDICTATE the module reads
 //! nothing and draws nothing.
+//!
+//! NIRUDICTATE 0.2 adds `"target": "agent"` while a dictation goes to the
+//! opencode agent (Shift+Alt+Space) instead of being pasted; the module then
+//! reads `● AI` / `… AI`. Without the field the target is the text cursor.
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -17,6 +21,7 @@ struct State {
     pid_start: u64,
     since: f64,
     language: String,
+    agent: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +61,7 @@ fn parse(text: &str) -> Option<State> {
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string(),
+        agent: v.get("target").and_then(|x| x.as_str()) == Some("agent"),
     })
 }
 
@@ -126,6 +132,11 @@ impl Reader {
         }
     }
 
+    /// Whether the current dictation goes to the agent (opencode).
+    pub fn agent(&self) -> bool {
+        self.state.as_ref().is_some_and(|s| s.agent)
+    }
+
     pub fn detail(&mut self) -> Vec<String> {
         let view = self.view();
         let Some(s) = self.state.clone() else {
@@ -142,14 +153,22 @@ impl Reader {
             .unwrap_or(0.0);
         let secs = (now - s.since).max(0.0) as u64;
         let mut lines = Vec::new();
+        let target = if s.agent { " for the agent" } else { "" };
         match view {
             View::Recording => {
                 lines.push(format!(
-                    "recording ({language}), {:02}:{:02}",
+                    "recording{target} ({language}), {:02}:{:02}",
                     secs / 60,
                     secs % 60
                 ));
-                lines.push("right-click: stop and insert the text".into());
+                lines.push(if s.agent {
+                    "right-click: stop and send to opencode".into()
+                } else {
+                    "right-click: stop and insert the text".into()
+                });
+            }
+            View::Transcribing if s.agent => {
+                lines.push(format!("transcribing and sending to opencode ({language})"))
             }
             View::Transcribing => lines.push(format!("transcribing ({language})")),
             View::Hidden => lines.push(format!("idle ({language})")),
@@ -159,12 +178,14 @@ impl Reader {
     }
 }
 
-pub fn text(view: View) -> &'static str {
-    match view {
-        View::Recording => "●",
+pub fn text(view: View, agent: bool) -> &'static str {
+    match (view, agent) {
+        (View::Recording, false) => "●",
+        (View::Recording, true) => "● AI",
         // A different shape as well as a different colour.
-        View::Transcribing => "…",
-        View::Hidden => "",
+        (View::Transcribing, false) => "…",
+        (View::Transcribing, true) => "… AI",
+        (View::Hidden, _) => "",
     }
 }
 
@@ -181,6 +202,12 @@ mod tests {
         assert_eq!(s.state, "recording");
         assert_eq!((s.pid, s.pid_start), (42, 7));
         assert_eq!(s.language, "sv");
+        assert!(!s.agent);
+        let a = parse(
+            r#"{"version":1,"state":"recording","pid":42,"pid_start":7,"since":10.5,"language":"sv","target":"agent"}"#,
+        )
+        .unwrap();
+        assert!(a.agent);
         assert!(parse(r#"{"version":2,"state":"recording"}"#).is_none());
         assert!(parse("not json").is_none());
     }
@@ -196,8 +223,13 @@ mod tests {
         assert_eq!(classify(&state("transcribing"), true), View::Transcribing);
         assert_eq!(classify(&state("idle"), true), View::Hidden);
         assert_eq!(classify(&state("recording"), false), View::Hidden);
-        assert_eq!(text(View::Hidden), "");
-        assert_ne!(text(View::Recording), text(View::Transcribing));
+        assert_eq!(text(View::Hidden, false), "");
+        assert_eq!(text(View::Hidden, true), "");
+        assert_ne!(
+            text(View::Recording, false),
+            text(View::Transcribing, false)
+        );
+        assert_ne!(text(View::Recording, false), text(View::Recording, true));
     }
 
     #[test]

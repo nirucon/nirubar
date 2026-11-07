@@ -941,7 +941,8 @@ impl Module for Bluetooth {
     }
 }
 
-/// NIRUDICTATE: a red dot while recording, an accent mark while transcribing.
+/// NIRUDICTATE: a red dot while recording, an accent mark while transcribing
+/// (`AI` after either while the dictation goes to the opencode agent).
 pub struct Dictation {
     reader: crate::dictation::Reader,
     view: crate::dictation::View,
@@ -965,7 +966,7 @@ impl Module for Dictation {
     }
     fn render(&mut self) -> String {
         self.view = self.reader.view();
-        crate::dictation::text(self.view).to_string()
+        crate::dictation::text(self.view, self.reader.agent()).to_string()
     }
     fn tint(&self) -> Tint {
         match self.view {
