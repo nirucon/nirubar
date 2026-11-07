@@ -43,6 +43,7 @@ Add or reorder modules in `[bar] modules` in `~/.config/niruwm/config.toml`.
 | `tasks` | Running or waiting NIRU/OpenCode tasks | Click for recent task states and results; Return/Open controls opens NIRU Actions |
 | `agent` | OpenCode agent entry | Click to type a short prompt and start OpenCode in a centred floating terminal |
 | `dnd` | Bell or slashed bell; follows the configured notification provider | Left click toggles DND; right click opens Quick Settings |
+| `scratchpad` | [NIRUWM](https://github.com/nirucon/niruwm) scratchpads: a terminal mark while at least one exists, with a count when there are several, in the accent colour while one is shown; nothing otherwise | Click for a panel listing each one (key, slot, title, shown/hidden); click a row to show or hide it; right-click shows or hides the default scratchpad |
 | `dictation` | [NIRUDICTATE](https://github.com/nirucon/nirudictate): a red `●` while recording, an accent `…` while transcribing; nothing when idle or not installed | Click for state and language, right-click stop and insert, middle-click NIRUDICTATE settings |
 | `quicksettings` | Quick Settings entry | Opens volume, microphone, Wi-Fi, Bluetooth, displays, power, theme, DND, idle and lock controls in the launcher |
 | `clock` | Date and time | Click for a Monday-first ISO calendar with week numbers |

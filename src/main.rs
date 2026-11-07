@@ -25,6 +25,7 @@ mod probe;
 mod pulse;
 mod recording;
 mod render;
+mod scratchpad;
 mod scroll;
 mod sni;
 mod status;
@@ -371,6 +372,8 @@ fn module_priority(name: &str) -> i32 {
         "clock" => 100,
         // Empty while idle; while recording it must not be the one hidden.
         "dictation" => 92,
+        // Empty unless a scratchpad exists; then it is how to reach them.
+        "scratchpad" => 75,
         "battery" => 90,
         "network" => 85,
         "volume" => 80,
@@ -449,6 +452,8 @@ struct Bar {
     sni_hits: Vec<SniHit>,
     /// Context for the open SNI menu, if the current popup is one.
     sni_menu: Option<SniMenu>,
+    /// The slots listed by the open scratchpad panel, row by row.
+    scratch_menu: Option<Vec<u8>>,
     modules: Vec<Box<dyn Module>>,
     layout_text: Arc<Mutex<String>>,
     workspaces: Workspaces,
@@ -565,6 +570,7 @@ impl Bar {
             "_NET_ACTIVE_WINDOW",
             "_NET_DESKTOP_NAMES",
             "_NIRUWM_MONITORS",
+            "_NIRUWM_SCRATCHPADS",
             "_NIRUWM_LAYOUT",
             "_NIRUWM_COMMAND",
             "_NIRUBAR_SELECTION",
@@ -761,6 +767,7 @@ impl Bar {
             sni,
             sni_hits: Vec::new(),
             sni_menu: None,
+            scratch_menu: None,
             modules,
             layout_text,
             rendered: Vec::new(),
@@ -780,6 +787,25 @@ impl Bar {
 
     /// Collect the EWMH state the bar displays.
     fn snapshot(&mut self) {
+        if self.cfg.bar.modules.iter().any(|m| m == "scratchpad") {
+            let text = self
+                .c
+                .get_property(
+                    false,
+                    self.root,
+                    self.atom("_NIRUWM_SCRATCHPADS"),
+                    self.atom("UTF8_STRING"),
+                    0,
+                    4096,
+                )
+                .ok()
+                .and_then(|r| r.reply().ok())
+                .map(|r| String::from_utf8_lossy(&r.value).to_string())
+                .unwrap_or_default();
+            if let Ok(mut slots) = scratchpad::shared().lock() {
+                *slots = scratchpad::parse(&text);
+            }
+        }
         let current_layout = self
             .c
             .get_property(
@@ -1604,6 +1630,90 @@ impl Bar {
         Ok(())
     }
 
+    /// A window's title, for the scratchpad panel.
+    fn window_title(&self, w: Window) -> String {
+        let read = |atom: Atom, ty: Atom| -> Option<String> {
+            let reply = self
+                .c
+                .get_property(false, w, atom, ty, 0, 256)
+                .ok()?
+                .reply()
+                .ok()?;
+            let text = String::from_utf8_lossy(&reply.value).to_string();
+            (!text.trim().is_empty()).then_some(text)
+        };
+        read(self.atom("_NET_WM_NAME"), self.atom("UTF8_STRING"))
+            .or_else(|| read(AtomEnum::WM_NAME.into(), AtomEnum::STRING.into()))
+            .unwrap_or_default()
+    }
+
+    /// The scratchpad panel: one row per scratchpad, a click shows or hides it.
+    fn open_scratch_menu(&mut self, index: usize, left: i16) -> Result<()> {
+        let slots = scratchpad::current();
+        if slots.is_empty() {
+            return Ok(());
+        }
+        let mut actions: Vec<popup::ActionRow> = slots
+            .iter()
+            .map(|slot| popup::ActionRow {
+                label: scratchpad::row(slot, &self.window_title(slot.window)),
+                enabled: true,
+                separator: false,
+            })
+            .collect();
+        actions.push(popup::ActionRow {
+            label: "Super+Alt+Shift+1-9: send a window".into(),
+            enabled: false,
+            separator: false,
+        });
+        self.popup = Some(popup::Popup::open(
+            &self.c,
+            self.root,
+            &self.theme,
+            self.height,
+            self.cfg.font_size,
+            self.cfg.font_path.as_deref(),
+            index,
+            self.bar_x,
+            self.bar_y,
+            self.width,
+            self.edge.bottom(),
+            self.win,
+            left,
+            "Scratchpads",
+            &[],
+            &actions,
+            false,
+            self.cfg.bar.popup_timeout_seconds,
+        )?);
+        self.scratch_menu = Some(slots.iter().map(|s| s.slot).collect());
+        Ok(())
+    }
+
+    /// Show or hide the scratchpad on a panel row, through NIRUWM.
+    fn scratch_action(&mut self, index: usize) -> Result<()> {
+        let slot = self
+            .scratch_menu
+            .take()
+            .and_then(|slots| slots.get(index).copied());
+        self.close_popup()?;
+        if let Some(slot) = slot {
+            self.c.send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                ClientMessageEvent::new(
+                    32,
+                    self.root,
+                    self.atom("_NIRUWM_COMMAND"),
+                    [15, u32::from(slot), 0, 0, 0],
+                ),
+            )?;
+            self.c.flush()?;
+        }
+        Ok(())
+    }
+
     fn sni_action(&mut self, index: usize) -> Result<()> {
         let action = self.sni_menu.take().and_then(|menu| {
             menu.rows
@@ -1697,6 +1807,13 @@ impl Bar {
             }
         }
         self.close_popup()?;
+        if self
+            .modules
+            .get(index)
+            .is_some_and(|m| m.name() == "scratchpad")
+        {
+            return self.open_scratch_menu(index, left);
+        }
         let controls = self
             .modules
             .get(index)
@@ -1772,6 +1889,7 @@ impl Bar {
 
     fn close_popup(&mut self) -> Result<()> {
         self.sni_menu = None;
+        self.scratch_menu = None;
         if let Some(p) = self.popup.take() {
             p.destroy(&self.c, self.root)?;
         }
@@ -1931,6 +2049,9 @@ impl Bar {
                         popup::Outcome::Controls => {
                             self.close_popup()?;
                             self.controls(module)?;
+                        }
+                        popup::Outcome::Action(index) if self.scratch_menu.is_some() => {
+                            self.scratch_action(index)?
                         }
                         popup::Outcome::Action(index) => self.sni_action(index)?,
                         popup::Outcome::Keep => {}
@@ -2300,6 +2421,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.download
         } else {
             plain.download
+        },
+        scratchpad: if ok(nerd.scratchpad) {
+            nerd.scratchpad
+        } else {
+            plain.scratchpad
         },
         dnd_off: if ok(nerd.dnd_off) {
             nerd.dnd_off

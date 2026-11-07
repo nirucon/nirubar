@@ -998,6 +998,55 @@ impl Module for Dictation {
     }
 }
 
+/// NIRUWM scratchpads: a terminal mark while at least one exists, with a count
+/// when there are several, in the accent colour while one is shown. A click
+/// opens a panel that lists them; the bar handles that panel itself because
+/// each row is an action (show or hide that scratchpad).
+pub struct Scratchpad {
+    icons: status::Icons,
+    shown: bool,
+}
+
+impl Scratchpad {
+    pub fn new(icons: status::Icons) -> Self {
+        Self {
+            icons,
+            shown: false,
+        }
+    }
+}
+
+impl Module for Scratchpad {
+    fn name(&self) -> &'static str {
+        "scratchpad"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        let slots = crate::scratchpad::current();
+        self.shown = slots.iter().any(|s| s.shown);
+        crate::scratchpad::text(self.icons.scratchpad, &slots)
+    }
+    fn tint(&self) -> Tint {
+        if self.shown {
+            Tint::Accent
+        } else {
+            Tint::Normal
+        }
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        // Right-click: the default scratchpad, like Super+Shift+S.
+        match input {
+            Input::Right => Some(Control::run(
+                "scratchpad-default",
+                Some(("niructl".into(), vec!["scratchpad".into()])),
+            )),
+            _ => None,
+        }
+    }
+}
+
 pub struct Recording;
 
 impl Module for Recording {
@@ -2090,6 +2139,7 @@ pub fn build(
                 monitor: crate::bluetooth::Monitor::new(),
             })),
             "recording" => out.push(Box::new(Recording)),
+            "scratchpad" => out.push(Box::new(Scratchpad::new(icons))),
             "dictation" => out.push(Box::new(Dictation::new())),
             "microphone" => out.push(Box::new(Microphone {
                 icons,
@@ -2262,6 +2312,22 @@ mod tests {
     }
 
     #[test]
+    fn scratchpad_draws_nothing_until_niruwm_reports_one() {
+        let mut m = Scratchpad::new(status::Icons::plain());
+        *crate::scratchpad::shared().lock().unwrap() = Vec::new();
+        assert_eq!(m.render(), "");
+        *crate::scratchpad::shared().lock().unwrap() =
+            crate::scratchpad::parse("0\thidden\t11\tkitty scratchpad\n");
+        assert_eq!(m.render(), ">_");
+        assert_eq!(m.tint(), Tint::Normal);
+        *crate::scratchpad::shared().lock().unwrap() =
+            crate::scratchpad::parse("0\thidden\t11\tk\n3\tshown\t12\tx\n");
+        assert_eq!(m.render(), ">_ 2");
+        assert_eq!(m.tint(), Tint::Accent, "a shown scratchpad is marked");
+        *crate::scratchpad::shared().lock().unwrap() = Vec::new();
+    }
+
+    #[test]
     fn dictation_is_empty_without_nirudictate_and_tinted_when_active() {
         let mut d = Dictation::new();
         // No NIRUDICTATE state in a test environment: nothing to draw.
@@ -2332,6 +2398,7 @@ mod tests {
                         | "tasks"
                         | "layout"
                         | "dictation"
+                        | "scratchpad"
                 ),
                 "example config names an unknown module {name:?}"
             );

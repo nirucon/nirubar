@@ -208,6 +208,8 @@ position = "top"
 # Add "tasks" for running/waiting NIRU actions and OpenCode tasks.
 # Add "microphone" for input gain/mute; this does not monitor recording activity.
 # Add "recording" to show active NIRUCLIP recording state; right-click stops.
+# "scratchpad" shows NIRUWM scratchpads (Super+Shift+S, Super+Alt+1-9): a
+# terminal mark while any exist; click it to list, show and hide them.
 # "dictation" shows NIRUDICTATE: a red dot while recording, an accent "…" while
 # transcribing, nothing otherwise (and nothing when it is not installed).
 # Add "bluetooth" for adapter/device status; hidden when no adapter exists.
@@ -216,7 +218,7 @@ position = "top"
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "tailscale", "network", "wifi", "mode", "tasks", "battery", "agent", "nirusec", "dnd", "dictation", "quicksettings", "clock"]
+modules = ["workspaces", "layout", "media", "volume", "brightness", "display", "tailscale", "network", "wifi", "mode", "tasks", "battery", "agent", "nirusec", "dnd", "scratchpad", "dictation", "quicksettings", "clock"]
 # Missing input/provider stays visible even with "muted" visibility.
 microphone_visibility = "always" # "always" or "muted"
 # Left: information. Right: mute. Scroll: gain (never unmutes).

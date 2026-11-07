@@ -68,6 +68,8 @@ pub struct Icons {
     /// A new NIRUX release is available: a download arrow, so it never looks
     /// like the notification or Do Not Disturb bell.
     pub download: &'static str,
+    /// NIRUWM scratchpads: a terminal prompt.
+    pub scratchpad: &'static str,
 }
 
 impl Icons {
@@ -110,6 +112,7 @@ impl Icons {
             music: "\u{f001}",   // nf-fa-music
             nirusec: "\u{f132}", // nf-fa-shield
             download: "\u{f019}", // nf-fa-download
+            scratchpad: "\u{f120}", // nf-fa-terminal
         }
     }
 
@@ -147,6 +150,7 @@ impl Icons {
             music: "mus",
             nirusec: "sec",
             download: "new",
+            scratchpad: ">_",
         }
     }
 }

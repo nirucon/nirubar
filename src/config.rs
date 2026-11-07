@@ -281,6 +281,7 @@ impl Default for Bar {
                 "tasks".into(),
                 "battery".into(),
                 "agent".into(),
+                "scratchpad".into(),
                 "dictation".into(),
                 "quicksettings".into(),
                 "clock".into(),
@@ -563,17 +564,53 @@ impl Config {
         if scratchpad.command.is_empty() {
             return Err("scratchpad.command must not be empty".into());
         }
-        let names_a_class = scratchpad.command.iter().any(|arg| {
-            matches!(
-                arg.as_str(),
-                "--class" | "-class" | "--app-id" | "-name" | "--name"
-            )
-        });
-        if !names_a_class {
+        let Some(default_class) = scratchpad_class(&scratchpad.command) else {
             return Err(
                 "scratchpad.command needs a window class, for example [\"kitty\", \"--class\", \"scratchpad\"]"
                     .into(),
             );
+        };
+        // The same rules, and messages, as NIRUWM: both programs read this
+        // file and must accept and refuse exactly the same scratchpads.
+        let mut seen = Vec::new();
+        let mut classes = vec![default_class];
+        let size_ok = |v: f32| (0.1..=0.95).contains(&v);
+        for slot in &scratchpad.slot {
+            let n = slot.number;
+            if !(1..=9).contains(&n) {
+                return Err(format!(
+                    "scratchpad.slot number must be 1 to 9 (Super+Alt+1..9), got {n}"
+                )
+                .into());
+            }
+            if seen.contains(&n) {
+                return Err(format!("scratchpad.slot {n} is listed twice").into());
+            }
+            seen.push(n);
+            for (name, value) in [("width", slot.width), ("height", slot.height)] {
+                if value.is_some_and(|v| !size_ok(v)) {
+                    return Err(format!(
+                        "scratchpad.slot {n}: {name} must be between 0.1 and 0.95"
+                    )
+                    .into());
+                }
+            }
+            if slot.command.is_empty() {
+                continue;
+            }
+            let Some(class) = scratchpad_class(&slot.command) else {
+                return Err(format!(
+                    "scratchpad.slot {n}: command needs a window class, for example [\"kitty\", \"--class\", \"scratch-{n}\", \"-e\", \"btop\"]"
+                )
+                .into());
+            };
+            if classes.contains(&class) {
+                return Err(format!(
+                    "scratchpad.slot {n}: class {class:?} is already used by another scratchpad; give each one its own --class"
+                )
+                .into());
+            }
+            classes.push(class);
         }
 
         for value in &self.rules {
@@ -885,6 +922,36 @@ struct ScratchpadValidation {
     command: Vec<String>,
     width: f32,
     height: f32,
+    slot: Vec<ScratchpadSlotValidation>,
+}
+
+/// `[[scratchpad.slot]]`, NIRUWM 0.17.4: numbered scratchpads 1-9.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ScratchpadSlotValidation {
+    number: u8,
+    command: Vec<String>,
+    width: Option<f32>,
+    height: Option<f32>,
+}
+
+/// The window class a scratchpad command sets, as NIRUWM reads it.
+fn scratchpad_class(command: &[String]) -> Option<String> {
+    let flag = |arg: &str| matches!(arg, "--class" | "-class" | "--app-id" | "-name" | "--name");
+    let mut args = command.iter().peekable();
+    while let Some(arg) = args.next() {
+        if let Some((name, value)) = arg.split_once('=') {
+            if flag(name) && !value.is_empty() {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+        if flag(arg) {
+            if let Some(value) = args.peek().filter(|v| !v.is_empty()) {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+    }
+    None
 }
 
 impl Default for ScratchpadValidation {
@@ -893,6 +960,7 @@ impl Default for ScratchpadValidation {
             command: vec!["kitty".into(), "--class".into(), "scratchpad".into()],
             width: 0.6,
             height: 0.6,
+            slot: Vec::new(),
         }
     }
 }
@@ -1282,6 +1350,21 @@ action = "terminal"
                 "scratchpad class",
                 "[scratchpad]\ncommand = [\"kitty\"]\n",
             ),
+            ("scratchpad slot 0", "[[scratchpad.slot]]\nnumber = 0\n"),
+            (
+                "scratchpad slot twice",
+                "[[scratchpad.slot]]\nnumber = 2\n[[scratchpad.slot]]\nnumber = 2\n",
+            ),
+            (
+                "scratchpad slot class",
+                "[[scratchpad.slot]]\nnumber = 1\ncommand = [\"btop\"]\n",
+            ),
+            (
+                "scratchpad slot shared class",
+                "[[scratchpad.slot]]\nnumber = 1\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\n",
+            ),
+            ("scratchpad slot size", "[[scratchpad.slot]]\nnumber = 1\nwidth = 1.5\n"),
+            ("scratchpad slot key", "[[scratchpad.slot]]\nnumber = 1\nicon = \"x\"\n"),
             ("rule class", "[[rules]]\nworkspace = 1\n"),
             (
                 "bar tags",
@@ -1297,6 +1380,17 @@ action = "terminal"
             };
             assert!(rejected, "accepted invalid shared fixture: {name}");
         }
+    }
+
+    #[test]
+    fn numbered_scratchpads_from_niruwm_are_accepted() {
+        let c: Config = toml::from_str(
+            "[scratchpad]\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\n\n\
+             [[scratchpad.slot]]\nnumber = 1\ncommand = [\"kitty\", \"--class\", \"scratch-btop\", \"-e\", \"btop\"]\nwidth = 0.8\nheight = 0.8\n\n\
+             [[scratchpad.slot]]\nnumber = 4\n",
+        )
+        .unwrap();
+        c.validate().unwrap();
     }
 
     #[test]

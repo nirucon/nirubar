@@ -5,7 +5,7 @@ use std::{
 };
 use x11rb::{
     connection::Connection,
-    protocol::{res::ConnectionExt as _, xproto::*},
+    protocol::{res::ConnectionExt as _, xproto::*, Event},
     wrapper::ConnectionExt as _,
 };
 struct Process(Child);
@@ -963,6 +963,146 @@ fn bottom_bar_reserves_the_bottom_edge_and_opens_popups_above() {
         .status()
         .unwrap()
         .success());
+    drop(bar);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "requires isolated X server and a TrueType font"]
+fn scratchpad_module_lists_slots_and_toggles_them_through_niruwm() {
+    let directory = std::env::temp_dir().join(format!("nirubar-scratch-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "[bar]\nmodules = [\"scratchpad\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let width = c.setup().roots[screen].width_in_pixels;
+    let atom = |name: &str| {
+        c.intern_atom(false, name.as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom
+    };
+    let state = atom("_NIRUWM_SCRATCHPADS");
+    let utf8 = atom("UTF8_STRING");
+    c.delete_property(root, state).unwrap();
+    c.flush().unwrap();
+    let bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .spawn()
+            .unwrap(),
+    );
+    let selection = atom("_NIRUBAR_SELECTION");
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut win = 0;
+    while win == 0 {
+        win = c
+            .get_selection_owner(selection)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .owner;
+        assert!(Instant::now() < until, "bar did not start");
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(200));
+    // The window the window manager would describe as scratchpad 3.
+    let pad = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        pad,
+        root,
+        0,
+        0,
+        10,
+        10,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    c.change_property8(PropMode::REPLACE, pad, atom("_NET_WM_NAME"), utf8, b"notes")
+        .unwrap();
+    // Become the "window manager" that receives the bar's command.
+    c.change_window_attributes(
+        root,
+        &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+    )
+    .unwrap()
+    .check()
+    .unwrap();
+    c.change_property8(
+        PropMode::REPLACE,
+        root,
+        state,
+        utf8,
+        format!("3\thidden\t{pad}\tkitty kitty\n").as_bytes(),
+    )
+    .unwrap();
+    c.flush().unwrap();
+    thread::sleep(Duration::from_millis(300));
+    let click = |x: i16, y: i16, event: Window, event_x: i16, event_y: i16| {
+        c.send_event(
+            false,
+            event,
+            EventMask::BUTTON_PRESS,
+            ButtonPressEvent {
+                response_type: BUTTON_PRESS_EVENT,
+                detail: 1,
+                sequence: 0,
+                time: x11rb::CURRENT_TIME,
+                root,
+                event,
+                child: 0,
+                root_x: x,
+                root_y: y,
+                event_x,
+                event_y,
+                state: KeyButMask::default(),
+                same_screen: true,
+            },
+        )
+        .unwrap();
+        c.flush().unwrap();
+    };
+    let baseline = c.query_tree(root).unwrap().reply().unwrap().children.len();
+    let x = width as i16 - 14;
+    click(x, 10, win, x, 10);
+    let until = Instant::now() + Duration::from_secs(5);
+    let panel = loop {
+        let children = c.query_tree(root).unwrap().reply().unwrap().children;
+        if children.len() >= baseline + 2 {
+            break *children.last().unwrap();
+        }
+        assert!(Instant::now() < until, "the scratchpad panel did not open");
+        thread::sleep(Duration::from_millis(20));
+    };
+    let g = c.get_geometry(panel).unwrap().reply().unwrap();
+    assert_eq!(g.width, 340, "{g:?}");
+    // The first action row starts one title line below the top.
+    let line = (15.0f32 * 1.5).ceil() as i16;
+    let row_y = g.y + 10 + line + line / 2;
+    click(g.x + 40, row_y, panel, 40, row_y - g.y);
+    let until = Instant::now() + Duration::from_secs(5);
+    let data = loop {
+        if let Some(Event::ClientMessage(e)) = c.poll_for_event().unwrap() {
+            if e.type_ == atom("_NIRUWM_COMMAND") {
+                break e.data.as_data32();
+            }
+        }
+        assert!(
+            Instant::now() < until,
+            "no command reached the window manager"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(&data[..3], &[15, 3, 0], "toggle scratchpad 3");
     drop(bar);
     std::fs::remove_dir_all(directory).unwrap();
 }
