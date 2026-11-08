@@ -66,6 +66,9 @@ struct State {
     /// Recorded seconds in segments finished before the current one. NIRUCLIP
     /// writes it once a recording has been paused.
     elapsed_before: Option<f64>,
+    /// NIRUCLIP 0.4: a camera problem (privacy image, frozen picture, no
+    /// frames, camera busy) as (status, message).
+    camera_problem: Option<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +130,14 @@ fn read() -> Option<State> {
         }),
         reason: text_field(&value, "reason").unwrap_or_default(),
         elapsed_before: number_field(&value, "elapsed_before"),
+        camera_problem: value.get("camera").and_then(|camera| {
+            let status = text_field(camera, "status")?;
+            if matches!(status.as_str(), "ok" | "checking") {
+                return None;
+            }
+            let message = text_field(camera, "message").unwrap_or_else(|| status.clone());
+            Some((status, message))
+        }),
     })
 }
 
@@ -212,10 +223,28 @@ fn current() -> (State, View) {
     (state, view)
 }
 
+/// A short suffix for the bar when the camera picture is not usable.
+fn camera_badge(state: &State) -> &'static str {
+    match state
+        .camera_problem
+        .as_ref()
+        .map(|(status, _)| status.as_str())
+    {
+        None => "",
+        Some("privacy") => " · cam off",
+        Some(_) => " · cam !",
+    }
+}
+
 pub fn text() -> String {
-    let (_, view) = current();
+    let (state, view) = current();
     match view {
-        View::Recording { seconds } => format!("● rec {:02}:{:02}", seconds / 60, seconds % 60),
+        View::Recording { seconds } => format!(
+            "● rec {:02}:{:02}{}",
+            seconds / 60,
+            seconds % 60,
+            camera_badge(&state)
+        ),
         View::Paused { seconds } => {
             format!("○ paused {:02}:{:02}", seconds / 60, seconds % 60)
         }
@@ -239,6 +268,11 @@ pub fn detail() -> Vec<String> {
     }
     if !state.reason.is_empty() {
         lines.push(format!("reason: {}", state.reason));
+    }
+    if let (Some((_, message)), View::Recording { .. } | View::Paused { .. }) =
+        (&state.camera_problem, view)
+    {
+        lines.push(format!("camera: {message}"));
     }
     if let Some(performance) = &state.performance {
         let summary = performance.summary();
@@ -362,6 +396,16 @@ mod tests {
             classify(&state("pausing", false), false, true),
             View::Recording { .. }
         ));
+    }
+
+    #[test]
+    fn camera_problems_get_a_badge() {
+        let mut recording = state("recording", false);
+        assert_eq!(camera_badge(&recording), "");
+        recording.camera_problem = Some(("privacy".into(), "privacy image".into()));
+        assert_eq!(camera_badge(&recording), " · cam off");
+        recording.camera_problem = Some(("no-frames".into(), "no frames".into()));
+        assert_eq!(camera_badge(&recording), " · cam !");
     }
 
     #[test]
