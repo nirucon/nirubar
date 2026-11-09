@@ -29,6 +29,53 @@ pub struct ActionRow {
     pub separator: bool,
 }
 
+/// Coloured dots under a span of a text line, such as a calendar day.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mark {
+    /// Index into the panel's body lines.
+    pub line: usize,
+    /// First character column and width, in monospaced cells.
+    pub col: usize,
+    pub cols: usize,
+    /// One small dot per colour, side by side.
+    pub colours: Vec<u32>,
+}
+
+/// A coloured square drawn in one character cell, such as an event's calendar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Bullet {
+    pub line: usize,
+    pub col: usize,
+    pub colour: u32,
+}
+
+/// A click target that opens a URL in the browser.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Link {
+    pub line: usize,
+    pub col: usize,
+    pub cols: usize,
+    pub url: String,
+}
+
+/// Optional graphics and click targets on an informational panel.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Decor {
+    pub marks: Vec<Mark>,
+    pub bullets: Vec<Bullet>,
+    pub links: Vec<Link>,
+}
+
+impl Decor {
+    /// The link at a body line and character column.
+    pub fn link_at(&self, line: usize, col: usize) -> Option<&str> {
+        self.links
+            .iter()
+            .find(|l| l.line == line && col >= l.col && col < l.col + l.cols)
+            .map(|l| l.url.as_str())
+    }
+}
+
 /// An open panel.
 pub struct Popup {
     win: Window,
@@ -57,6 +104,9 @@ pub struct Popup {
     font_path: Option<String>,
     /// Focus owner before the panel took focus; restored when it closes.
     previous_focus: (Window, InputFocus),
+    decor: Decor,
+    /// Character advance of the panel font, known after the first paint.
+    advance: std::cell::Cell<i16>,
 }
 
 impl Popup {
@@ -81,6 +131,7 @@ impl Popup {
         actions: &[ActionRow],
         controls: bool,
         timeout_seconds: u32,
+        decor: &Decor,
     ) -> Result<Self> {
         let line_height = (font_size * 1.5).ceil() as u16;
         let width: u16 = 340;
@@ -212,6 +263,8 @@ impl Popup {
             font_size,
             font_path: font_path.map(str::to_string),
             previous_focus: (previous_focus.focus, previous_focus.revert_to),
+            decor: decor.clone(),
+            advance: std::cell::Cell::new(0),
         };
         popup.paint(c, root, theme, font_size, font_path, title, lines)?;
         Ok(popup)
@@ -243,6 +296,8 @@ impl Popup {
         )?;
         // The panel's renderer places text by baseline, so each line gets a row.
         let row = |i: i16| -> i16 { 10 + line_height * (i + 1) };
+        let advance = renderer.width("M").max(1);
+        self.advance.set(advance);
         renderer.line(c, self.gc, 14, row(0), &title.to_uppercase(), fg, bg)?;
         if self.actions.is_empty() {
             for (i, line) in lines.iter().enumerate() {
@@ -251,8 +306,51 @@ impl Popup {
                 }
                 renderer.line(c, self.gc, 14, row(i as i16 + 1), line, muted, bg)?;
             }
+            let cell_x = |col: usize| 14i16.saturating_add((col as i16).saturating_mul(advance));
+            let dot = ((font_size / 4.0).round() as u16).clamp(3, 6);
+            for mark in &self.decor.marks {
+                let n = mark.colours.len() as i16;
+                let span = (mark.cols as i16).saturating_mul(advance);
+                let total = n * dot as i16 + (n - 1).max(0) * 2;
+                let mut x = cell_x(mark.col) + (span - total) / 2;
+                let y = row(mark.line as i16 + 1) + 2;
+                for &colour in &mark.colours {
+                    renderer.fill(
+                        c,
+                        self.gc,
+                        Rectangle {
+                            x,
+                            y,
+                            width: dot,
+                            height: dot,
+                        },
+                        colour,
+                    )?;
+                    x += dot as i16 + 2;
+                }
+            }
+            let square = ((font_size * 0.5).round() as u16).clamp(4, 12);
+            for bullet in &self.decor.bullets {
+                let x = cell_x(bullet.col) + (advance - square as i16) / 2;
+                let y = row(bullet.line as i16 + 1)
+                    - (font_size * 0.36).round() as i16
+                    - square as i16 / 2;
+                renderer.fill(
+                    c,
+                    self.gc,
+                    Rectangle {
+                        x,
+                        y,
+                        width: square,
+                        height: square,
+                    },
+                    bullet.colour,
+                )?;
+            }
             let footer = if self.controls {
                 "Return: open controls    Esc: close"
+            } else if !self.decor.links.is_empty() {
+                "Click: open in browser    Esc: close"
             } else {
                 "Informational panel    Esc: close"
             };
@@ -308,6 +406,23 @@ impl Popup {
             && y < self.y + self.height as i16
     }
 
+    /// The link under a root position, if any. Body line `i` has its
+    /// baseline at `10 + line_height * (i + 2)`; a row reaches from most of a
+    /// line above the baseline to a little below it.
+    fn link_at(&self, root_x: i16, root_y: i16) -> Option<&str> {
+        let lh = i32::from(self.line_height.max(1));
+        let rel_y = i32::from(root_y) - i32::from(self.y);
+        let t = rel_y - 10 + lh * 4 / 5;
+        let line = t.div_euclid(lh) - 2;
+        let rel_x = i32::from(root_x) - i32::from(self.x) - 14;
+        let advance = i32::from(self.advance.get().max(1));
+        if line < 0 || rel_x < 0 {
+            return None;
+        }
+        self.decor
+            .link_at(line as usize, (rel_x / advance) as usize)
+    }
+
     /// Expire the panel after the configured time.
     pub fn expired(&self) -> bool {
         !self.timeout.is_zero() && self.opened.elapsed() >= self.timeout
@@ -345,6 +460,8 @@ pub enum Outcome {
     Controls,
     /// Close the panel and invoke this action row.
     Action(usize),
+    /// Close the panel and open this URL in the browser.
+    Open(String),
 }
 
 impl Popup {
@@ -365,6 +482,11 @@ impl Popup {
                             }
                         }
                         return Outcome::Keep;
+                    }
+                    if e.detail == 1 && !self.decor.links.is_empty() {
+                        if let Some(url) = self.link_at(e.root_x, e.root_y) {
+                            return Outcome::Open(url.to_string());
+                        }
                     }
                     if self.controls && e.detail == 1 {
                         return Outcome::Controls;

@@ -1,0 +1,30 @@
+# NIRUBAR calendar feeds: read-only iCalendar (ICS) URLs.
+#
+# Location: ~/.config/nirubar/calendars.toml (or $XDG_CONFIG_HOME/nirubar/).
+# These URLs are secrets: anyone with one can read the calendar. NIRUBAR
+# refuses this file unless only you can read it:
+#
+#   install -m 600 calendars.example.toml ~/.config/nirubar/calendars.toml
+#
+# The URLs are never logged, printed or shown, and curl reads them from its
+# standard input, so they do not appear in a process list.
+#
+# Google Calendar: calendar.google.com > Settings > (your calendar under
+# "Settings for my calendars") > Integrate calendar > "Secret address in iCal
+# format". Nextcloud, iCloud (public calendar link) and Outlook ("Publish a
+# calendar", ICS link) work the same way.
+
+[[calendar]]
+name = "Privat"
+url = "https://calendar.google.com/calendar/ical/.../private-.../basic.ics"
+# Optional: dot colour. Without it the theme accent, attention colour and
+# foreground are used in turn.
+color = "#7aa2f7"
+# Optional: page a click on a day or event opens. {yyyy} {mm} {m} {dd} {d} are
+# the date. Google feeds default to Google's day view; other feeds have no
+# link unless this is set.
+# open = "https://calendar.google.com/calendar/r/day/{yyyy}/{m}/{d}"
+
+# [[calendar]]
+# name = "Jobb"
+# url = "https://cloud.example.org/remote.php/dav/public-calendars/.../?export"

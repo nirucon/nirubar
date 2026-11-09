@@ -8,3 +8,11 @@ latitude = 59.33
 longitude = 18.07
 # Refresh interval in minutes. 30 is the default; stale data stays visible.
 refresh_minutes = 30
+
+# Calendar events in the clock popup. The feeds and their secret URLs live in
+# ~/.config/nirubar/calendars.toml (see calendars.example.toml); these are
+# the non-secret options, shown with their defaults.
+# [calendar]
+# refresh_minutes = 15   # 5 to 1440
+# days_ahead = 7         # agenda: today and the next N days (0 to 31)
+# show_in_bar = false    # next event within 12 h before the clock

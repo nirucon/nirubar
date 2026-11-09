@@ -11,9 +11,11 @@ mod ambient;
 mod audio_monitor;
 mod av;
 mod bluetooth;
+mod calendar;
 mod config;
 mod dictation;
 mod helpers;
+mod ics;
 mod layout;
 mod media_monitor;
 mod microphone;
@@ -31,6 +33,7 @@ mod sni;
 mod status;
 mod tailscale;
 mod tray;
+mod tz;
 mod updates;
 mod weather;
 
@@ -1726,6 +1729,7 @@ impl Bar {
             &actions,
             false,
             self.cfg.bar.popup_timeout_seconds,
+            &DECOR_NONE,
         )?;
         self.sni_menu = Some(SniMenu {
             item_address: item.address.clone(),
@@ -1791,6 +1795,7 @@ impl Bar {
             &actions,
             false,
             self.cfg.bar.popup_timeout_seconds,
+            &DECOR_NONE,
         )?);
         self.scratch_menu = Some(slots.iter().map(|s| s.slot).collect());
         Ok(())
@@ -1818,6 +1823,30 @@ impl Bar {
             self.c.flush()?;
         }
         Ok(())
+    }
+
+    /// Open a calendar page in the configured browser (`browser` in the
+    /// shared config, the same command as Super+B), else `xdg-open`. A
+    /// throwaway `sh` backgrounds it, so a browser that keeps running is not
+    /// held by the helper pool and no zombie is left behind.
+    fn open_url(&mut self, url: &str) {
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return;
+        }
+        let mut args = vec![
+            "-c".to_string(),
+            "\"$@\" </dev/null >/dev/null 2>&1 &".to_string(),
+            "nirubar-open".to_string(),
+        ];
+        if self.cfg.browser.is_empty() {
+            args.push("xdg-open".into());
+        } else {
+            args.extend(self.cfg.browser.iter().cloned());
+        }
+        args.push(url.to_string());
+        if let Err(error) = self.helpers.spawn("calendar-open", "sh", &args) {
+            helpers::notify_failure(&error);
+        }
     }
 
     fn sni_action(&mut self, index: usize) -> Result<()> {
@@ -1879,6 +1908,7 @@ impl Bar {
                     &[],
                     false,
                     self.cfg.bar.popup_timeout_seconds,
+                    &DECOR_NONE,
                 )?);
                 return Ok(());
             }
@@ -1925,8 +1955,16 @@ impl Bar {
             .get(index)
             .and_then(|module| module.controls())
             .is_some();
-        let content = self.modules.get_mut(index).and_then(|m| m.popup());
-        if let Some((title, lines)) = content {
+        let palette = calendar::Palette {
+            accent: Theme::pixel(&self.theme.focus).unwrap_or(0x88_88_88),
+            urgent: self.theme.urgent_pixel(&self.cfg.theme),
+            foreground: Theme::pixel(&self.theme.foreground).unwrap_or(0xcc_cc_cc),
+        };
+        let content = self
+            .modules
+            .get_mut(index)
+            .and_then(|m| m.popup_decorated(&palette));
+        if let Some((title, lines, decor)) = content {
             self.popup = Some(popup::Popup::open(
                 &self.c,
                 self.root,
@@ -1946,6 +1984,7 @@ impl Bar {
                 &[],
                 controls,
                 self.cfg.bar.popup_timeout_seconds,
+                &decor,
             )?);
         }
         Ok(())
@@ -2160,6 +2199,10 @@ impl Bar {
                             self.scratch_action(index)?
                         }
                         popup::Outcome::Action(index) => self.sni_action(index)?,
+                        popup::Outcome::Open(url) => {
+                            self.close_popup()?;
+                            self.open_url(&url);
+                        }
                         popup::Outcome::Keep => {}
                     }
                     continue;
@@ -2568,6 +2611,13 @@ fn signal_config_reload() -> Result<()> {
     Ok(())
 }
 
+/// No markers or links: every panel except the calendar.
+const DECOR_NONE: popup::Decor = popup::Decor {
+    marks: Vec::new(),
+    bullets: Vec::new(),
+    links: Vec::new(),
+};
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let arg = args.first().map(String::as_str).unwrap_or_default();
@@ -2620,6 +2670,9 @@ fn main() {
         match Config::load().and_then(|c| Theme::load(&c.theme)) {
             Ok(t) => {
                 println!("Configuration OK · {}", t.name);
+                for line in calendar::check_lines() {
+                    println!("{line}");
+                }
                 return;
             }
             Err(e) => {

@@ -1,8 +1,9 @@
 # Configuration
 
 NIRUBAR shares theme, font and layout settings with NIRUWM in
-`~/.config/niruwm/config.toml`. Weather has its own optional file:
-`~/.config/nirubar/config.toml`.
+`~/.config/niruwm/config.toml`. Weather and calendar options have their own
+optional file: `~/.config/nirubar/config.toml`. Calendar feed URLs live in
+`~/.config/nirubar/calendars.toml`.
 
 ## Modules
 
@@ -151,4 +152,63 @@ keeps its last successful result.
 
 Reload after editing with `niructl reload` or Super+R. Validate with
 `nirubar --check-config`.
+
+## Calendar events
+
+The clock's calendar popup can show events from read-only iCalendar (ICS)
+feeds. There is no account login: each calendar is one URL.
+
+1. Get the URL. Google Calendar: open calendar.google.com on a computer,
+   Settings (gear) > under "Settings for my calendars" pick the calendar >
+   "Integrate calendar" > copy "Secret address in iCal format". Nextcloud,
+   iCloud (public link) and Outlook (published ICS link) work the same way.
+2. Create `~/.config/nirubar/calendars.toml` with mode 0600, for example
+   `install -m 600 calendars.example.toml ~/.config/nirubar/calendars.toml`,
+   and fill in `name`, `url` and optionally `color` and `open`.
+3. Run `nirubar --check-config`, then `niructl reload`.
+
+```toml
+[[calendar]]
+name = "Privat"
+url = "https://calendar.google.com/calendar/ical/.../private-.../basic.ics"
+color = "#7aa2f7"   # optional; else the theme accent, attention colour, foreground
+open = "https://calendar.google.com/calendar/r/day/{yyyy}/{m}/{d}"  # optional
+```
+
+The secret address gives read access to anyone who has it. NIRUBAR refuses
+the file unless only you can read it (mode 0600, owned by you) and says so in
+`--check-config` and in the popup. It never logs, prints or shows a URL, and
+passes it to curl on standard input rather than on the command line. If an
+address leaks, reset it in Google Calendar's settings.
+
+Non-secret options go in `~/.config/nirubar/config.toml` (NIRUWM does not read
+that file, so the shared config is unchanged):
+
+```toml
+[calendar]
+refresh_minutes = 15   # 5 to 1440
+days_ahead = 7         # agenda: today and the next N days, 0 to 31
+show_in_bar = false    # show the next event within 12 hours before the clock
+```
+
+Feeds are fetched in the background with curl (25 s limit, 16 MiB cap), never
+while drawing. Parsed events are cached in `~/.cache/nirubar/calendar/`
+(mode 0600) and stay visible offline; the popup says when they are stale.
+Bars on several monitors share that cache.
+
+The popup marks each day that has events with a dot per calendar, lists
+today and the next `days_ahead` days (time or "all day", title, a square in
+the calendar's colour), and a click on a day or event opens the calendar's
+`open` page for that date in the shared config's `browser`. Google feeds
+open Google's day view by default.
+
+Supported iCalendar: VEVENT with DATE and DATE-TIME start/end (UTC, TZID or
+floating), DURATION, all-day and multi-day events, line folding and text
+escapes, SUMMARY and LOCATION, STATUS:CANCELLED, RRULE with
+FREQ=DAILY/WEEKLY/MONTHLY/YEARLY, INTERVAL, COUNT, UNTIL, BYDAY (with
+ordinals such as `-1FR`), BYMONTHDAY, BYMONTH, BYSETPOS and WKST, plus
+EXDATE, RDATE and RECURRENCE-ID overrides (moved or cancelled instances).
+TZIDs are read from the system zone database, including vendor-prefixed
+names and common Windows names. A rule NIRUBAR does not understand (for
+example FREQ=HOURLY or BYWEEKNO) shows the first instance only.
 

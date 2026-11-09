@@ -32,6 +32,8 @@ where a real control view exists, the panel hands over to NIRU Launcher.
 - Event-driven media (MPRIS via `playerctl --follow`) and volume (`pactl`
   events), with bounded polling fallbacks.
 - Bounded, cached provider queries for package updates and weather.
+- Read-only calendar events (ICS feeds such as Google Calendar's secret iCal
+  address) in the clock's calendar: day markers, an agenda and click-to-open.
 - Optional transparency through the compositor and HiDPI scaling from `Xft.dpi`.
 
 ## Requirements
@@ -108,7 +110,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `share`, `nirusec` | NIRUSHARE inbox entry; NIRUSEC state mark |
 | `dnd`, `notifications` | Do Not Disturb toggle; notification history |
 | `quicksettings` | Gear that opens Quick Settings (volume, Wi-Fi, Bluetooth, displays, power, theme, DND, idle, lock) |
-| `clock` | Date and time; click for a Monday-first calendar with ISO week numbers |
+| `clock` | Date and time; click for a Monday-first calendar with ISO week numbers and, when configured, calendar events |
 
 The full module and panel reference is in
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
@@ -156,6 +158,13 @@ override HiDPI detection.
 Weather is opt-in: add `weather` to `modules` and create
 `~/.config/nirubar/config.toml` from [weather.example.toml](weather.example.toml).
 
+Calendar events are opt-in too: put ICS feed URLs in
+`~/.config/nirubar/calendars.toml` (mode 0600, see
+[calendars.example.toml](calendars.example.toml)). The clock popup then marks
+days with events, lists today and the next `days_ahead` days, and opens the
+calendar's page for a clicked day or event in the configured `browser`. See
+[Calendar events](docs/CONFIGURATION.md#calendar-events).
+
 After editing, press `Super+R` or run `niructl reload`.
 
 ## Files and paths
@@ -163,7 +172,9 @@ After editing, press `Super+R` or run `niructl reload`.
 | Path | Purpose |
 |---|---|
 | `~/.config/niruwm/config.toml` | Shared configuration, `[bar]` table |
-| `~/.config/nirubar/config.toml` | Optional weather settings |
+| `~/.config/nirubar/config.toml` | Optional weather and `[calendar]` settings |
+| `~/.config/nirubar/calendars.toml` | Calendar feed URLs (secret, mode 0600) |
+| `~/.cache/nirubar/calendar/` | Parsed calendar events for offline use (mode 0600) |
 | `~/.config/niruwm/config.toml.nirubar-backup` | Backup written by `--reset-config` |
 | `~/.cache/nirubar/updates` | Cached package-update result |
 | `~/.local/bin/nirubar` | Program |

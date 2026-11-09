@@ -78,6 +78,14 @@ pub trait Module {
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         None
     }
+    /// The popup with optional markers and links (the calendar's events).
+    fn popup_decorated(
+        &mut self,
+        _palette: &crate::calendar::Palette,
+    ) -> Option<(String, Vec<String>, crate::popup::Decor)> {
+        self.popup()
+            .map(|(title, lines)| (title, lines, crate::popup::Decor::default()))
+    }
     /// Whether its text changes without anything happening in the session.
     ///
     /// Only the media title does: it moves while it plays. The bar repaints on
@@ -218,6 +226,8 @@ pub struct Clock {
     pub show: Show,
     calendar_year: i32,
     calendar_month: u32,
+    /// Events from configured ICS feeds, when there are any.
+    events: Option<crate::calendar::Calendar>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,6 +245,7 @@ impl Clock {
             format_time: cfg.time_format.clone(),
             calendar_year: now.year(),
             calendar_month: now.month(),
+            events: crate::calendar::Calendar::new(crate::calendar::settings()),
             show: match (cfg.show_date, cfg.show_time) {
                 (true, true) => Show::DateAndTime,
                 (true, false) => Show::Date,
@@ -256,10 +267,21 @@ impl Module for Clock {
         let now = chrono::Local::now();
         let d = now.format(&self.format_date).to_string();
         let t = now.format(&self.format_time).to_string();
-        match self.show {
+        let clock = match self.show {
             Show::DateAndTime => format!("{d}  {t}"),
             Show::Date => d,
             Show::Time => t,
+        };
+        let Some(events) = self.events.as_mut() else {
+            return clock;
+        };
+        events.tick();
+        if !events.show_in_bar() {
+            return clock;
+        }
+        match events.bar_text() {
+            next if next.is_empty() => clock,
+            next => format!("{next}  ·  {clock}"),
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
@@ -268,6 +290,24 @@ impl Module for Clock {
             self.calendar_month,
             &self.format_date,
         ))
+    }
+    fn popup_decorated(
+        &mut self,
+        palette: &crate::calendar::Palette,
+    ) -> Option<(String, Vec<String>, crate::popup::Decor)> {
+        let (title, mut lines) = self.popup()?;
+        let mut decor = crate::popup::Decor::default();
+        if let Some(events) = self.events.as_mut() {
+            events.tick();
+            events.decorate(
+                self.calendar_year,
+                self.calendar_month,
+                &mut lines,
+                &mut decor,
+                palette,
+            );
+        }
+        Some((title, lines, decor))
     }
     fn popup_navigate(&mut self, delta: i32) -> bool {
         let mut year = self.calendar_year;

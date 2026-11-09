@@ -1321,3 +1321,124 @@ fn the_mode_module_shows_studio_mode_from_the_root_property() {
     c.flush().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated X server, font and xdotool"]
+fn the_clock_popup_marks_and_lists_events_from_a_local_ics_feed() {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let directory = std::env::temp_dir().join(format!("nirubar-calendar-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::create_dir_all(directory.join("nirubar")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "theme = \"niru-noir\"\n[bar]\nmodules = [\"clock\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    // A one-shot HTTP server on loopback with an all-day event today.
+    let today = chrono::Local::now().format("%Y%m%d").to_string();
+    let feed = format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:x11@test\r\nDTSTART;VALUE=DATE:{today}\r\nSUMMARY:X11 fixture event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    );
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 2048];
+        let n = stream.read(&mut request).unwrap();
+        let head = String::from_utf8_lossy(&request[..n]).to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/calendar\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{feed}",
+            feed.len()
+        )
+        .unwrap();
+        head
+    });
+    let secrets = directory.join("nirubar/calendars.toml");
+    std::fs::write(
+        &secrets,
+        format!("[[calendar]]\nname = \"Test\"\nurl = \"http://127.0.0.1:{port}/private-x11secret/basic.ics\"\ncolor = \"#ff00ff\"\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let check = Command::new(env!("CARGO_BIN_EXE_nirubar"))
+        .arg("--check-config")
+        .env("XDG_CONFIG_HOME", &directory)
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&check.stdout);
+    assert!(report.contains("Calendars: 1 (Test)"), "{report}");
+    assert!(!report.contains("x11secret"), "check output names no URL");
+
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let width = c.setup().roots[screen].width_in_pixels;
+    let height = c.setup().roots[screen].height_in_pixels;
+    let bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .env("XDG_CACHE_HOME", directory.join("cache"))
+            .env("XDG_STATE_HOME", directory.join("state"))
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let head = server.join().unwrap();
+    assert!(
+        head.starts_with("GET /private-x11secret/basic.ics"),
+        "{head}"
+    );
+    let cache = directory.join("cache/nirubar/calendar/0-test.json");
+    let until = Instant::now() + Duration::from_secs(5);
+    while !cache.exists() {
+        assert!(Instant::now() < until, "the feed is cached");
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(std::fs::metadata(&cache).unwrap().mode() & 0o777, 0o600);
+    assert!(!std::fs::read_to_string(&cache)
+        .unwrap()
+        .contains("x11secret"));
+    let magenta = || -> usize {
+        let Ok(reply) = c
+            .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, width, height, !0)
+            .unwrap()
+            .reply()
+        else {
+            return 0;
+        };
+        reply
+            .data
+            .chunks(4)
+            .filter(|p| p[2] == 0xff && p[1] == 0 && p[0] == 0xff)
+            .count()
+    };
+    let until = Instant::now() + Duration::from_secs(8);
+    loop {
+        // The popup opens on the clock's next click once the data is in.
+        let x = (width - 20).to_string();
+        assert!(Command::new("xdotool")
+            .args(["mousemove", &x, "10", "click", "1"])
+            .status()
+            .unwrap()
+            .success());
+        thread::sleep(Duration::from_millis(400));
+        if magenta() > 20 {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "the popup shows the calendar colour"
+        );
+        // Close it again (or open it, when the click closed it).
+        thread::sleep(Duration::from_millis(200));
+    }
+    assert!(Command::new("xdotool")
+        .args(["key", "Escape"])
+        .status()
+        .unwrap()
+        .success());
+    drop(bar);
+    std::fs::remove_dir_all(directory).unwrap();
+}

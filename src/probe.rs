@@ -79,15 +79,54 @@ pub fn run(
     timeout: Duration,
     cap: usize,
 ) -> Option<Output> {
+    run_inner(program, args, envs, timeout, cap, None)
+}
+
+/// Like `run`, with `input` on the child's standard input. Secrets such as a
+/// calendar URL go this way, so they never appear in a process list.
+pub fn run_with_input(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    timeout: Duration,
+    cap: usize,
+    input: &[u8],
+) -> Option<Output> {
+    run_inner(program, args, envs, timeout, cap, Some(input))
+}
+
+fn run_inner(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    timeout: Duration,
+    cap: usize,
+    input: Option<&[u8]>,
+) -> Option<Output> {
     let mut child = Command::new(program)
         .args(args)
         .envs(envs.iter().copied())
         .process_group(0)
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .ok()?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        use std::io::Write;
+        // Inputs are small (well under a pipe buffer), so this cannot block
+        // on a child that does not read. Dropping closes the pipe.
+        if input.len() > 16 * 1024 || stdin.write_all(input).is_err() {
+            stop_group(&mut child);
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    }
     let mut stdout = child.stdout.take()?;
     let mut stderr = child.stderr.take()?;
     let stdout_fd = stdout.as_raw_fd();
@@ -248,6 +287,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.stdout.len(), 256);
+    }
+
+    #[test]
+    fn input_reaches_the_child_on_stdin() {
+        let out = run_with_input(
+            "sh",
+            &["-c", "cat"],
+            &[],
+            Duration::from_secs(2),
+            64,
+            b"secret stays off argv",
+        )
+        .unwrap();
+        assert_eq!(out.stdout, b"secret stays off argv");
     }
 
     #[test]
