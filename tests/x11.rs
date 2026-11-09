@@ -1684,7 +1684,20 @@ fn calendars_toml_is_reread_on_reload_and_when_the_file_changes() {
     );
     bump_config_serial(&c, root, 11);
     wait_for("/private-alpha/feed.ics", Duration::from_secs(3));
+    let alpha_cache = directory.join("cache/nirubar/calendar/0-alpha.json");
+    let until = Instant::now() + Duration::from_secs(3);
+    while !alpha_cache.exists() {
+        assert!(Instant::now() < until, "the first feed is cached");
+        thread::sleep(Duration::from_millis(50));
+    }
     drop(bar);
+    // A bar killed in the middle of a fetch leaves its lock behind; the next
+    // bar must not wait two minutes for it.
+    std::fs::write(
+        directory.join("cache/nirubar/calendar/fetch.lock"),
+        "2147483646",
+    )
+    .unwrap();
 
     // 2. No reload: the file change alone. The cached feed is not fetched
     //    again; the added one is, at once.

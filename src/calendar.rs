@@ -499,29 +499,51 @@ fn write_cache(index: usize, feed: &Feed, fetched: u64, events: &[Event]) {
 /// One bar per monitor shares the cache: whoever takes this lock fetches, the
 /// others pick the result up from disk.
 fn take_lock() -> Option<PathBuf> {
-    let path = cache_dir().join("fetch.lock");
-    let dir = cache_dir();
+    take_lock_in(&cache_dir())
+}
+
+/// Whether a lock file still belongs to a running fetch: younger than two
+/// minutes and its bar process is alive. A bar killed mid-fetch (logout,
+/// restart) must not hold up the others for the full two minutes.
+fn lock_held(path: &Path) -> bool {
+    let young = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < Duration::from_secs(120));
+    if !young {
+        return false;
+    }
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    match text.trim().parse::<i32>() {
+        // SAFETY: signal 0 only checks that the process exists.
+        Ok(pid) if pid > 0 => {
+            let alive = unsafe { libc::kill(pid, 0) } == 0;
+            alive || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
+        // Just created, the process id not written yet.
+        _ => true,
+    }
+}
+
+fn take_lock_in(dir: &Path) -> Option<PathBuf> {
+    use std::io::Write;
+    let path = dir.join("fetch.lock");
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(&dir)
+        .create(dir)
         .ok()?;
-    let fresh = |p: &Path| {
-        std::fs::metadata(p)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age < Duration::from_secs(120))
-    };
-    if path.exists() && !fresh(&path) {
+    if path.exists() && !lock_held(&path) {
         let _ = std::fs::remove_file(&path);
     }
-    std::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&path)
         .ok()?;
+    let _ = write!(file, "{}", std::process::id());
     Some(path)
 }
 
@@ -1397,6 +1419,23 @@ mod tests {
         write(&tmp, "[[calendar]]\n", 0o644);
         std::fs::rename(&tmp, &path).unwrap();
         assert_ne!(file_stamp(&path), chmod, "a new inode is a change");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_lock_left_by_a_dead_bar_is_taken_over() {
+        let dir = temp("lock");
+        let lock = take_lock_in(&dir).expect("free lock");
+        assert!(take_lock_in(&dir).is_none(), "held by this process");
+        // A process id that cannot exist (above pid_max).
+        std::fs::write(&lock, "2147483646").unwrap();
+        assert!(
+            take_lock_in(&dir).is_some(),
+            "the dead owner's lock is replaced"
+        );
+        // Being written: no process id yet, still held.
+        std::fs::write(&lock, "").unwrap();
+        assert!(take_lock_in(&dir).is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 
