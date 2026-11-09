@@ -126,6 +126,12 @@ pub struct Workspaces {
     /// Active workspace local to this monitor.
     pub active: u32,
     pub occupied: Vec<bool>,
+    /// A window on the workspace asked for attention (`_NIRUWM_URGENT`).
+    pub urgent: Vec<bool>,
+    /// A scratchpad (or a dialog of one) asked for attention.
+    pub scratch_urgent: bool,
+    /// The theme's attention colour, looked up while something is urgent.
+    pub urgent_colour: u32,
     /// First global EWMH desktop owned by this monitor.
     pub offset: u32,
 }
@@ -144,10 +150,14 @@ impl Workspaces {
             }
         }
         let occupied = vec![false; names.len()];
+        let urgent = vec![false; names.len()];
         Self {
             names,
             active: 0,
             occupied,
+            urgent,
+            scratch_urgent: false,
+            urgent_colour: 0,
             offset: 0,
         }
     }
@@ -172,6 +182,23 @@ impl Workspaces {
         self.occupied.clear();
         self.occupied.extend(occupied);
         self.occupied.resize(count, false);
+        self.urgent.resize(count, false);
+    }
+
+    /// Mark the cells that hold a window asking for attention. `desktops`
+    /// are the global `_NET_WM_DESKTOP` values of those windows; 0xFFFFFFFF
+    /// is a scratchpad, which belongs to no cell.
+    pub fn set_urgent(&mut self, desktops: &[u32]) {
+        let count = self.names.len();
+        self.urgent = vec![false; count];
+        self.scratch_urgent = false;
+        for &d in desktops {
+            if d == 0xFFFF_FFFF {
+                self.scratch_urgent = true;
+            } else if d >= self.offset && d < self.offset + count as u32 {
+                self.urgent[(d - self.offset) as usize] = true;
+            }
+        }
     }
 }
 
@@ -1006,6 +1033,7 @@ impl Module for Dictation {
 pub struct Scratchpad {
     icons: status::Icons,
     shown: bool,
+    urgent: bool,
 }
 
 impl Scratchpad {
@@ -1013,6 +1041,7 @@ impl Scratchpad {
         Self {
             icons,
             shown: false,
+            urgent: false,
         }
     }
 }
@@ -1027,10 +1056,20 @@ impl Module for Scratchpad {
     fn render(&mut self) -> String {
         let slots = crate::scratchpad::current();
         self.shown = slots.iter().any(|s| s.shown);
-        crate::scratchpad::text(self.icons.scratchpad, &slots)
+        self.urgent = slots.iter().any(|s| s.urgent);
+        let text = crate::scratchpad::text(self.icons.scratchpad, &slots);
+        // A scratchpad that asks for attention is marked, also in the text
+        // so it reads without colour.
+        if self.urgent && !text.is_empty() {
+            format!("{text}!")
+        } else {
+            text
+        }
     }
     fn tint(&self) -> Tint {
-        if self.shown {
+        if self.urgent {
+            Tint::Alert
+        } else if self.shown {
             Tint::Accent
         } else {
             Tint::Normal
@@ -2224,6 +2263,24 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn urgent_windows_mark_only_this_screens_cells() {
+        let mut ws = super::Workspaces::new(&config::Bar::default());
+        // This bar owns global desktops 10..13 (the second screen).
+        ws.update(
+            10,
+            0,
+            Some(vec!["a".into(), "b".into(), "c".into()]),
+            vec![],
+        );
+        ws.set_urgent(&[2, 11, 0xFFFF_FFFF]);
+        assert_eq!(ws.urgent, vec![false, true, false]);
+        assert!(ws.scratch_urgent, "a scratchpad is marked apart");
+        ws.set_urgent(&[]);
+        assert_eq!(ws.urgent, vec![false, false, false]);
+        assert!(!ws.scratch_urgent);
+    }
+
     /// A module name in the config must become a module in the bar. Without
     /// this, a config can list a module that never appears and nothing says so.
     #[test]

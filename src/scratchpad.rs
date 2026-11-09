@@ -31,6 +31,9 @@ pub struct Slot {
     /// 0 when the slot has a command but no window yet.
     pub window: u32,
     pub class: String,
+    /// The window (or a dialog of it) asked for attention. Not part of
+    /// `_NIRUWM_SCRATCHPADS`: the bar sets it from `_NIRUWM_URGENT`.
+    pub urgent: bool,
 }
 
 /// Parse `_NIRUWM_SCRATCHPADS`. Unknown or malformed lines are skipped, so a
@@ -52,12 +55,14 @@ pub fn parse(text: &str) -> Vec<Slot> {
                     shown: state == "shown",
                     window,
                     class,
+                    urgent: false,
                 }),
                 "empty" => Some(Slot {
                     slot,
                     shown: false,
                     window: 0,
                     class,
+                    urgent: false,
                 }),
                 _ => None,
             }
@@ -110,7 +115,13 @@ pub fn row(slot: &Slot, title: &str) -> String {
     } else {
         what
     };
-    let mark = if slot.shown { "●" } else { "○" };
+    let mark = if slot.urgent {
+        "!"
+    } else if slot.shown {
+        "●"
+    } else {
+        "○"
+    };
     format!("{mark} {:<13} {what:<18} {state}", key(slot.slot))
 }
 
@@ -128,7 +139,8 @@ mod tests {
                 slot: 0,
                 shown: false,
                 window: 11,
-                class: "kitty scratchpad".into()
+                class: "kitty scratchpad".into(),
+                urgent: false,
             }
         );
         assert_eq!(slots[1].window, 0);

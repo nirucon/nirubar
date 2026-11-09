@@ -8,13 +8,13 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 
 | Module | Shows |
 |---|---|
-| `workspaces` | Ten workspace cells; click to switch. A small accent marker shows occupied non-active workspaces |
+| `workspaces` | Ten workspace cells; click to switch. A small accent marker shows occupied non-active workspaces. A cell with a window that asked for attention is filled with the theme's attention colour (see below); NIRUWM 0.19 lists those windows in `_NIRUWM_URGENT`, and each bar marks only its own screen's cells |
 | `network` | Wired link; `!` means link up without a default route. Wireless appears here only with `wifi = false`; click for interface, route and address |
 | `wifi` | Wi-Fi radio and connection; `!` means radio off or not connected; click to open the Wi-Fi selector |
 | `battery` | Aggregated battery packs; panel shows charge, state and remaining time when available |
 | `volume` | Output level or mute; click for info, scroll to change, right-click mute, middle-click microphone mute |
 | `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |
-| `scratchpad` | NIRUWM scratchpads: a terminal mark (nf-fa-terminal, plain `>_`) while at least one exists, the mark and a count for several, accent while one is shown, nothing otherwise. Click: panel with key, slot, title and state per scratchpad; a row shows or hides it. Right-click: the default scratchpad. Reads the `_NIRUWM_SCRATCHPADS` root property (NIRUWM 0.17.4) only when it changes |
+| `scratchpad` | NIRUWM scratchpads: a terminal mark (nf-fa-terminal, plain `>_`) while at least one exists, the mark and a count for several, accent while one is shown, nothing otherwise. Click: panel with key, slot, title and state per scratchpad; a row shows or hides it. Right-click: the default scratchpad. Reads the `_NIRUWM_SCRATCHPADS` root property (NIRUWM 0.17.4) only when it changes. A scratchpad that asked for attention turns the mark into the alert colour with a `!` (and its row starts with `!`); without this module a line in the attention colour under the workspace cells says the same |
 | `dictation` | NIRUDICTATE: a red `●` while recording, an accent `…` while transcribing, followed by `AI` while the dictation goes to the opencode agent (NIRUDICTATE 0.2 agent mode, Shift+Alt+Space), nothing when idle or not installed; right-click stops and inserts (or sends), middle-click opens its settings. Reads `$XDG_RUNTIME_DIR/nirudictate/state.json` only when it changed and repaints at once on the `_NIRUDICTATE_STATE` root property |
 | `recording` | NIRUCLIP indicator: `● rec MM:SS` while recording, `○ paused MM:SS` while paused (recorded time, pauses excluded), with `· cam off` (camera privacy image or switch) or `· cam !` (frozen picture, no frames, camera busy) when NIRUCLIP 0.4+ reports a camera problem; the popup names it; right-click stop and save, middle-click capture panel |
 | `brightness` | Backlight percentage; hidden without a readable backlight |
@@ -43,6 +43,16 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
 `~/.cache/nirubar/updates` for `update_check_minutes`.
+
+## Attention colour
+
+Urgent workspace cells use a semantic attention colour. The ten built-in
+themes each have one (an amber or orange that differs from the theme's focus
+colour). A user theme may set `urgent = "rrggbb"` in its theme file (read by
+NIRUWM and NIRUBAR 0.19 and later; other programs that read theme files may
+not know the key yet), or `[colors] urgent` or `warning` in
+`~/.config/niruwm/appearance.toml` sets it for the built-in themes. Without
+either, a user theme gets an amber derived from its background.
 
 ## Shared example
 

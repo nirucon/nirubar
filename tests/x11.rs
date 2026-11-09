@@ -1106,3 +1106,133 @@ fn scratchpad_module_lists_slots_and_toggles_them_through_niruwm() {
     drop(bar);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated X server and font"]
+fn an_urgent_window_colours_only_its_own_screens_workspace_cell() {
+    let directory = std::env::temp_dir().join(format!("nirubar-urgent-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "theme = \"niru-noir\"\n[bar]\nmodules = [\"workspaces\", \"clock\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let atom = |name: &str| {
+        c.intern_atom(false, name.as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom
+    };
+    let utf8 = atom("UTF8_STRING");
+    // Stand in for niruwm: two screens of three and two workspaces.
+    let layout = "left\t0\t0\t640\t0\t3\t0\nright\t640\t0\t640\t3\t2\t0\n";
+    c.change_property8(
+        PropMode::REPLACE,
+        root,
+        atom("_NIRUWM_MONITORS"),
+        utf8,
+        layout.as_bytes(),
+    )
+    .unwrap();
+    c.change_property8(
+        PropMode::REPLACE,
+        root,
+        atom("_NET_DESKTOP_NAMES"),
+        utf8,
+        b"a\0b\0c\0d\0e\0",
+    )
+    .unwrap();
+    // One window on global desktop 4: the right screen's second workspace.
+    let w = c.generate_id().unwrap();
+    c.create_window(
+        0,
+        w,
+        root,
+        0,
+        0,
+        10,
+        10,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        0,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    c.change_property32(
+        PropMode::REPLACE,
+        w,
+        atom("_NET_WM_DESKTOP"),
+        AtomEnum::CARDINAL,
+        &[4],
+    )
+    .unwrap();
+    c.change_property32(
+        PropMode::REPLACE,
+        root,
+        atom("_NET_CLIENT_LIST"),
+        AtomEnum::WINDOW,
+        &[w],
+    )
+    .unwrap();
+    c.flush().unwrap();
+    let start = |geometry: &str| {
+        Process(
+            Command::new(env!("CARGO_BIN_EXE_nirubar"))
+                .env("XDG_CONFIG_HOME", &directory)
+                .args(["--monitor", geometry])
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let _left = start("0,0,640,left");
+    let _right = start("640,0,640,right");
+    // The colour at (x, 3) on the root window.
+    let pixel = |x: i16| -> u32 {
+        let image = c
+            .get_image(ImageFormat::Z_PIXMAP, root, x, 3, 1, 1, !0)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let d = &image.data;
+        (u32::from(d[2]) << 16) | (u32::from(d[1]) << 8) | u32::from(d[0])
+    };
+    let background = 0x0f0f10;
+    let wait_for = |what: &str, check: &dyn Fn() -> bool| {
+        let until = Instant::now() + Duration::from_secs(5);
+        while !check() {
+            assert!(Instant::now() < until, "{what}");
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // Cells are about 30 px wide: the right screen's second cell is near
+    // x = 640 + 45, the left screen's second cell near x = 45.
+    wait_for("the right bar draws", &|| pixel(640 + 45) == background);
+    c.change_property32(
+        PropMode::REPLACE,
+        root,
+        atom("_NIRUWM_URGENT"),
+        AtomEnum::WINDOW,
+        &[w],
+    )
+    .unwrap();
+    c.flush().unwrap();
+    wait_for("the urgent cell takes the attention colour", &|| {
+        pixel(640 + 45) == 0xd7b36a
+    });
+    assert_eq!(pixel(640 + 75), background, "only that cell");
+    assert_eq!(pixel(45), background, "the other screen's bar is unmarked");
+    c.change_property32(
+        PropMode::REPLACE,
+        root,
+        atom("_NIRUWM_URGENT"),
+        AtomEnum::WINDOW,
+        &[],
+    )
+    .unwrap();
+    c.flush().unwrap();
+    wait_for("the mark goes away", &|| pixel(640 + 45) == background);
+    std::fs::remove_dir_all(directory).unwrap();
+}

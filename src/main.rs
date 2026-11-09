@@ -571,6 +571,7 @@ impl Bar {
             "_NET_DESKTOP_NAMES",
             "_NIRUWM_MONITORS",
             "_NIRUWM_SCRATCHPADS",
+            "_NIRUWM_URGENT",
             "_NIRUWM_LAYOUT",
             "_NIRUWM_COMMAND",
             "_NIRUBAR_SELECTION",
@@ -931,6 +932,51 @@ impl Bar {
             }
         }
         self.workspaces.update(offset, active, names, occupied);
+
+        // NIRUWM 0.19.0 lists the windows that asked for attention. Each bar
+        // marks the cells of its own screen; a scratchpad (desktop
+        // 0xFFFFFFFF) is marked by the scratchpad module.
+        let urgent: Vec<u32> = if self.monitor_managed {
+            self.c
+                .get_property(
+                    false,
+                    self.root,
+                    self.atom("_NIRUWM_URGENT"),
+                    AtomEnum::WINDOW,
+                    0,
+                    1024,
+                )
+                .ok()
+                .and_then(|r| r.reply().ok())
+                .and_then(|r| r.value32().map(|v| v.collect::<Vec<_>>()))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let desktops: Vec<u32> = urgent
+            .iter()
+            .filter_map(|w| self.values(*w, "_NET_WM_DESKTOP").first().copied())
+            .collect();
+        self.workspaces.set_urgent(&desktops);
+        if !desktops.is_empty() {
+            self.workspaces.urgent_colour = self.theme.urgent_pixel(&self.cfg.theme);
+        }
+        if let Ok(mut slots) = scratchpad::shared().lock() {
+            for slot in slots.iter_mut() {
+                slot.urgent = slot.window != 0 && urgent.contains(&slot.window);
+            }
+            // A dialog of a scratchpad: mark the scratchpad it belongs to,
+            // which is the shown one when there is one.
+            if self.workspaces.scratch_urgent && !slots.iter().any(|s| s.urgent) {
+                let index = slots
+                    .iter()
+                    .position(|s| s.shown)
+                    .or_else(|| slots.iter().position(|s| s.window != 0));
+                if let Some(i) = index {
+                    slots[i].urgent = true;
+                }
+            }
+        }
     }
 
     fn title(&mut self) -> String {
@@ -1039,7 +1085,26 @@ impl Bar {
                         border,
                     )?;
                 }
-                let (colour, cell_bg) = if active {
+                let urgent = self.workspaces.urgent.get(i).copied().unwrap_or(false);
+                if urgent {
+                    // A window here asked for attention: the whole cell in
+                    // the theme's attention colour, the label in the bar's
+                    // background so it reads on it.
+                    self.renderer.fill(
+                        &self.c,
+                        self.gc,
+                        Rectangle {
+                            x,
+                            y: 0,
+                            width: cell as u16,
+                            height: self.height,
+                        },
+                        self.workspaces.urgent_colour,
+                    )?;
+                }
+                let (colour, cell_bg) = if urgent {
+                    (bg, self.workspaces.urgent_colour)
+                } else if active {
                     (fg, border)
                 } else if self.workspaces.occupied.get(i).copied().unwrap_or(false) {
                     (fg, bg)
@@ -1050,7 +1115,7 @@ impl Bar {
                 let text_x = x + (cell - self.renderer.width(&label)) / 2;
                 self.renderer
                     .text(&self.c, self.gc, text_x, &label, colour, cell_bg, x + cell)?;
-                if !active && self.workspaces.occupied.get(i).copied().unwrap_or(false) {
+                if !active && !urgent && self.workspaces.occupied.get(i).copied().unwrap_or(false) {
                     let dot = 3;
                     self.renderer.fill(
                         &self.c,
@@ -1065,6 +1130,26 @@ impl Bar {
                     )?;
                 }
             }
+        }
+
+        // A scratchpad that asks for attention, when the bar has no
+        // scratchpad module to show it: a line under the workspace cells.
+        if show_workspaces
+            && self.workspaces.scratch_urgent
+            && !self.cfg.bar.modules.iter().any(|m| m == "scratchpad")
+        {
+            let block = self.cells * self.workspaces.names.len() as i16;
+            self.renderer.fill(
+                &self.c,
+                self.gc,
+                Rectangle {
+                    x: 0,
+                    y: self.height as i16 - 2,
+                    width: block.max(0) as u16,
+                    height: 2,
+                },
+                self.workspaces.urgent_colour,
+            )?;
         }
 
         // Right-aligned status modules, in config order. The tray is the first
@@ -1381,6 +1466,11 @@ impl Bar {
     fn frame_key(&mut self) -> String {
         let tag = self.workspaces.active;
         let occupied: Vec<bool> = self.workspaces.occupied.to_vec();
+        let urgent = (
+            self.workspaces.urgent.to_vec(),
+            self.workspaces.scratch_urgent,
+            self.workspaces.urgent_colour,
+        );
         let modules: Vec<String> = self.modules.iter_mut().map(|m| m.render()).collect();
         self.rendered = modules.clone();
         let progress: Vec<Option<u16>> = self
@@ -1405,7 +1495,7 @@ impl Bar {
         // status, title and icon bytes take part so a tray change is painted
         // on the next idle tick.
         format!(
-            "{width}:{tray_width}:{sni_key}:{tag}:{occupied:?}:{modules:?}:{progress:?}:{title}",
+            "{width}:{tray_width}:{sni_key}:{tag}:{occupied:?}:{urgent:?}:{modules:?}:{progress:?}:{title}",
             width = self.width
         )
     }

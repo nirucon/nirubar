@@ -20,6 +20,8 @@ where a real control view exists, the panel hands over to NIRU Launcher.
 ## Features
 
 - One bar per monitor with monitor-local workspace cells and its own clock.
+- A workspace holding a window that asked for attention (NIRUWM 0.19
+  urgency) is painted in the theme's attention colour.
 - Font-aware layout and semantic theme colours from the active NIRUX theme,
   with the ten built-in palettes when NIRUX is not installed.
 - Panels with measured hitboxes (a module is clickable across its whole cell),
@@ -82,7 +84,7 @@ Add, remove or reorder modules in `[bar] modules`:
 
 | Module | Shows |
 |---|---|
-| `workspaces` | Ten workspace cells with active/occupied state; click to switch |
+| `workspaces` | Ten workspace cells with active/occupied/urgent state; click to switch |
 | `media` | Playing title with a progress hairline; right-click play/pause, scroll previous/next |
 | `volume` | Output level or mute; scroll to change, right-click mute, middle-click microphone mute |
 | `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |

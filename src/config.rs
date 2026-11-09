@@ -57,6 +57,8 @@ pub struct Config {
     pub idle: toml::Value,
     /// NIRUWM-only scratchpad settings.
     pub scratchpad: toml::Value,
+    /// NIRUWM-only window swallowing (`[swallow]`, NIRUWM 0.19.0).
+    pub swallow: toml::Value,
     /// NIRUWM-only window rules.
     pub rules: Vec<toml::Value>,
     /// The `sun` module's location: degrees, north and east positive. Set both
@@ -197,6 +199,7 @@ impl Default for Config {
             brightness: toml::Value::Table(Default::default()),
             idle: toml::Value::Table(Default::default()),
             scratchpad: toml::Value::Table(Default::default()),
+            swallow: toml::Value::Table(Default::default()),
             rules: Vec::new(),
         }
     }
@@ -989,9 +992,75 @@ pub struct Theme {
     pub muted: String,
     pub border: String,
     pub focus: String,
+    /// The attention colour: a workspace cell holding a window that asked
+    /// for attention. Optional, so a theme file without it stays valid for
+    /// every program that reads the file; see `urgent_pixel`.
+    #[serde(default)]
+    pub urgent: Option<String>,
+}
+
+/// The attention colour of each built-in theme, the same table as NIRUWM's.
+/// Kept in code rather than in the theme files: those are also read by
+/// programs that refuse unknown keys.
+pub fn builtin_urgent(theme: &str) -> Option<&'static str> {
+    Some(match theme {
+        "niru-noir" => "d7b36a",
+        "niru-nord" => "ebcb8b",
+        "niru-satie" => "d4a35a",
+        "niru-carl-larsson" => "b7791f",
+        "niru-forest-vigil" => "d9a441",
+        "niru-blood-of-urdr" => "e0a84e",
+        "niru-root-and-stone" => "d9822b",
+        "niru-blue-horizon" => "e5b567",
+        "niru-the-norns" => "d6a55c",
+        "niru-winter-nights" => "e09a5f",
+        _ => return None,
+    })
+}
+
+/// An amber that reads on `background`, for a user theme without its own
+/// attention colour: darker on light themes, softer on dark ones.
+pub fn derived_urgent(background: u32) -> u32 {
+    let (r, g, b) = (
+        (background >> 16) & 0xff,
+        (background >> 8) & 0xff,
+        background & 0xff,
+    );
+    let luminance = (2126 * r + 7152 * g + 722 * b) / 10_000;
+    if luminance > 140 {
+        0xb7791f
+    } else {
+        0xd7b36a
+    }
 }
 
 impl Theme {
+    /// The attention colour for theme `id`: the theme file's own `urgent`,
+    /// then `[colors] urgent` or `warning` in appearance.toml (built-in
+    /// themes only, like every other appearance colour), then the built-in
+    /// value, then an amber derived from the background.
+    pub fn urgent_pixel(&self, id: &str) -> u32 {
+        if let Some(pixel) = self.urgent.as_deref().and_then(|c| Self::pixel(c).ok()) {
+            return pixel;
+        }
+        let user_file = directory().join("themes").join(format!("{id}.toml"));
+        if !user_file.exists() {
+            if let Some(appearance) = appearance_value() {
+                for key in ["urgent", "warning"] {
+                    if let Some(pixel) =
+                        appearance_colour(&appearance, key).and_then(|c| Self::pixel(&c).ok())
+                    {
+                        return pixel;
+                    }
+                }
+            }
+        }
+        if let Some(pixel) = builtin_urgent(id).and_then(|c| Self::pixel(c).ok()) {
+            return pixel;
+        }
+        derived_urgent(Self::pixel(&self.background).unwrap_or(0))
+    }
+
     pub fn load(name: &str) -> Result<Self> {
         if name.is_empty()
             || !name
@@ -1053,6 +1122,9 @@ impl Theme {
         ] {
             Self::pixel(s)?;
         }
+        if let Some(urgent) = &theme.urgent {
+            Self::pixel(urgent)?;
+        }
         Ok(theme)
     }
 
@@ -1067,6 +1139,64 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_built_in_theme_has_an_attention_colour_that_differs_from_its_palette() {
+        for id in [
+            "niru-noir",
+            "niru-nord",
+            "niru-satie",
+            "niru-carl-larsson",
+            "niru-forest-vigil",
+            "niru-blood-of-urdr",
+            "niru-root-and-stone",
+            "niru-blue-horizon",
+            "niru-the-norns",
+            "niru-winter-nights",
+        ] {
+            let urgent = builtin_urgent(id).unwrap_or_else(|| panic!("{id} has none"));
+            let pixel = Theme::pixel(urgent).expect("six hex digits");
+            let text = match id {
+                "niru-noir" => include_str!("../themes/niru-noir.toml"),
+                "niru-nord" => include_str!("../themes/niru-nord.toml"),
+                "niru-satie" => include_str!("../themes/niru-satie.toml"),
+                "niru-carl-larsson" => include_str!("../themes/niru-carl-larsson.toml"),
+                "niru-forest-vigil" => include_str!("../themes/niru-forest-vigil.toml"),
+                "niru-blood-of-urdr" => include_str!("../themes/niru-blood-of-urdr.toml"),
+                "niru-root-and-stone" => include_str!("../themes/niru-root-and-stone.toml"),
+                "niru-blue-horizon" => include_str!("../themes/niru-blue-horizon.toml"),
+                "niru-the-norns" => include_str!("../themes/niru-the-norns.toml"),
+                _ => include_str!("../themes/niru-winter-nights.toml"),
+            };
+            let theme: Theme = toml::from_str(text).expect("built-in theme parses");
+            assert!(
+                theme.urgent.is_none(),
+                "{id}: the file keeps the shared schema"
+            );
+            for other in [&theme.background, &theme.focus, &theme.border] {
+                assert_ne!(Theme::pixel(other).unwrap(), pixel, "{id}");
+            }
+        }
+        assert_eq!(builtin_urgent("my-own"), None);
+        // A user theme without one gets an amber that reads on its background.
+        assert_eq!(derived_urgent(0x101010), 0xd7b36a);
+        assert_eq!(derived_urgent(0xf0f0f0), 0xb7791f);
+        // And a theme file may name its own.
+        let own: Theme = toml::from_str(
+            "name = \"x\"\nbackground = \"000000\"\nforeground = \"ffffff\"\nmuted = \"888888\"\nborder = \"222222\"\nfocus = \"444444\"\nurgent = \"ff8800\"\n",
+        )
+        .unwrap();
+        assert_eq!(own.urgent_pixel("x-does-not-exist"), 0xff8800);
+    }
+
+    #[test]
+    fn the_window_manager_swallow_table_is_accepted() {
+        let cfg: Config = toml::from_str(
+            "[swallow]\nenabled = false\nterminals = [\"kitty\"]\nexclude = [\"mpv\"]\n",
+        )
+        .expect("[swallow] belongs to NIRUWM and must not stop the bar");
+        assert!(cfg.swallow.get("enabled").is_some());
+    }
 
     #[test]
     fn ui_scale_prefers_the_explicit_value_and_clamps() {
