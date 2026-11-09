@@ -1442,3 +1442,281 @@ fn the_clock_popup_marks_and_lists_events_from_a_local_ics_feed() {
     drop(bar);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// Click the bar at `x` with the real pointer (the bar sits at the top).
+fn click_at(x: u16) {
+    let x = x.to_string();
+    assert!(Command::new("xdotool")
+        .args(["mousemove", &x, "10", "click", "1"])
+        .status()
+        .unwrap()
+        .success());
+}
+
+fn bump_config_serial(c: &impl Connection, root: Window, serial: u32) {
+    let atom = c
+        .intern_atom(false, b"_NIRU_CONFIG_SERIAL")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    c.change_property32(PropMode::REPLACE, root, atom, AtomEnum::CARDINAL, &[serial])
+        .unwrap();
+    c.flush().unwrap();
+}
+
+#[test]
+#[ignore = "requires isolated X server, font and xdotool"]
+fn reading_panels_stay_open_past_the_global_timeout_and_quick_panels_close() {
+    let directory = std::env::temp_dir().join(format!("nirubar-timeouts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::create_dir_all(directory.join("nirubar")).unwrap();
+    let config = directory.join("niruwm/config.toml");
+    let shared = |module: &str| {
+        format!("theme = \"niru-noir\"\n[bar]\nmodules = [{module:?}]\nicons = false\ntray = false\npopup_timeout_seconds = 1\n")
+    };
+    std::fs::write(&config, shared("clock")).unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let width = c.setup().roots[screen].width_in_pixels;
+    let selection = c
+        .intern_atom(false, b"_NIRUBAR_SELECTION")
+        .unwrap()
+        .reply()
+        .unwrap()
+        .atom;
+    let _bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .env("XDG_CACHE_HOME", directory.join("cache"))
+            .env("XDG_STATE_HOME", directory.join("state"))
+            .spawn()
+            .unwrap(),
+    );
+    let until = Instant::now() + Duration::from_secs(5);
+    while c
+        .get_selection_owner(selection)
+        .unwrap()
+        .reply()
+        .unwrap()
+        .owner
+        == 0
+    {
+        assert!(Instant::now() < until, "the bar starts");
+        thread::sleep(Duration::from_millis(20));
+    }
+    thread::sleep(Duration::from_millis(300));
+    let children = || c.query_tree(root).unwrap().reply().unwrap().children.len();
+    let baseline = children();
+    // Open the module's panel; retry while the bar is still painting.
+    let open = || {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            click_at(width - 20);
+            thread::sleep(Duration::from_millis(250));
+            if children() > baseline {
+                return Instant::now();
+            }
+            assert!(Instant::now() < until, "a click opens the panel");
+        }
+    };
+    let closes_within = |limit: Duration| {
+        let until = Instant::now() + limit;
+        while Instant::now() < until {
+            if children() == baseline {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        false
+    };
+
+    // The calendar is a reading panel: the 1 s global timeout does not apply.
+    open();
+    assert!(
+        !closes_within(Duration::from_millis(3000)),
+        "the calendar closed on the global timeout"
+    );
+    assert!(Command::new("xdotool")
+        .args(["key", "Escape"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(
+        closes_within(Duration::from_secs(2)),
+        "Escape closes a reading panel"
+    );
+
+    // Uptime is a quick panel: it closes after about a second.
+    std::fs::write(&config, shared("uptime")).unwrap();
+    bump_config_serial(&c, root, 1);
+    thread::sleep(Duration::from_millis(500));
+    let opened = open();
+    assert!(
+        closes_within(Duration::from_secs(3)),
+        "the quick panel kept the global timeout"
+    );
+    assert!(
+        opened.elapsed() >= Duration::from_millis(700),
+        "closed too early"
+    );
+
+    // An override in nirubar's own file beats the reading-panel default and
+    // is picked up by a reload; NIRUWM's shared file stays untouched.
+    std::fs::write(
+        directory.join("nirubar/config.toml"),
+        "[popup_timeout]\ncalendar = 1\nuptime = 0\n",
+    )
+    .unwrap();
+    std::fs::write(&config, shared("clock")).unwrap();
+    bump_config_serial(&c, root, 2);
+    thread::sleep(Duration::from_millis(500));
+    open();
+    assert!(
+        closes_within(Duration::from_secs(3)),
+        "the calendar override closes the panel"
+    );
+    std::fs::write(&config, shared("uptime")).unwrap();
+    bump_config_serial(&c, root, 3);
+    thread::sleep(Duration::from_millis(500));
+    open();
+    assert!(
+        !closes_within(Duration::from_millis(2500)),
+        "uptime = 0 keeps the quick panel open"
+    );
+    // A click on the same module closes it.
+    click_at(width - 20);
+    assert!(closes_within(Duration::from_secs(2)));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// A loopback ICS server that answers every request and records its path.
+fn ics_server() -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = [0u8; 2048];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let head = String::from_utf8_lossy(&request[..n]).to_string();
+            let path = head.split(' ').nth(1).unwrap_or_default().to_string();
+            let today = chrono::Local::now().format("%Y%m%d").to_string();
+            let feed = format!(
+                "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{path}@test\r\nDTSTART;VALUE=DATE:{today}\r\nSUMMARY:Reload fixture\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+            );
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/calendar\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{feed}",
+                feed.len()
+            );
+            log.lock().unwrap().push(path);
+        }
+    });
+    (port, seen)
+}
+
+#[test]
+#[ignore = "requires isolated X server"]
+fn calendars_toml_is_reread_on_reload_and_when_the_file_changes() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = std::env::temp_dir().join(format!("nirubar-calreload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::create_dir_all(directory.join("nirubar")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "theme = \"niru-noir\"\n[bar]\nmodules = [\"clock\"]\ntray = false\n",
+    )
+    .unwrap();
+    let (port, seen) = ics_server();
+    let secrets = directory.join("nirubar/calendars.toml");
+    let entry = |name: &str| {
+        format!("[[calendar]]\nname = {name:?}\nurl = \"http://127.0.0.1:{port}/private-{name}/feed.ics\"\n")
+    };
+    // Write the way an editor does: a new file renamed over the old one.
+    let save = |text: &str| {
+        let tmp = directory.join("nirubar/calendars.toml.tmp");
+        std::fs::write(&tmp, text).unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::rename(&tmp, &secrets).unwrap();
+    };
+    let wait_for = |path: &str, limit: Duration| {
+        let until = Instant::now() + limit;
+        loop {
+            if seen.lock().unwrap().iter().any(|p| p == path) {
+                return;
+            }
+            assert!(
+                Instant::now() < until,
+                "{path} was not fetched: {:?}",
+                seen.lock().unwrap()
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let start = |check: &str| {
+        Process(
+            Command::new(env!("CARGO_BIN_EXE_nirubar"))
+                .env("XDG_CONFIG_HOME", &directory)
+                .env("XDG_CACHE_HOME", directory.join("cache"))
+                .env("XDG_STATE_HOME", directory.join("state"))
+                .env("NIRUBAR_FILE_CHECK_SECONDS", check)
+                .spawn()
+                .unwrap(),
+        )
+    };
+
+    // 1. `niructl reload` (the root serial) alone: the file watcher is off.
+    let bar = start("0");
+    thread::sleep(Duration::from_millis(1500));
+    save(&entry("alpha"));
+    thread::sleep(Duration::from_millis(1500));
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "nothing fetched before reload"
+    );
+    bump_config_serial(&c, root, 11);
+    wait_for("/private-alpha/feed.ics", Duration::from_secs(3));
+    drop(bar);
+
+    // 2. No reload: the file change alone. The cached feed is not fetched
+    //    again; the added one is, at once.
+    let bar = start("1");
+    thread::sleep(Duration::from_millis(1500));
+    save(&format!("{}{}", entry("alpha"), entry("beta")));
+    wait_for("/private-beta/feed.ics", Duration::from_secs(4));
+    let cache = directory.join("cache/nirubar/calendar/1-beta.json");
+    let until = Instant::now() + Duration::from_secs(3);
+    while !cache.exists() {
+        assert!(Instant::now() < until, "the new feed is cached");
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.contains("alpha"))
+            .count(),
+        1,
+        "a cached, unchanged feed is not fetched again"
+    );
+    // 3. A file anyone can read is refused again without a restart.
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let check = Command::new(env!("CARGO_BIN_EXE_nirubar"))
+        .arg("--check-config")
+        .env("XDG_CONFIG_HOME", &directory)
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&check.stdout);
+    assert!(report.contains("mode 0644"), "{report}");
+    assert!(!report.contains("private-"), "{report}");
+    drop(bar);
+    std::fs::remove_dir_all(directory).unwrap();
+}

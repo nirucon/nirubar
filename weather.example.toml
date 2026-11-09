@@ -1,4 +1,4 @@
-# NIRUBAR weather settings.
+# NIRUBAR's own settings: weather, calendar options and panel timeouts.
 # Location: ~/.config/nirubar/config.toml (or $XDG_CONFIG_HOME/nirubar/).
 # Add "weather" to [bar] modules in the shared niruwm config to show it.
 
@@ -16,3 +16,12 @@ refresh_minutes = 30
 # refresh_minutes = 15   # 5 to 1440
 # days_ahead = 7         # agenda: today and the next N days (0 to 31)
 # show_in_bar = false    # next event within 12 h before the clock
+
+# Per-panel timeouts in seconds, by [bar] modules name ("calendar" is the
+# clock's panel, "tray" tray menus, "overflow" the +N list). 0 keeps a panel
+# open until dismissed. Without an entry, reading panels (clock, weather,
+# tasks, pulse, notifications) stay open and the rest use
+# [bar] popup_timeout_seconds from the shared niruwm config.
+# [popup_timeout]
+# calendar = 0
+# volume = 2

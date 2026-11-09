@@ -9,6 +9,10 @@
 # The URLs are never logged, printed or shown, and curl reads them from its
 # standard input, so they do not appear in a process list.
 #
+# After editing, nothing else is needed: the running bar re-reads this file
+# within a few seconds (niructl reload or Super+R applies it at once) and
+# fetches a new or changed calendar straight away.
+#
 # Google Calendar: calendar.google.com > Settings > (your calendar under
 # "Settings for my calendars") > Integrate calendar > "Secret address in iCal
 # format". Nextcloud, iCloud (public calendar link) and Outlook ("Publish a

@@ -77,6 +77,10 @@ pub struct Config {
     /// window manager that will not start is a session that will not start.
     pub weather_latitude: f64,
     pub weather_longitude: f64,
+    /// Per-panel timeouts from `[popup_timeout]` in NIRUBAR's own file,
+    /// `~/.config/nirubar/config.toml`. Never part of the shared document.
+    #[serde(skip)]
+    pub popup_timeouts: crate::popup_timeout::Overrides,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -204,6 +208,7 @@ impl Default for Config {
             swallow: toml::Value::Table(Default::default()),
             studio: toml::Value::Table(Default::default()),
             rules: Vec::new(),
+            popup_timeouts: Default::default(),
         }
     }
 }
@@ -420,7 +425,20 @@ fn legacy_path() -> PathBuf {
 }
 
 impl Config {
+    /// The shared file plus NIRUBAR's own per-panel timeouts.
     pub fn load() -> Result<Self> {
+        let mut c = Self::load_shared()?;
+        c.popup_timeouts = crate::popup_timeout::Overrides::load();
+        Ok(c)
+    }
+
+    /// Seconds before the panel of `module` closes itself (0: until dismissed).
+    pub fn popup_timeout(&self, module: &str) -> u32 {
+        self.popup_timeouts
+            .resolve(module, self.bar.popup_timeout_seconds)
+    }
+
+    fn load_shared() -> Result<Self> {
         let primary = directory().join("config.toml");
         let text = match fs::read_to_string(&primary) {
             Ok(s) => s,

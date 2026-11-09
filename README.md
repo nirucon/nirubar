@@ -143,7 +143,7 @@ modules = ["workspaces", "media", "volume", "network", "wifi", "battery", "quick
 workspace_layout = 1         # 1 numbers (default), 2 icons, 3 text
 icons = true
 popups = true
-popup_timeout_seconds = 4    # 0 keeps a panel open until dismissed
+popup_timeout_seconds = 4    # quick panels; 0 keeps them open until dismissed
 tray = true
 transparent = true           # see-through through the compositor
 opacity = 94                 # 1-100
@@ -155,6 +155,25 @@ Other useful keys: `show_title`, `title_max`, `cell_width`, `separator`,
 `battery`/`network`/`wifi` switches. Set `NIRU_UI_SCALE` (0.75–2.5) to
 override HiDPI detection.
 
+Panels close on a click on the same module, a click elsewhere or Escape.
+Quick-glance panels (volume, network, battery, media, ...) also close after
+`popup_timeout_seconds`. Reading panels stay open until you dismiss them:
+the clock's calendar, `weather` (rain timeline), `tasks`, `pulse` (the load
+graph) and `notifications` (history). Give any panel its own timeout in
+NIRUBAR's own file, `~/.config/nirubar/config.toml` (not the shared NIRUWM
+file), using the names from `[bar] modules`, `calendar` for the clock's panel,
+`tray` for tray menus and `overflow` for the `+N` list:
+
+```toml
+[popup_timeout]
+calendar = 0   # until dismissed (already the default)
+volume = 2
+weather = 20
+```
+
+An override wins over the reading-panel default, which wins over
+`popup_timeout_seconds`. See [Panels](docs/CONFIGURATION.md#display-and-panels).
+
 Weather is opt-in: add `weather` to `modules` and create
 `~/.config/nirubar/config.toml` from [weather.example.toml](weather.example.toml).
 
@@ -163,7 +182,10 @@ Calendar events are opt-in too: put ICS feed URLs in
 [calendars.example.toml](calendars.example.toml)). The clock popup then marks
 days with events, lists today and the next `days_ahead` days, and opens the
 calendar's page for a clicked day or event in the configured `browser`. See
-[Calendar events](docs/CONFIGURATION.md#calendar-events).
+[Calendar events](docs/CONFIGURATION.md#calendar-events). Changes to
+`calendars.toml` take effect within a few seconds on their own, and at once
+with `niructl reload` or `Super+R`; a new or changed calendar is fetched
+straight away.
 
 After editing, press `Super+R` or run `niructl reload`.
 
@@ -172,7 +194,7 @@ After editing, press `Super+R` or run `niructl reload`.
 | Path | Purpose |
 |---|---|
 | `~/.config/niruwm/config.toml` | Shared configuration, `[bar]` table |
-| `~/.config/nirubar/config.toml` | Optional weather and `[calendar]` settings |
+| `~/.config/nirubar/config.toml` | Optional weather, `[calendar]` and `[popup_timeout]` settings |
 | `~/.config/nirubar/calendars.toml` | Calendar feed URLs (secret, mode 0600) |
 | `~/.cache/nirubar/calendar/` | Parsed calendar events for offline use (mode 0600) |
 | `~/.config/niruwm/config.toml.nirubar-backup` | Backup written by `--reset-config` |

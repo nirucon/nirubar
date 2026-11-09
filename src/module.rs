@@ -103,6 +103,12 @@ pub trait Module {
     fn mark(&self) -> Option<av::MediaIcons> {
         None
     }
+    /// Re-read files the module was built from when they changed (the
+    /// calendar feeds). Called every few seconds, never per frame. Returns
+    /// true when something was re-read and the bar should repaint.
+    fn check_files(&mut self) -> bool {
+        false
+    }
     /// Navigate an open panel, e.g. the calendar. Return true when the panel
     /// content changed and should be reopened.
     fn popup_navigate(&mut self, _delta: i32) -> bool {
@@ -226,8 +232,8 @@ pub struct Clock {
     pub show: Show,
     calendar_year: i32,
     calendar_month: u32,
-    /// Events from configured ICS feeds, when there are any.
-    events: Option<crate::calendar::Calendar>,
+    /// Events from configured ICS feeds, re-read when their files change.
+    events: crate::calendar::Watch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,7 +251,7 @@ impl Clock {
             format_time: cfg.time_format.clone(),
             calendar_year: now.year(),
             calendar_month: now.month(),
-            events: crate::calendar::Calendar::new(crate::calendar::settings()),
+            events: crate::calendar::Watch::load(),
             show: match (cfg.show_date, cfg.show_time) {
                 (true, true) => Show::DateAndTime,
                 (true, false) => Show::Date,
@@ -272,7 +278,7 @@ impl Module for Clock {
             Show::Date => d,
             Show::Time => t,
         };
-        let Some(events) = self.events.as_mut() else {
+        let Some(events) = self.events.calendar() else {
             return clock;
         };
         events.tick();
@@ -297,7 +303,7 @@ impl Module for Clock {
     ) -> Option<(String, Vec<String>, crate::popup::Decor)> {
         let (title, mut lines) = self.popup()?;
         let mut decor = crate::popup::Decor::default();
-        if let Some(events) = self.events.as_mut() {
+        if let Some(events) = self.events.calendar() {
             events.tick();
             events.decorate(
                 self.calendar_year,
@@ -308,6 +314,9 @@ impl Module for Clock {
             );
         }
         Some((title, lines, decor))
+    }
+    fn check_files(&mut self) -> bool {
+        self.events.check_files()
     }
     fn popup_navigate(&mut self, delta: i32) -> bool {
         let mut year = self.calendar_year;

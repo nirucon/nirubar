@@ -102,6 +102,79 @@ pub fn settings() -> Settings {
     settings
 }
 
+/// What identifies one version of a file: device, inode, size, mode, mtime
+/// and ctime (a `chmod 600` changes the mode and ctime). `None` when missing.
+type FileStamp = Option<(u64, u64, u64, u32, i64, i64, i64, i64)>;
+
+fn file_stamp(path: &Path) -> FileStamp {
+    let m = std::fs::metadata(path).ok()?;
+    Some((
+        m.dev(),
+        m.ino(),
+        m.size(),
+        m.mode(),
+        m.mtime(),
+        m.mtime_nsec(),
+        m.ctime(),
+        m.ctime_nsec(),
+    ))
+}
+
+/// Both files the calendar reads: the `[calendar]` options and the feeds.
+fn stamps() -> [FileStamp; 2] {
+    let base = config_base();
+    [
+        file_stamp(&base.join("config.toml")),
+        file_stamp(&base.join("calendars.toml")),
+    ]
+}
+
+/// The calendar plus the files it came from, so an edited, added, replaced
+/// or `chmod`-ed `calendars.toml` takes effect without restarting the bar.
+pub struct Watch {
+    calendar: Option<Calendar>,
+    stamps: [FileStamp; 2],
+}
+
+impl Watch {
+    pub fn load() -> Self {
+        // Stamp first: a write that lands while the file is being read
+        // changes the stamp again and is picked up by the next check.
+        let stamps = stamps();
+        Self {
+            calendar: Calendar::new(settings()),
+            stamps,
+        }
+    }
+
+    pub fn calendar(&mut self) -> Option<&mut Calendar> {
+        self.calendar.as_mut()
+    }
+
+    /// Re-read the settings when either file changed since the last look.
+    /// A few `stat` calls; the bar runs it every few seconds, never per frame.
+    /// Returns true when the calendar was re-read.
+    pub fn check_files(&mut self) -> bool {
+        let now = stamps();
+        if now == self.stamps {
+            return false;
+        }
+        self.stamps = now;
+        self.reread(settings());
+        true
+    }
+
+    fn reread(&mut self, settings: Settings) {
+        match self.calendar.as_mut() {
+            Some(_) if settings.feeds.is_empty() && settings.problems.is_empty() => {
+                self.calendar = None;
+            }
+            Some(calendar) => calendar.apply(settings),
+            None => self.calendar = Calendar::new(settings),
+        }
+    }
+}
+
 fn apply_options(settings: &mut Settings, table: &toml::Value) {
     if let Some(n) = table.get("refresh_minutes").and_then(|v| v.as_integer()) {
         settings.refresh = Duration::from_secs((n.clamp(5, 24 * 60) as u64) * 60);
@@ -452,6 +525,42 @@ fn take_lock() -> Option<PathBuf> {
     Some(path)
 }
 
+/// Fetch `todo`, or, while another bar holds the fetch lock, wait for it and
+/// take what it cached. Feeds still missing after that are fetched here.
+fn fetch_or_wait(mut todo: Vec<(usize, Feed)>, refresh: u64) -> Results {
+    let mut results = Vec::new();
+    let give_up = Instant::now() + Duration::from_secs(90);
+    loop {
+        // Whatever another bar has fetched meanwhile.
+        todo.retain(|(i, feed)| match read_cache(*i, feed) {
+            Some((fetched, events)) if !Some(fetched).is_none_or_old(refresh) => {
+                results.push((*i, Ok((fetched, events))));
+                false
+            }
+            _ => true,
+        });
+        if todo.is_empty() {
+            return results;
+        }
+        if let Some(lock) = take_lock() {
+            for (i, feed) in todo {
+                let fetched = now_secs();
+                let result = fetch(&feed.url).map(|events| {
+                    write_cache(i, &feed, fetched, &events);
+                    (fetched, events)
+                });
+                results.push((i, result));
+            }
+            let _ = std::fs::remove_file(lock);
+            return results;
+        }
+        if Instant::now() >= give_up {
+            return results; // the next round tries again
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 struct FeedState {
     fetched: Option<u64>,
     events: Vec<Event>,
@@ -505,6 +614,65 @@ impl Calendar {
 
     pub fn show_in_bar(&self) -> bool {
         self.settings.show_in_bar
+    }
+
+    /// Take new settings from a re-read file. Feeds whose URL is unchanged
+    /// keep their events; new or changed feeds are fetched at once.
+    pub fn apply(&mut self, settings: Settings) {
+        self.load_cache();
+        let same_feeds = settings.feeds.len() == self.settings.feeds.len()
+            && settings
+                .feeds
+                .iter()
+                .zip(&self.settings.feeds)
+                .all(|(new, old)| new.url == old.url && new.name == old.name);
+        if !same_feeds {
+            let mut old: Vec<(String, FeedState)> = self
+                .settings
+                .feeds
+                .iter()
+                .map(|f| f.url.clone())
+                .zip(std::mem::take(&mut self.feeds))
+                .collect();
+            let mut feeds = Vec::with_capacity(settings.feeds.len());
+            for (i, feed) in settings.feeds.iter().enumerate() {
+                let kept = old
+                    .iter()
+                    .position(|(url, _)| *url == feed.url)
+                    .map(|at| old.swap_remove(at).1);
+                let state = match kept {
+                    Some(state) => {
+                        // The cache file is named by position and name.
+                        if let Some(fetched) = state.fetched {
+                            if read_cache(i, feed).is_none() {
+                                write_cache(i, feed, fetched, &state.events);
+                            }
+                        }
+                        state
+                    }
+                    None => match read_cache(i, feed) {
+                        Some((fetched, events)) => FeedState {
+                            fetched: Some(fetched),
+                            events,
+                            error: None,
+                        },
+                        None => FeedState {
+                            fetched: None,
+                            events: Vec::new(),
+                            error: None,
+                        },
+                    },
+                };
+                feeds.push(state);
+            }
+            self.feeds = feeds;
+            // Results in flight are numbered for the old list.
+            self.rx = None;
+            // Fetch what is new now, not after the retry pause.
+            self.last_try = None;
+        }
+        self.settings = settings;
+        self.bar = None;
     }
 
     fn load_cache(&mut self) {
@@ -584,20 +752,7 @@ impl Calendar {
             .collect();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let Some(lock) = take_lock() else {
-                return; // another bar is fetching; its cache arrives next round
-            };
-            let mut results = Vec::new();
-            for (i, feed) in todo {
-                let fetched = now_secs();
-                let result = fetch(&feed.url).map(|events| {
-                    write_cache(i, &feed, fetched, &events);
-                    (fetched, events)
-                });
-                results.push((i, result));
-            }
-            let _ = std::fs::remove_file(lock);
-            let _ = tx.send(results);
+            let _ = tx.send(fetch_or_wait(todo, refresh));
         });
         self.rx = Some(rx);
     }
@@ -1164,6 +1319,85 @@ mod tests {
         cal.decorate_at(2026, 11, today, 0, &mut lines, &mut decor, &palette);
         assert!(lines.iter().any(|l| l.contains("0644")));
         assert!(decor.links.is_empty());
+    }
+
+    fn feed(name: &str, url: &str) -> Feed {
+        Feed {
+            name: name.into(),
+            url: url.into(),
+            colour: None,
+            open: None,
+        }
+    }
+
+    #[test]
+    fn new_settings_keep_known_feeds_and_fetch_new_ones_at_once() {
+        // Loopback URLs that no cache on this machine matches; nothing here
+        // fetches, and with no fetch time recorded nothing is written.
+        let a = "http://127.0.0.1:9/unit-a.ics";
+        let b = "http://127.0.0.1:9/unit-b.ics";
+        let mut cal = Calendar::new(Settings {
+            feeds: vec![feed("A", a)],
+            ..Settings::default()
+        })
+        .unwrap();
+        cal.loaded = true;
+        cal.feeds[0].events = ics::parse(include_str!("../tests/fixtures/calendar/basic.ics"));
+        let known = cal.feeds[0].events.len();
+        assert!(known > 0);
+        cal.last_try = Some(Instant::now());
+        let (_tx, rx) = mpsc::channel();
+        cal.rx = Some(rx);
+
+        // Only an option changed: nothing is dropped or refetched.
+        cal.apply(Settings {
+            feeds: vec![feed("A", a)],
+            days_ahead: 3,
+            ..Settings::default()
+        });
+        assert_eq!(cal.settings.days_ahead, 3);
+        assert!(cal.rx.is_some() && cal.last_try.is_some());
+
+        // A calendar was added in front: A keeps its events at its new place,
+        // the new one is due and the retry pause is lifted.
+        cal.apply(Settings {
+            feeds: vec![feed("B", b), feed("A", a)],
+            ..Settings::default()
+        });
+        assert_eq!(cal.feeds.len(), 2);
+        assert!(cal.feeds[0].events.is_empty());
+        assert_eq!(cal.feeds[1].events.len(), known);
+        assert!(cal.rx.is_none(), "results for the old list are dropped");
+        assert!(cal.last_try.is_none(), "the new feed is fetched at once");
+        assert!(cal.due());
+
+        // Removed again.
+        cal.apply(Settings {
+            feeds: vec![feed("A", a)],
+            ..Settings::default()
+        });
+        assert_eq!(cal.feeds.len(), 1);
+        assert_eq!(cal.feeds[0].events.len(), known);
+    }
+
+    #[test]
+    fn the_stamp_changes_with_content_mode_and_replacement() {
+        let dir = temp("stamp");
+        let path = dir.join("calendars.toml");
+        assert_eq!(file_stamp(&path), None);
+        write(&path, "[[calendar]]\n", 0o600);
+        let first = file_stamp(&path);
+        assert!(first.is_some());
+        assert_eq!(file_stamp(&path), first, "unchanged file, same stamp");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let chmod = file_stamp(&path);
+        assert_ne!(chmod, first, "chmod is a change");
+        // An editor that writes a new file and renames it over the old one.
+        let tmp = dir.join("calendars.toml.new");
+        write(&tmp, "[[calendar]]\n", 0o644);
+        std::fs::rename(&tmp, &path).unwrap();
+        assert_ne!(file_stamp(&path), chmod, "a new inode is a change");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

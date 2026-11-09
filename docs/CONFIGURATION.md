@@ -1,8 +1,8 @@
 # Configuration
 
 NIRUBAR shares theme, font and layout settings with NIRUWM in
-`~/.config/niruwm/config.toml`. Weather and calendar options have their own
-optional file: `~/.config/nirubar/config.toml`. Calendar feed URLs live in
+`~/.config/niruwm/config.toml`. Weather, calendar and per-panel timeout
+options have their own optional file: `~/.config/nirubar/config.toml`. Calendar feed URLs live in
 `~/.config/nirubar/calendars.toml`.
 
 ## Modules
@@ -144,8 +144,41 @@ panel never applies a layout.
 
 ## Display and panels
 
-Panels close on the same module, a click elsewhere, Escape or
-`popup_timeout_seconds`. Media titles longer than `media_width` scroll and rest
+Panels close on a click on the same module, a click elsewhere or Escape.
+Quick-glance panels also close after `popup_timeout_seconds` (default 4;
+0 keeps them open until dismissed). Reading panels ignore that timeout and
+stay open until dismissed:
+
+| Stays open until dismissed | Closes after `popup_timeout_seconds` |
+| --- | --- |
+| `clock` (calendar), `weather` (rain timeline), `tasks`, `pulse` (load graph), `notifications` (history) | every other panel: `volume`, `microphone`, `network`, `battery`, `bluetooth`, `media`, `powerprofile`, `brightness`, `updates`, `niruxupdate`, `uptime`, `display`, `sun`, `tailscale`, `quicksettings`, `mode`, `layout`, `recording`, `dictation`, `scratchpad`, tray menus, the `+N` list |
+
+(`wifi`, `agent`, `share`, `nirusec` and `dnd` open their own control
+window on a click rather than a panel, so no timeout applies to them.)
+
+Any panel can have its own timeout in NIRUBAR's own file,
+`~/.config/nirubar/config.toml`. Keys are the names from `[bar] modules`;
+`calendar` is accepted for the clock's panel, `tray` for tray menus and
+`overflow` for the `+N` list. Values are whole seconds, 0 to 86400, and 0
+means until dismissed:
+
+```toml
+# ~/.config/nirubar/config.toml
+[popup_timeout]
+calendar = 0
+volume = 2
+weather = 20
+```
+
+Precedence: a `[popup_timeout]` entry, then the reading-panel default (0),
+then `[bar] popup_timeout_seconds`. Without the table nothing changes for
+quick panels. NIRUWM never reads this file, so its strict check of the shared
+config is not affected; do not put `[popup_timeout]` in
+`~/.config/niruwm/config.toml`, where both programs would reject it. Unknown
+names and bad values are ignored and listed by `nirubar --check-config`.
+`niructl reload` applies changes.
+
+Media titles longer than `media_width` scroll and rest
 at the beginning. At narrow widths, low-priority modules collapse into `+N`.
 Battery packs are aggregated by energy when available. Weather is opt-in and
 keeps its last successful result.
@@ -165,7 +198,9 @@ feeds. There is no account login: each calendar is one URL.
 2. Create `~/.config/nirubar/calendars.toml` with mode 0600, for example
    `install -m 600 calendars.example.toml ~/.config/nirubar/calendars.toml`,
    and fill in `name`, `url` and optionally `color` and `open`.
-3. Run `nirubar --check-config`, then `niructl reload`.
+3. Run `nirubar --check-config`. The running bar notices the new or edited
+   file within a few seconds by itself; `niructl reload` (or `Super+R`)
+   applies it at once. A new or changed calendar is fetched straight away.
 
 ```toml
 [[calendar]]
@@ -194,7 +229,16 @@ show_in_bar = false    # show the next event within 12 hours before the clock
 Feeds are fetched in the background with curl (25 s limit, 16 MiB cap), never
 while drawing. Parsed events are cached in `~/.cache/nirubar/calendar/`
 (mode 0600) and stay visible offline; the popup says when they are stale.
-Bars on several monitors share that cache.
+Bars on several monitors share that cache: one fetches, the others wait for
+it and read the result.
+
+The bar re-reads `calendars.toml` and the `[calendar]` options on
+`niructl reload` and whenever either file's size, modification or change
+time, mode or inode changes (checked every 3 seconds, outside drawing; an
+editor that saves through a new file is noticed too). Calendars whose URL
+did not change keep their events; added or changed ones are fetched at once.
+The 0600 check applies to every re-read: `chmod 644` turns calendars off
+again, `chmod 600` turns them back on.
 
 The popup marks each day that has events with a dot per calendar, lists
 today and the next `days_ahead` days (time or "all day", title, a square in

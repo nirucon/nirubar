@@ -22,6 +22,7 @@ mod microphone;
 mod module;
 mod nirux_update;
 mod popup;
+mod popup_timeout;
 mod powerprofile;
 mod probe;
 mod pulse;
@@ -426,6 +427,16 @@ struct SniMenu {
     rows: Vec<sni::MenuRow>,
 }
 
+/// How often modules check their own files for changes: every 3 seconds.
+/// `NIRUBAR_FILE_CHECK_SECONDS` changes it (0 turns it off), for tests.
+fn file_check_every() -> Option<std::time::Duration> {
+    let seconds = std::env::var("NIRUBAR_FILE_CHECK_SECONDS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(3);
+    (seconds > 0).then(|| std::time::Duration::from_secs(seconds))
+}
+
 struct Bar {
     c: RustConnection,
     root: Window,
@@ -439,6 +450,9 @@ struct Bar {
     renderer: render::Renderer,
     last_frame: String,
     snapshot_dirty: bool,
+    /// When modules last looked at their own files (calendars.toml).
+    files_checked: std::time::Instant,
+    file_check_every: Option<std::time::Duration>,
     watched_clients: std::collections::HashSet<Window>,
     icons: status::Icons,
     /// Where this bar sits, for the strut and for placing popups.
@@ -761,6 +775,8 @@ impl Bar {
             renderer,
             last_frame: String::new(),
             snapshot_dirty: true,
+            files_checked: std::time::Instant::now(),
+            file_check_every: file_check_every(),
             watched_clients: std::collections::HashSet::new(),
             bar_x,
             bar_y,
@@ -1728,7 +1744,7 @@ impl Bar {
             &[],
             &actions,
             false,
-            self.cfg.bar.popup_timeout_seconds,
+            self.cfg.popup_timeout("tray"),
             &DECOR_NONE,
         )?;
         self.sni_menu = Some(SniMenu {
@@ -1794,7 +1810,7 @@ impl Bar {
             &[],
             &actions,
             false,
-            self.cfg.bar.popup_timeout_seconds,
+            self.cfg.popup_timeout("scratchpad"),
             &DECOR_NONE,
         )?);
         self.scratch_menu = Some(slots.iter().map(|s| s.slot).collect());
@@ -1907,7 +1923,7 @@ impl Bar {
                     &lines,
                     &[],
                     false,
-                    self.cfg.bar.popup_timeout_seconds,
+                    self.cfg.popup_timeout("overflow"),
                     &DECOR_NONE,
                 )?);
                 return Ok(());
@@ -1960,6 +1976,7 @@ impl Bar {
             urgent: self.theme.urgent_pixel(&self.cfg.theme),
             foreground: Theme::pixel(&self.theme.foreground).unwrap_or(0xcc_cc_cc),
         };
+        let module_name = self.modules.get(index).map_or("", |m| m.name());
         let content = self
             .modules
             .get_mut(index)
@@ -1983,7 +2000,7 @@ impl Bar {
                 &lines,
                 &[],
                 controls,
-                self.cfg.bar.popup_timeout_seconds,
+                self.cfg.popup_timeout(module_name),
                 &decor,
             )?);
         }
@@ -2113,6 +2130,22 @@ impl Bar {
             if exit_requested(read_fd) {
                 self.close_popup()?;
                 break;
+            }
+            // A few stat calls every few seconds, outside drawing: an edited
+            // calendars.toml takes effect without `niructl reload`.
+            if self
+                .file_check_every
+                .is_some_and(|every| self.files_checked.elapsed() >= every)
+            {
+                self.files_checked = std::time::Instant::now();
+                let mut changed = false;
+                for module in &mut self.modules {
+                    changed |= module.check_files();
+                }
+                if changed {
+                    eprintln!("nirubar: calendars re-read");
+                    self.last_frame.clear();
+                }
             }
             let event = match self.c.poll_for_event()? {
                 Some(e) => e,
@@ -2667,9 +2700,12 @@ fn main() {
         }
     }
     if arg == "--check-config" {
-        match Config::load().and_then(|c| Theme::load(&c.theme)) {
-            Ok(t) => {
+        match Config::load().and_then(|c| Theme::load(&c.theme).map(|t| (c, t))) {
+            Ok((c, t)) => {
                 println!("Configuration OK · {}", t.name);
+                for line in popup_timeout::check_lines(c.bar.popup_timeout_seconds) {
+                    println!("{line}");
+                }
                 for line in calendar::check_lines() {
                     println!("{line}");
                 }
