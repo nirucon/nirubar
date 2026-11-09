@@ -573,6 +573,7 @@ impl Bar {
             "_NIRUWM_SCRATCHPADS",
             "_NIRUWM_URGENT",
             "_NIRUWM_LAYOUT",
+            "_NIRUWM_STUDIO",
             "_NIRUWM_COMMAND",
             "_NIRUBAR_SELECTION",
             "_NIRUBAR_REDRAW",
@@ -807,6 +808,21 @@ impl Bar {
                 *slots = scratchpad::parse(&text);
             }
         }
+        // NIRUWM 0.20's studio mode, shown by the work-mode module.
+        let studio = self
+            .c
+            .get_property(
+                false,
+                self.root,
+                self.atom("_NIRUWM_STUDIO"),
+                AtomEnum::ANY,
+                0,
+                4,
+            )
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .is_some_and(|r| status::parse_studio(&r.value));
+        status::STUDIO.store(studio, std::sync::atomic::Ordering::Relaxed);
         let current_layout = self
             .c
             .get_property(
@@ -2452,6 +2468,11 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             plain.display
         },
         mode: if ok(nerd.mode) { nerd.mode } else { plain.mode },
+        studio: if ok(nerd.studio) {
+            nerd.studio
+        } else {
+            plain.studio
+        },
         layout: if ok(nerd.layout) {
             nerd.layout
         } else {

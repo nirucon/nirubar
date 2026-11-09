@@ -39,6 +39,8 @@ pub struct Icons {
     pub display: &'static str,
     /// The work-mode countdown module.
     pub mode: &'static str,
+    /// Studio (DAW) mode in the work-mode module.
+    pub studio: &'static str,
     /// The current NIRUWM layout module.
     pub layout: &'static str,
     /// The optional microphone module.
@@ -98,6 +100,7 @@ impl Icons {
             brightness: "\u{f185}", // sun; brightness is a display property
             display: "\u{f108}", // nf-fa-desktop
             mode: "\u{f017}",    // clock face
+            studio: "\u{f025}",  // nf-fa-headphones
             layout: "\u{f009}",  // nf-fa-th-large
             microphone: "\u{f130}", // nf-fa-microphone
             bluetooth: "\u{f293}", // nf-fa-bluetooth
@@ -136,6 +139,7 @@ impl Icons {
             brightness: "bri",
             display: "disp",
             mode: "mode",
+            studio: "rec",
             layout: "layout",
             microphone: "mic",
             bluetooth: "bt",
@@ -929,6 +933,14 @@ mod tests {
     }
 
     #[test]
+    fn studio_state_is_on_only_for_on() {
+        assert!(parse_studio(b"on"));
+        assert!(parse_studio(b" on\n"));
+        assert!(!parse_studio(b"off"));
+        assert!(!parse_studio(b""));
+    }
+
+    #[test]
     fn mode_parser_accepts_active_state() {
         let text = "name=focus\nexpiry=9999999999\ntoken=x\n";
         let mut name = None;
@@ -1186,6 +1198,19 @@ pub fn display_detail(outputs: &[DisplayOutput]) -> Vec<String> {
         )
     }));
     lines
+}
+
+/// Studio mode is on (`_NIRUWM_STUDIO` on the root is "on"). The bar writes
+/// it when the root property changes; the work-mode module reads it.
+pub static STUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn studio_on() -> bool {
+    STUDIO.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The text of the `_NIRUWM_STUDIO` root property.
+pub fn parse_studio(value: &[u8]) -> bool {
+    String::from_utf8_lossy(value).trim() == "on"
 }
 
 /// Active work mode and the seconds left, read from the shared state file.

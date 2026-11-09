@@ -100,7 +100,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `niruxupdate` | A newer NIRUX release, or one that needs a new login |
 | `pulse` | CPU and memory; click for a one-minute graph |
 | `uptime`, `sun`, `weather` | Uptime, sunrise/sunset, cached weather with an eight-hour rain timeline |
-| `mode`, `layout` | Active work mode; current NIRUWM layout |
+| `mode`, `layout` | Active work mode and NIRUWM's studio mode; current NIRUWM layout |
 | `tasks`, `agent` | NIRU/OpenCode task status; OpenCode prompt entry |
 | `scratchpad` | NIRUWM scratchpads; click a row to show or hide one |
 | `dictation` | NIRUDICTATE recording/transcribing mark |

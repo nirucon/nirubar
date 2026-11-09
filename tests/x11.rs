@@ -1236,3 +1236,88 @@ fn an_urgent_window_colours_only_its_own_screens_workspace_cell() {
     wait_for("the mark goes away", &|| pixel(640 + 45) == background);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "requires isolated X server and font"]
+fn the_mode_module_shows_studio_mode_from_the_root_property() {
+    let directory = std::env::temp_dir().join(format!("nirubar-studio-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "theme = \"niru-noir\"\n[bar]\nmodules = [\"mode\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let width = c.setup().roots[screen].width_in_pixels as i16;
+    let atom = |name: &str| {
+        c.intern_atom(false, name.as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom
+    };
+    let studio = atom("_NIRUWM_STUDIO");
+    let utf8 = atom("UTF8_STRING");
+    c.change_property8(PropMode::REPLACE, root, studio, utf8, b"off")
+        .unwrap();
+    c.flush().unwrap();
+    let _bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .env("XDG_STATE_HOME", directory.join("state"))
+            .spawn()
+            .unwrap(),
+    );
+    // Pixels in the right-hand 240 px of the bar that are not background.
+    let ink = || -> usize {
+        let Ok(reply) = c
+            .get_image(ImageFormat::Z_PIXMAP, root, width - 240, 2, 236, 20, !0)
+            .unwrap()
+            .reply()
+        else {
+            return 0;
+        };
+        reply
+            .data
+            .chunks(4)
+            .filter(|p| {
+                (u32::from(p[2]) << 16 | u32::from(p[1]) << 8 | u32::from(p[0])) != 0x0f0f10
+            })
+            .count()
+    };
+    let wait_for = |what: &str, check: &dyn Fn() -> bool| {
+        let until = Instant::now() + Duration::from_secs(5);
+        while !check() {
+            assert!(Instant::now() < until, "{what}");
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let background = || {
+        let image = c
+            .get_image(ImageFormat::Z_PIXMAP, root, width - 2, 3, 1, 1, !0)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let d = &image.data;
+        (u32::from(d[2]) << 16) | (u32::from(d[1]) << 8) | u32::from(d[0])
+    };
+    wait_for("the bar draws", &|| background() == 0x0f0f10);
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        ink(),
+        0,
+        "no work mode and no studio mode: the module is empty"
+    );
+    c.change_property8(PropMode::REPLACE, root, studio, utf8, b"on")
+        .unwrap();
+    c.flush().unwrap();
+    wait_for("studio mode is shown", &|| ink() > 20);
+    c.change_property8(PropMode::REPLACE, root, studio, utf8, b"off")
+        .unwrap();
+    c.flush().unwrap();
+    wait_for("studio mode is gone again", &|| ink() == 0);
+    c.delete_property(root, studio).unwrap();
+    c.flush().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}

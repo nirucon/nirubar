@@ -30,7 +30,7 @@ NIRUBAR shares theme, font and layout settings with NIRUWM in
 | `clock` | Date and time |
 | `display` | This bar's screen position (`Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`); click for outputs, Return/Open controls for display profiles |
 | `tailscale` | Tailscale peers; shown only when `tailscale` is installed. Click for peer state, Open controls opens `nirulauncher --tailscale` |
-| `mode` | Active NIRU work mode (focus/presentation) and minutes left; click shows `niructl mode stop` |
+| `mode` | Active NIRU work mode (focus/presentation) and minutes left, and *studio* while NIRUWM's studio mode is on (`_NIRUWM_STUDIO`, NIRUWM 0.20); click shows `niructl mode stop` or `niructl studio off` |
 | `tasks` | Running or waiting NIRU/OpenCode tasks from `niructl task list`; click for recent states, Open controls opens NIRU Actions |
 | `agent` | OpenCode entry; click to type a short prompt and start OpenCode in a centred floating terminal |
 | `dnd` | Bell or slashed bell; left click toggles DND, right click opens Quick Settings |

@@ -59,6 +59,8 @@ pub struct Config {
     pub scratchpad: toml::Value,
     /// NIRUWM-only window swallowing (`[swallow]`, NIRUWM 0.19.0).
     pub swallow: toml::Value,
+    /// NIRUWM-only studio mode (`[studio]`, NIRUWM 0.20.0).
+    pub studio: toml::Value,
     /// NIRUWM-only window rules.
     pub rules: Vec<toml::Value>,
     /// The `sun` module's location: degrees, north and east positive. Set both
@@ -200,6 +202,7 @@ impl Default for Config {
             idle: toml::Value::Table(Default::default()),
             scratchpad: toml::Value::Table(Default::default()),
             swallow: toml::Value::Table(Default::default()),
+            studio: toml::Value::Table(Default::default()),
             rules: Vec::new(),
         }
     }
@@ -1187,6 +1190,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(own.urgent_pixel("x-does-not-exist"), 0xff8800);
+    }
+
+    #[test]
+    fn the_window_manager_studio_table_is_accepted() {
+        let cfg: Config = toml::from_str(
+            "[studio]\nidle = true\ndnd = false\ncompositor = true\npower_profile = \"keep\"\nauto_enable = true\ndaw_classes = [\"REAPER\"]\n",
+        )
+        .expect("[studio] belongs to NIRUWM and must not stop the bar");
+        assert!(cfg.studio.get("auto_enable").is_some());
     }
 
     #[test]

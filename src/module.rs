@@ -385,14 +385,31 @@ impl Module for WorkMode {
         Side::Right
     }
     fn render(&mut self) -> String {
-        match status::mode_status() {
-            Some((name, seconds)) => {
-                format!("{} {} {}m", self.icons.mode, name, seconds.div_ceil(60))
-            }
-            None => String::new(),
+        let timed = status::mode_status().map(|(name, seconds)| {
+            format!("{} {} {}m", self.icons.mode, name, seconds.div_ceil(60))
+        });
+        match (status::studio_on(), timed) {
+            (true, Some(timed)) => format!("{} studio {timed}", self.icons.studio),
+            (true, None) => format!("{} studio", self.icons.studio),
+            (false, Some(timed)) => timed,
+            (false, None) => String::new(),
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        if status::studio_on() {
+            let mut lines = vec![
+                "Studio mode is on".to_string(),
+                "no screen saver, idle lock or popups;".to_string(),
+                "compositor stopped, performance profile".to_string(),
+                String::new(),
+                "niructl studio status".to_string(),
+                "niructl studio off".to_string(),
+            ];
+            if let Some((name, seconds)) = status::mode_status() {
+                lines.insert(3, format!("also {name} mode, {} min", seconds.div_ceil(60)));
+            }
+            return Some(("Studio mode".into(), lines));
+        }
         match status::mode_status() {
             Some((name, seconds)) => Some((
                 "Work mode".into(),
@@ -410,6 +427,7 @@ impl Module for WorkMode {
                     String::new(),
                     "niructl mode focus".to_string(),
                     "niructl mode presentation".to_string(),
+                    "niructl studio on".to_string(),
                 ],
             )),
         }
