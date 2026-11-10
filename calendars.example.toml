@@ -18,6 +18,12 @@
 # format". Nextcloud, iCloud (public calendar link) and Outlook ("Publish a
 # calendar", ICS link) work the same way.
 
+# Reminders: a notification this many minutes before each timed event
+# (0 to 1440, 0 is off). Without this line every calendar is reminded 10
+# minutes before. All-day events have no reminder. A calendar can set its own
+# remind_minutes below.
+remind_minutes = 10
+
 [[calendar]]
 name = "Privat"
 url = "https://calendar.google.com/calendar/ical/.../private-.../basic.ics"
@@ -28,6 +34,8 @@ color = "#7aa2f7"
 # the date. Google feeds default to Google's day view; other feeds have no
 # link unless this is set.
 # open = "https://calendar.google.com/calendar/r/day/{yyyy}/{m}/{d}"
+# Optional: this calendar's reminder time; 0 turns its reminders off.
+# remind_minutes = 15
 
 # [[calendar]]
 # name = "Jobb"

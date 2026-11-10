@@ -1,6 +1,6 @@
 [package]
 name = "nirubar"
-version = "0.22.1"
+version = "0.23.0"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
@@ -22,6 +22,8 @@ system-tray = "0.8.9"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 # Already used by system-tray; query MPRIS positions without spawning helpers.
 zbus = { version = "=5.12.0", default-features = false, features = ["tokio"] }
+# Already used by zbus; the reminder waits on its signal streams.
+futures-lite = "2"
 
 [profile.release]
 lto = true

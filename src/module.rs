@@ -234,6 +234,8 @@ pub struct Clock {
     calendar_month: u32,
     /// Events from configured ICS feeds, re-read when their files change.
     events: crate::calendar::Watch,
+    /// The configured browser, for a reminder's "open calendar" action.
+    browser: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,6 +254,7 @@ impl Clock {
             calendar_year: now.year(),
             calendar_month: now.month(),
             events: crate::calendar::Watch::load(),
+            browser: Vec::new(),
             show: match (cfg.show_date, cfg.show_time) {
                 (true, true) => Show::DateAndTime,
                 (true, false) => Show::Date,
@@ -259,6 +262,15 @@ impl Clock {
                 (false, false) => Show::Time,
             },
         }
+    }
+}
+
+impl Clock {
+    /// The browser a reminder's "open calendar" action uses (`browser` in
+    /// the shared config; empty means `xdg-open`).
+    pub fn with_browser(mut self, browser: &[String]) -> Self {
+        self.browser = browser.to_vec();
+        self
     }
 }
 
@@ -282,6 +294,7 @@ impl Module for Clock {
             return clock;
         };
         events.tick();
+        events.remind(&self.browser);
         if !events.show_in_bar() {
             return clock;
         }
@@ -2191,7 +2204,7 @@ pub fn build(
             continue;
         }
         match name.as_str() {
-            "clock" => out.push(Box::new(Clock::new(cfg))),
+            "clock" => out.push(Box::new(Clock::new(cfg).with_browser(&full.browser))),
             "battery" => out.push(Box::new(Battery { icons })),
             "display" => out.push(Box::new(Display {
                 icons,

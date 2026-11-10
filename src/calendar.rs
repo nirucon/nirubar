@@ -31,6 +31,8 @@ pub struct Feed {
     url: String,
     pub colour: Option<u32>,
     pub open: Option<String>,
+    /// Minutes before a timed event that a reminder is shown; 0 is off.
+    pub remind_minutes: u32,
 }
 
 impl std::fmt::Debug for Feed {
@@ -39,6 +41,7 @@ impl std::fmt::Debug for Feed {
             .field("name", &self.name)
             .field("url", &"<redacted>")
             .field("colour", &self.colour)
+            .field("remind_minutes", &self.remind_minutes)
             .finish()
     }
 }
@@ -49,6 +52,9 @@ pub struct Settings {
     pub refresh: Duration,
     pub days_ahead: u32,
     pub show_in_bar: bool,
+    /// `remind_minutes` at the top of calendars.toml: the default for every
+    /// calendar that does not set its own.
+    pub remind_minutes: u32,
     /// Why calendars.toml or one of its feeds was not used.
     pub problems: Vec<String>,
 }
@@ -60,6 +66,7 @@ impl Default for Settings {
             refresh: Duration::from_secs(15 * 60),
             days_ahead: 7,
             show_in_bar: false,
+            remind_minutes: DEFAULT_REMIND,
             problems: Vec::new(),
         }
     }
@@ -85,6 +92,25 @@ fn cache_dir() -> PathBuf {
 }
 
 const SECRETS: &str = "~/.config/nirubar/calendars.toml";
+/// Reminder lead time when calendars.toml does not say: 10 minutes, so an
+/// existing file without the key gets reminders. `remind_minutes = 0` is off.
+const DEFAULT_REMIND: u32 = 10;
+/// The longest lead time: a day.
+const MAX_REMIND: u32 = 24 * 60;
+
+/// `remind_minutes` from a table: `Ok(None)` when absent, an error naming the
+/// key (never the value's neighbours, which may be a URL) when it is wrong.
+fn remind_value(table: &toml::Value, owner: &str) -> Result<Option<u32>, String> {
+    match table.get("remind_minutes") {
+        None => Ok(None),
+        Some(v) => match v.as_integer() {
+            Some(n) if (0..=i64::from(MAX_REMIND)).contains(&n) => Ok(Some(n as u32)),
+            _ => Err(format!(
+                "{owner}: remind_minutes must be a whole number of minutes from 0 to {MAX_REMIND}"
+            )),
+        },
+    }
+}
 const GOOGLE_OPEN: &str = "https://calendar.google.com/calendar/r/day/{yyyy}/{m}/{d}";
 
 /// Read the non-secret `[calendar]` options and the feeds file.
@@ -274,6 +300,11 @@ fn read_feeds(path: &Path, settings: &mut Settings) {
             return;
         }
     };
+    match remind_value(&value, SECRETS) {
+        Ok(Some(n)) => settings.remind_minutes = n,
+        Ok(None) => {}
+        Err(problem) => settings.problems.push(problem),
+    }
     let Some(list) = value.get("calendar").and_then(|v| v.as_array()) else {
         settings
             .problems
@@ -310,11 +341,19 @@ fn read_feeds(path: &Path, settings: &mut Settings) {
             .map(str::to_string)
             .filter(|o| o.starts_with("https://") || o.starts_with("http://"))
             .or_else(|| (host_of(&url) == "calendar.google.com").then(|| GOOGLE_OPEN.to_string()));
+        let remind_minutes = match remind_value(entry, &name) {
+            Ok(n) => n.unwrap_or(settings.remind_minutes),
+            Err(problem) => {
+                settings.problems.push(problem);
+                settings.remind_minutes
+            }
+        };
         settings.feeds.push(Feed {
             name,
             url,
             colour,
             open,
+            remind_minutes,
         });
     }
 }
@@ -340,10 +379,33 @@ pub fn check_lines() -> Vec<String> {
             }
         ));
     }
+    if !settings.feeds.is_empty() {
+        out.push(reminder_line(&settings));
+    }
     for problem in &settings.problems {
         out.push(format!("Calendars: WARNING {problem}"));
     }
     out
+}
+
+/// What `--check-config` says about reminders.
+fn reminder_line(settings: &Settings) -> String {
+    let each: Vec<String> = settings
+        .feeds
+        .iter()
+        .map(|f| match f.remind_minutes {
+            0 => format!("{} off", f.name),
+            n => format!("{} {n} min", f.name),
+        })
+        .collect();
+    if settings.feeds.iter().all(|f| f.remind_minutes == 0) {
+        return "Calendar reminders: off (remind_minutes = 0)".into();
+    }
+    format!(
+        "Calendar reminders: before timed events ({}); all-day events have none; sent once per event, remembered in {}",
+        each.join(", "),
+        "~/.local/state/nirubar/reminders.json"
+    )
 }
 
 /// Remove anything from an error that could be part of a feed URL.
@@ -599,6 +661,8 @@ pub struct Calendar {
     last_try: Option<Instant>,
     zones: Zones,
     bar: Option<(Instant, String)>,
+    /// When reminders were last looked for.
+    reminded: Option<Instant>,
 }
 
 /// Theme colours a calendar without its own colour takes, in order.
@@ -631,6 +695,7 @@ impl Calendar {
             last_try: None,
             zones: Zones::system(),
             bar: None,
+            reminded: None,
         })
     }
 
@@ -777,6 +842,112 @@ impl Calendar {
             let _ = tx.send(fetch_or_wait(todo, refresh));
         });
         self.rx = Some(rx);
+    }
+
+    /// Show reminders that are due. Called from the clock's once-a-second
+    /// render; it looks at most every 20 seconds and only reads memory, plus
+    /// the small state file when something is due. No extra timer or thread.
+    pub fn remind(&mut self, browser: &[String]) {
+        if self
+            .reminded
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(20))
+        {
+            return;
+        }
+        self.reminded = Some(Instant::now());
+        if self.settings.feeds.iter().all(|f| f.remind_minutes == 0) {
+            return;
+        }
+        let now = chrono::Local::now();
+        let due = self.due_at(now.date_naive(), now.timestamp());
+        if due.is_empty() {
+            return;
+        }
+        let wanted: Vec<(String, i64)> = due.iter().map(|(k, o, _)| (k.clone(), o.0)).collect();
+        let fresh =
+            crate::reminder::claim(&crate::reminder::state_path(), &wanted, now.timestamp());
+        for (key, _, notice) in due {
+            if fresh.contains(&key) {
+                crate::reminder::send(notice, browser.to_vec());
+            }
+        }
+    }
+
+    /// Reminders due at `now`: (state key, (start, calendar), notification).
+    /// A timed event is due from `remind_minutes` before it until it starts;
+    /// a bar started late still reminds of an event that has not begun.
+    fn due_at(
+        &mut self,
+        today: NaiveDate,
+        now: i64,
+    ) -> Vec<(String, (i64, usize), crate::reminder::Notice)> {
+        let longest = self
+            .settings
+            .feeds
+            .iter()
+            .map(|f| f.remind_minutes)
+            .max()
+            .unwrap_or(0);
+        if longest == 0 {
+            return Vec::new();
+        }
+        let days = i64::from(longest / (24 * 60)) + 2;
+        let list = self.occurrences(today - Days::days(1), today + Days::days(days));
+        let mut out = Vec::new();
+        for o in list {
+            let Span::Timed(start, _) = o.span else {
+                continue; // all-day events have no reminder
+            };
+            let Some(feed) = self.settings.feeds.get(o.calendar) else {
+                continue;
+            };
+            let lead = i64::from(feed.remind_minutes) * 60;
+            if lead == 0 || start <= now || start - lead > now {
+                continue;
+            }
+            let key = crate::reminder::key(&[
+                &fingerprint(&feed.url),
+                if o.uid.is_empty() { &o.summary } else { &o.uid },
+                &start.to_string(),
+            ]);
+            let local = self.zones.to_local(start);
+            let minutes = (start - now + 59) / 60;
+            let when = match (local.date() - today).num_days() {
+                0 => local.format("%H:%M").to_string(),
+                1 => format!("tomorrow {}", local.format("%H:%M")),
+                _ => local.format("%a %-d %b %H:%M").to_string(),
+            };
+            let mut body = format!(
+                "{when} · in {}",
+                if minutes >= 60 {
+                    format!("{} h {} min", minutes / 60, minutes % 60)
+                } else {
+                    format!("{minutes} min")
+                }
+            );
+            if !o.location.is_empty() {
+                body.push('\n');
+                body.push_str(&truncate(&o.location, 80));
+            }
+            body.push('\n');
+            body.push_str(&feed.name);
+            let summary = if o.summary.trim().is_empty() {
+                "(no title)".to_string()
+            } else {
+                truncate(&o.summary, 80)
+            };
+            let open = feed.open.as_deref().map(|t| open_url(t, local.date()));
+            out.push((
+                key,
+                (start, o.calendar),
+                crate::reminder::Notice {
+                    summary,
+                    body,
+                    open,
+                },
+            ));
+        }
+        out
     }
 
     /// Cheap per-frame upkeep: no I/O beyond the first cache read.
@@ -1259,6 +1430,7 @@ mod tests {
             url: "https://calendar.google.com/x.ics".into(),
             colour: Some(0x7aa2f7),
             open: Some(GOOGLE_OPEN.into()),
+            remind_minutes: 10,
         };
         let settings = Settings {
             feeds: vec![feed],
@@ -1349,6 +1521,7 @@ mod tests {
             url: url.into(),
             colour: None,
             open: None,
+            remind_minutes: 10,
         }
     }
 
@@ -1449,5 +1622,147 @@ mod tests {
         let dir_mode = std::fs::metadata(path.parent().unwrap()).unwrap().mode() & 0o777;
         assert_eq!(dir_mode, 0o700);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn stockholm() -> Zones {
+        Zones::pinned(Zone::posix("CET-1CEST,M3.5.0,M10.5.0/3").unwrap())
+    }
+
+    fn reminder_calendar(fixture: &str, remind_minutes: u32) -> Calendar {
+        let feed = Feed {
+            name: "Privat".into(),
+            url: "https://calendar.google.com/x.ics".into(),
+            colour: None,
+            open: Some(GOOGLE_OPEN.into()),
+            remind_minutes,
+        };
+        let mut cal = Calendar::new(Settings {
+            feeds: vec![feed],
+            ..Settings::default()
+        })
+        .unwrap();
+        cal.loaded = true;
+        cal.zones = stockholm();
+        cal.feeds[0].fetched = Some(now_secs());
+        cal.feeds[0].events = ics::parse(fixture);
+        cal
+    }
+
+    fn at(day: u32, h: u32, m: u32) -> (NaiveDate, i64) {
+        let date = NaiveDate::from_ymd_opt(2026, 11, day).unwrap();
+        (
+            date,
+            stockholm().local_to_utc(date.and_hms_opt(h, m, 0).unwrap()),
+        )
+    }
+
+    #[test]
+    fn reminders_default_to_ten_minutes_and_can_be_set_or_turned_off() {
+        let dir = temp("remind");
+        let path = dir.join("calendars.toml");
+        // An existing file without the key: every calendar gets 10 minutes.
+        write(
+            &path,
+            &format!("[[calendar]]\nname = \"A\"\nurl = \"{SECRET}\"\n"),
+            0o600,
+        );
+        let mut settings = Settings::default();
+        read_feeds(&path, &mut settings);
+        assert_eq!(settings.feeds[0].remind_minutes, 10);
+        write(
+            &path,
+            &format!(
+                "remind_minutes = 5\n[[calendar]]\nname = \"A\"\nurl = \"{SECRET}\"\n\
+                 [[calendar]]\nname = \"B\"\nurl = \"{SECRET}\"\nremind_minutes = 0\n\
+                 [[calendar]]\nname = \"C\"\nurl = \"{SECRET}\"\nremind_minutes = 30\n\
+                 [[calendar]]\nname = \"D\"\nurl = \"{SECRET}\"\nremind_minutes = \"soon\"\n"
+            ),
+            0o600,
+        );
+        let mut settings = Settings::default();
+        read_feeds(&path, &mut settings);
+        let minutes: Vec<u32> = settings.feeds.iter().map(|f| f.remind_minutes).collect();
+        assert_eq!(minutes, vec![5, 0, 30, 5]);
+        assert_eq!(settings.problems.len(), 1, "{:?}", settings.problems);
+        assert!(settings.problems[0].starts_with("D: remind_minutes"));
+        assert!(!settings.problems[0].contains("https"));
+        let line = reminder_line(&settings);
+        assert!(line.contains("A 5 min, B off, C 30 min, D 5 min"), "{line}");
+        assert!(line.contains("all-day events have none"), "{line}");
+        assert!(!line.contains("https"), "{line}");
+        write(
+            &path,
+            &format!("remind_minutes = 0\n[[calendar]]\nname = \"A\"\nurl = \"{SECRET}\"\n"),
+            0o600,
+        );
+        let mut settings = Settings::default();
+        read_feeds(&path, &mut settings);
+        assert_eq!(
+            reminder_line(&settings),
+            "Calendar reminders: off (remind_minutes = 0)"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_timed_event_is_due_from_its_lead_time_until_it_starts() {
+        let mut cal = reminder_calendar(include_str!("../tests/fixtures/calendar/basic.ics"), 10);
+        // Tandläkare, 10 November 14:30 Stockholm time (TZID).
+        let (day, before) = at(10, 14, 19);
+        assert!(cal.due_at(day, before).is_empty());
+        let (day, now) = at(10, 14, 20);
+        let due = cal.due_at(day, now);
+        assert_eq!(due.len(), 1, "{due:?}");
+        let notice = &due[0].2;
+        assert!(notice.summary.starts_with("Tandläkare"), "{notice:?}");
+        assert!(notice.body.starts_with("14:30 · in 10 min"), "{notice:?}");
+        assert!(notice.body.contains("Storgatan 1"), "{notice:?}");
+        assert!(notice.body.ends_with("Privat"), "{notice:?}");
+        assert_eq!(
+            notice.open.as_deref(),
+            Some("https://calendar.google.com/calendar/r/day/2026/11/10")
+        );
+        // Still due a moment before the start (a bar started late), with the
+        // same key; not once it has started.
+        let (_, late) = at(10, 14, 29);
+        assert_eq!(cal.due_at(day, late)[0].0, due[0].0);
+        let (_, started) = at(10, 14, 30);
+        assert!(cal.due_at(day, started).is_empty());
+        // The all-day trip (13-15 November) never gets a reminder.
+        for h in 0..24 {
+            let (day, now) = at(13, h, 0);
+            assert!(cal
+                .due_at(day, now)
+                .iter()
+                .all(|d| !d.2.summary.contains("Fjäll")));
+        }
+    }
+
+    #[test]
+    fn each_occurrence_of_a_recurring_event_has_its_own_reminder() {
+        let mut cal =
+            reminder_calendar(include_str!("../tests/fixtures/calendar/recurring.ics"), 10);
+        // "Daily five": 07:00 Stockholm time, 2 to 6 November.
+        let (d3, n3) = at(3, 6, 55);
+        let (d4, n4) = at(4, 6, 55);
+        let first = cal.due_at(d3, n3);
+        let second = cal.due_at(d4, n4);
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert_eq!(second.len(), 1, "{second:?}");
+        assert!(first[0].2.body.starts_with("07:00 · in 5 min"), "{first:?}");
+        assert_ne!(first[0].0, second[0].0, "one reminder per occurrence");
+        // After COUNT=5 there is nothing.
+        let (d7, n7) = at(7, 6, 55);
+        assert!(cal
+            .due_at(d7, n7)
+            .iter()
+            .all(|d| !d.2.summary.contains("Daily")));
+    }
+
+    #[test]
+    fn a_calendar_with_reminders_off_is_silent() {
+        let mut cal = reminder_calendar(include_str!("../tests/fixtures/calendar/basic.ics"), 0);
+        let (day, now) = at(10, 14, 25);
+        assert!(cal.due_at(day, now).is_empty());
     }
 }

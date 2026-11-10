@@ -33,7 +33,8 @@ where a real control view exists, the panel hands over to NIRU Launcher.
   events), with bounded polling fallbacks.
 - Bounded, cached provider queries for package updates and weather.
 - Read-only calendar events (ICS feeds such as Google Calendar's secret iCal
-  address) in the clock's calendar: day markers, an agenda and click-to-open.
+  address) in the clock's calendar: day markers, an agenda and click-to-open,
+  and a reminder notification before each timed event.
 - Optional transparency through the compositor and HiDPI scaling from `Xft.dpi`.
 
 ## Requirements
@@ -181,7 +182,9 @@ Calendar events are opt-in too: put ICS feed URLs in
 `~/.config/nirubar/calendars.toml` (mode 0600, see
 [calendars.example.toml](calendars.example.toml)). The clock popup then marks
 days with events, lists today and the next `days_ahead` days, and opens the
-calendar's page for a clicked day or event in the configured `browser`. See
+calendar's page for a clicked day or event in the configured `browser`.
+Timed events get a reminder notification 10 minutes before they start
+(`remind_minutes` in `calendars.toml`, per calendar or for all, 0 is off). See
 [Calendar events](docs/CONFIGURATION.md#calendar-events). Changes to
 `calendars.toml` take effect within a few seconds on their own, and at once
 with `niructl reload` or `Super+R`; a new or changed calendar is fetched
@@ -197,6 +200,7 @@ After editing, press `Super+R` or run `niructl reload`.
 | `~/.config/nirubar/config.toml` | Optional weather, `[calendar]` and `[popup_timeout]` settings |
 | `~/.config/nirubar/calendars.toml` | Calendar feed URLs (secret, mode 0600) |
 | `~/.cache/nirubar/calendar/` | Parsed calendar events for offline use (mode 0600) |
+| `~/.local/state/nirubar/reminders.json` | Calendar reminders already sent, as hashes (mode 0600) |
 | `~/.config/niruwm/config.toml.nirubar-backup` | Backup written by `--reset-config` |
 | `~/.cache/nirubar/updates` | Cached package-update result |
 | `~/.local/bin/nirubar` | Program |

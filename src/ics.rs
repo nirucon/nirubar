@@ -650,6 +650,8 @@ pub struct Occurrence {
     pub location: String,
     /// Index of the calendar in the configuration.
     pub calendar: usize,
+    /// The event's UID, so a reminder is sent once per occurrence.
+    pub uid: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -756,6 +758,7 @@ pub fn expand(
                 summary: event.summary.clone(),
                 location: event.location.clone(),
                 calendar,
+                uid: event.uid.clone(),
             });
         }
     };

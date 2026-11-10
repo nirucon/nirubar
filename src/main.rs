@@ -27,6 +27,7 @@ mod powerprofile;
 mod probe;
 mod pulse;
 mod recording;
+mod reminder;
 mod render;
 mod scratchpad;
 mod scroll;

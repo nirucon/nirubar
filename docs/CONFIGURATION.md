@@ -246,6 +246,43 @@ the calendar's colour), and a click on a day or event opens the calendar's
 `open` page for that date in the shared config's `browser`. Google feeds
 open Google's day view by default.
 
+### Reminders
+
+Each timed event gets a notification before it starts, through the session's
+notification service (NIRUNOTIFY, or any freedesktop notification daemon):
+the title, the start time and how long until it, the location and the
+calendar's name. A click on it opens the calendar's `open` page for that day
+in the configured `browser`, like a click in the clock's panel.
+
+```toml
+remind_minutes = 10     # top of calendars.toml: every calendar, 0 to 1440; 0 is off
+
+[[calendar]]
+name = "Jobb"
+url = "https://..."
+remind_minutes = 15     # optional: this calendar only; 0 turns its reminders off
+```
+
+- Without the key a calendar is reminded 10 minutes before each event, so an
+  existing `calendars.toml` gets reminders after an update. Set
+  `remind_minutes = 0` at the top to turn them all off.
+- All-day events have no reminder. The feed's own alarms (VALARM) are not
+  used; `remind_minutes` decides.
+- Every occurrence of a recurring event is reminded once. Times follow the
+  event's time zone (TZID, UTC or floating) and daylight saving.
+- A bar that starts within the lead time still reminds of an event that has
+  not begun; an event that has started is not reminded.
+- Bars on several monitors share the reminders, and a restarted bar does not
+  repeat one: what was sent is kept in `~/.local/state/nirubar/reminders.json`
+  (mode 0600) as hashes, without event titles, and forgotten three days after
+  the event. Reminders are not logged.
+- The clock module drives them: the bar looks for due reminders every 20
+  seconds from the clock's once-a-second update, without another timer or
+  network request. The clock must be in `[bar] modules`.
+- A click works while the bar that sent the reminder runs; after a bar
+  restart the notification still shows, but a click only closes it.
+- `nirubar --check-config` lists each calendar's reminder time.
+
 Supported iCalendar: VEVENT with DATE and DATE-TIME start/end (UTC, TZID or
 floating), DURATION, all-day and multi-day events, line folding and text
 escapes, SUMMARY and LOCATION, STATUS:CANCELLED, RRULE with
