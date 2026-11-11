@@ -424,6 +424,34 @@ fn legacy_path() -> PathBuf {
         .join("config.toml")
 }
 
+/// Tell the person once per error, also when NIRUWM accepted the file (a
+/// key only the bar rejects). A marker in the runtime directory keeps the
+/// bars of several screens and restarts from repeating it.
+fn notify_fallback(error: &str) {
+    let first = error.lines().next().unwrap_or(error);
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let marker = base.join("nirubar-config-error");
+    if fs::read_to_string(&marker).ok().as_deref() == Some(first) {
+        return;
+    }
+    let _ = fs::write(&marker, first);
+    let body = format!(
+        "{first}\nThe bar uses the last working settings until config.toml is fixed; then Super+Shift+R."
+    );
+    let _ = std::process::Command::new("notify-send")
+        .args([
+            "-u",
+            "critical",
+            "-a",
+            "NIRUBAR",
+            "Bar settings error",
+            &body,
+        ])
+        .spawn();
+}
+
 impl Config {
     /// The shared file plus NIRUBAR's own per-panel timeouts.
     pub fn load() -> Result<Self> {
@@ -480,6 +508,7 @@ impl Config {
                 eprintln!(
                     "nirubar: config.toml has an error, using the last working settings: {e}"
                 );
+                notify_fallback(&e.to_string());
                 let last = std::env::var_os("XDG_STATE_HOME")
                     .map(PathBuf::from)
                     .unwrap_or_else(|| {
@@ -563,6 +592,9 @@ impl Config {
         }
         if wallpaper.rotation_minutes > 100_000 {
             return Err("wallpaper.rotation_minutes is too large".into());
+        }
+        if !["art", "signature"].contains(&wallpaper.theme_style.as_str()) {
+            return Err("wallpaper.theme_style must be art or signature".into());
         }
         if wallpaper.follow_theme && wallpaper.theme_dir.trim().is_empty() {
             return Err("wallpaper.theme_dir must not be empty when follow_theme is true".into());
@@ -877,6 +909,8 @@ struct WallpaperValidation {
     shuffle_on_start: bool,
     follow_theme: bool,
     theme_dir: String,
+    /// `art` or `signature` (NIRUWM 0.24.0 and later).
+    theme_style: String,
     /// Per-screen pictures; NIRUWM validates them, the bar only has to accept
     /// the shared file unchanged.
     outputs: Vec<toml::Value>,
@@ -895,6 +929,7 @@ impl Default for WallpaperValidation {
             shuffle_on_start: true,
             follow_theme: true,
             theme_dir: "~/Pictures/Wallpapers/NIRU".into(),
+            theme_style: "art".into(),
             outputs: Vec::new(),
         }
     }
@@ -1383,6 +1418,18 @@ mod tests {
         // file is shared, so both programs must describe every key they use.
         let err = toml::from_str::<Config>("gap = 8\nbogus = 1");
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn accepts_the_signature_wallpaper_style() {
+        // `nirux wallpapers style signature` and the theme selector write
+        // this key. 0.23.0 rejected it, so a bar started after switching
+        // style fell back to the defaults.
+        for style in ["art", "signature"] {
+            let text = format!("[wallpaper]\nenabled = true\ntheme_style = \"{style}\"\n");
+            Config::from_text(&text).unwrap_or_else(|e| panic!("{style}: {e}"));
+        }
+        assert!(Config::from_text("[wallpaper]\ntheme_style = \"photo\"\n").is_err());
     }
 
     #[test]
