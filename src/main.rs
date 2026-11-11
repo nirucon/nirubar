@@ -543,8 +543,17 @@ impl Bar {
     /// each with its own workspace cells. `edge` places it at the top or bottom.
     fn new(monitor: Option<Monitor>, edge: Edge) -> Result<Self> {
         update_pipe().ok_or("cannot create source wake pipe")?;
-        let cfg = Config::load()?;
-        let theme = Theme::load(&cfg.theme)?;
+        let cfg = Config::load_resilient();
+        let theme = match Theme::load(&cfg.theme) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!(
+                    "nirubar: theme {:?} has an error, using niru-noir: {e}",
+                    cfg.theme
+                );
+                Theme::load("niru-noir")?
+            }
+        };
         let icons = cfg.bar.icons;
         let (c, s) = x11rb::connect(None)?;
         let screen = &c.setup().roots[s];

@@ -458,12 +458,49 @@ impl Config {
             }
             Err(e) => return Err(e.into()),
         };
+        Self::from_text(&text)
+    }
+
+    fn from_text(text: &str) -> Result<Self> {
         let value: toml::Value = text.parse()?;
         let mut c: Self = value.clone().try_into()?;
         apply_appearance_defaults(&mut c, &value);
         c.validate()?;
         apply_ui_scale(&mut c);
         Ok(c)
+    }
+
+    /// The configuration for starting the bar, which a typing error must not
+    /// stop: the last working copy NIRUWM keeps, else the defaults. NIRUWM
+    /// tells the person about the error, so the bar only logs it.
+    pub fn load_resilient() -> Self {
+        match Self::load() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!(
+                    "nirubar: config.toml has an error, using the last working settings: {e}"
+                );
+                let last = std::env::var_os("XDG_STATE_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                            .join(".local/state")
+                    })
+                    .join("niruwm/config.last-good.toml");
+                let mut c = fs::read_to_string(last)
+                    .ok()
+                    .and_then(|text| Self::from_text(&text).ok())
+                    .unwrap_or_else(|| {
+                        let value = toml::Value::Table(Default::default());
+                        let mut c: Self = value.clone().try_into().unwrap_or_default();
+                        apply_appearance_defaults(&mut c, &value);
+                        apply_ui_scale(&mut c);
+                        c
+                    });
+                c.popup_timeouts = crate::popup_timeout::Overrides::load();
+                c
+            }
+        }
     }
 
     fn validate(&self) -> Result<()> {
