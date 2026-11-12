@@ -120,7 +120,7 @@ The full module and panel reference is in
 
 ```sh
 nirubar --check-config   # validate the [bar] settings
-nirubar --reset-config   # replace only [bar] with the defaults; keeps config.toml.nirubar-backup
+nirubar --reset-config   # only [bar] back to the defaults (NIRUWM's template with comments), then reload; undo with niructl config undo
 nirubar --version
 niructl restart-bar      # restart all bars
 niructl bar top|bottom|hide|show|toggle
@@ -201,7 +201,7 @@ After editing, press `Super+R` or run `niructl reload`.
 | `~/.config/nirubar/calendars.toml` | Calendar feed URLs (secret, mode 0600) |
 | `~/.cache/nirubar/calendar/` | Parsed calendar events for offline use (mode 0600) |
 | `~/.local/state/nirubar/reminders.json` | Calendar reminders already sent, as hashes (mode 0600) |
-| `~/.config/niruwm/config.toml.nirubar-backup` | Backup written by `--reset-config` |
+| `~/.local/state/niruwm/config-history/` | Earlier versions, one per load and before each reset (shared with NIRUWM) |
 | `~/.cache/nirubar/updates` | Cached package-update result |
 | `~/.local/bin/nirubar` | Program |
 

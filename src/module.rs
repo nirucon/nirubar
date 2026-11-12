@@ -2537,6 +2537,8 @@ mod tests {
                         | "layout"
                         | "dictation"
                         | "scratchpad"
+                        | "recording"
+                        | "niruxupdate"
                 ),
                 "example config names an unknown module {name:?}"
             );

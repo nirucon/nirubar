@@ -283,18 +283,26 @@ impl Default for Bar {
             separator: "|".into(),
             modules: vec![
                 "workspaces".into(),
+                "dictation".into(),
+                "recording".into(),
+                "scratchpad".into(),
+                "layout".into(),
                 "media".into(),
                 "volume".into(),
+                "microphone".into(),
                 "brightness".into(),
                 "display".into(),
                 "tailscale".into(),
                 "network".into(),
-                "tasks".into(),
+                "wifi".into(),
+                "mode".into(),
                 "battery".into(),
+                "niruxupdate".into(),
                 "agent".into(),
-                "scratchpad".into(),
-                "dictation".into(),
+                "nirusec".into(),
+                "dnd".into(),
                 "quicksettings".into(),
+                "share".into(),
                 "clock".into(),
             ],
             tags: (1..=10).map(|n| n.to_string()).collect(),
@@ -379,10 +387,24 @@ pub fn toggle_title() -> Result<bool> {
 /// Replace only the shared `[bar]` table with current compiled defaults.
 /// Returns the backup path when an existing file was preserved.
 pub fn reset_bar() -> Result<(PathBuf, Option<PathBuf>)> {
-    reset_bar_at(&active_path())
+    reset_bar_at(&active_path(), &history_dir())
 }
 
-fn reset_bar_at(path: &std::path::Path) -> Result<(PathBuf, Option<PathBuf>)> {
+/// NIRUWM's history of working versions; a reset keeps the old file there
+/// under its own time, so a second reset never replaces the first backup.
+fn history_dir() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
+        })
+        .join("niruwm/config-history")
+}
+
+fn reset_bar_at(
+    path: &std::path::Path,
+    history: &std::path::Path,
+) -> Result<(PathBuf, Option<PathBuf>)> {
     let path = path.to_path_buf();
     let original = match fs::read_to_string(&path) {
         Ok(text) => Some(text),
@@ -401,12 +423,21 @@ fn reset_bar_at(path: &std::path::Path) -> Result<(PathBuf, Option<PathBuf>)> {
     document["bar"] = fragment["bar"].clone();
     let parent = path.parent().ok_or("configuration directory is missing")?;
     fs::create_dir_all(parent)?;
-    let backup = if original.is_some() {
-        let backup = PathBuf::from(format!("{}.nirubar-backup", path.display()));
-        fs::write(&backup, original.as_deref().unwrap_or(""))?;
-        Some(backup)
-    } else {
-        None
+    let backup = match original.as_deref() {
+        Some(text) => {
+            fs::create_dir_all(history)?;
+            let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+            // The same names as NIRUWM's history, so they sort in order.
+            let mut n = 0;
+            let mut backup = history.join(format!("{stamp}-{n:02}.toml"));
+            while backup.exists() {
+                n += 1;
+                backup = history.join(format!("{stamp}-{n:02}.toml"));
+            }
+            fs::write(&backup, text)?;
+            Some(backup)
+        }
+        None => None,
     };
     let temp = parent.join(format!(".config.toml.{}", std::process::id()));
     fs::write(&temp, document.to_string())?;
@@ -1655,9 +1686,15 @@ action = "terminal"
         fs::create_dir_all(&base).unwrap();
         let path = base.join("config.toml");
         fs::write(&path, "theme = \"niru-nord\"\n[bar]\ntags = [\"old\"]\n").unwrap();
-        let (written, backup) = reset_bar_at(&path).unwrap();
+        let history = base.join("history");
+        let (written, backup) = reset_bar_at(&path, &history).unwrap();
         assert_eq!(written, path);
-        assert!(backup.unwrap().exists());
+        let first = backup.unwrap();
+        assert!(first.exists());
+        let (_, second) = reset_bar_at(&path, &history).unwrap();
+        let second = second.unwrap();
+        assert_ne!(first, second, "a second reset keeps the first backup");
+        assert!(fs::read_to_string(&first).unwrap().contains("old"));
         let value: toml::Value = fs::read_to_string(&path).unwrap().parse().unwrap();
         assert_eq!(value["theme"].as_str(), Some("niru-nord"));
         assert_eq!(value["bar"]["tags"].as_array().unwrap().len(), 10);

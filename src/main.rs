@@ -2638,6 +2638,15 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
 }
 
 /// Tell a running bar that the shared config changed.
+/// Whether this `niructl` knows `config` (NIRUWM 0.25 and later).
+fn niructl_has_config(niructl: &std::path::Path) -> bool {
+    std::process::Command::new(niructl)
+        .args(["config", "--help"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stderr).contains("niructl config history"))
+        .unwrap_or(false)
+}
+
 fn signal_config_reload() -> Result<()> {
     let (c, s) = x11rb::connect(None)?;
     let root = c.setup().roots[s].root;
@@ -2673,15 +2682,36 @@ fn main() {
             eprintln!("Usage: nirubar --reset-config");
             std::process::exit(2);
         }
+        // NIRUWM's reset takes the [bar] of the shipped template with its
+        // comments, keeps the old file in the history and reloads the
+        // session. Without NIRUWM the bar writes its own defaults.
+        let niructl = std::env::var("PATH")
+            .unwrap_or_default()
+            .split(':')
+            .map(|d| std::path::Path::new(d).join("niructl"))
+            .find(|p| p.is_file());
+        if let Some(niructl) = niructl {
+            let delegated = std::process::Command::new(&niructl)
+                .args(["config", "reset", "bar", "--yes"])
+                .status();
+            match delegated {
+                Ok(status) if status.success() => return,
+                // An older NIRUWM has no `config` command: fall through.
+                Ok(status) if status.code() == Some(1) && !niructl_has_config(&niructl) => {}
+                Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+                Err(_) => {}
+            }
+        }
         match config::reset_bar() {
             Ok((path, backup)) => {
                 if let Some(backup) = backup {
-                    println!("Backup: {}", backup.display());
+                    println!("The old file is kept as {}", backup.display());
                 }
-                println!(
-                    "Reset [bar] in {}. Restart with: niructl restart-bar",
-                    path.display()
-                );
+                println!("Reset [bar] in {}.", path.display());
+                match signal_config_reload() {
+                    Ok(()) => println!("The bars reloaded."),
+                    Err(_) => println!("No session is running; the bar uses it at the next start."),
+                }
                 return;
             }
             Err(e) => {
