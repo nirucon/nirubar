@@ -53,6 +53,8 @@ pub struct Config {
     pub nightlight: toml::Value,
     /// NIRUWM/niructl brightness device and step; accepted but not used here.
     pub brightness: toml::Value,
+    /// NIRUWM/niructl battery charge limit; accepted but not used here.
+    pub battery: toml::Value,
     /// NIRUIDLE screensaver/lock timers; accepted but not used by the bar.
     pub idle: toml::Value,
     /// NIRUWM-only scratchpad settings.
@@ -203,6 +205,7 @@ impl Default for Config {
             monitors: toml::Value::Table(Default::default()),
             nightlight: toml::Value::Table(Default::default()),
             brightness: toml::Value::Table(Default::default()),
+            battery: toml::Value::Table(Default::default()),
             idle: toml::Value::Table(Default::default()),
             scratchpad: toml::Value::Table(Default::default()),
             swallow: toml::Value::Table(Default::default()),
