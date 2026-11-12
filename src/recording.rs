@@ -313,6 +313,11 @@ pub fn can_stop() -> bool {
     matches!(current().1, View::Recording { .. } | View::Paused { .. })
 }
 
+/// NIRUCLIP is capturing the screen now (not paused, not finished).
+pub fn capturing() -> bool {
+    matches!(current().1, View::Recording { .. })
+}
+
 pub fn can_recover() -> bool {
     matches!(current().1, View::Recover)
 }

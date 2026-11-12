@@ -24,6 +24,7 @@ mod nirux_update;
 mod popup;
 mod popup_timeout;
 mod powerprofile;
+mod privacy;
 mod probe;
 mod pulse;
 mod recording;

@@ -1106,6 +1106,53 @@ impl Module for Dictation {
     }
 }
 
+/// Privacy dot: hidden until an app uses the microphone, a camera or
+/// records the screen, always in the warning colour (the accent of the
+/// monochrome themes is too faint for this). The panel lists the apps.
+pub struct Privacy {
+    monitor: crate::privacy::Monitor,
+    dictation: crate::dictation::Reader,
+    usage: crate::privacy::Usage,
+}
+
+impl Privacy {
+    pub fn new() -> Self {
+        Self {
+            monitor: crate::privacy::Monitor::new(),
+            dictation: crate::dictation::Reader::new(),
+            usage: crate::privacy::Usage::default(),
+        }
+    }
+
+    fn refresh(&mut self) {
+        self.usage = crate::privacy::Usage::new(
+            self.monitor.snapshot(),
+            self.dictation.view() == crate::dictation::View::Recording,
+            crate::recording::capturing(),
+        );
+    }
+}
+
+impl Module for Privacy {
+    fn name(&self) -> &'static str {
+        "privacy"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.refresh();
+        crate::privacy::text(&self.usage).to_string()
+    }
+    fn tint(&self) -> Tint {
+        Tint::Alert
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        self.refresh();
+        Some(("Privacy".into(), crate::privacy::detail(&self.usage)))
+    }
+}
+
 /// NIRUWM scratchpads: a terminal mark while at least one exists, with a count
 /// when there are several, in the accent colour while one is shown. A click
 /// opens a panel that lists them; the bar handles that panel itself because
@@ -2261,6 +2308,7 @@ pub fn build(
             "recording" => out.push(Box::new(Recording)),
             "scratchpad" => out.push(Box::new(Scratchpad::new(icons))),
             "dictation" => out.push(Box::new(Dictation::new())),
+            "privacy" => out.push(Box::new(Privacy::new())),
             "microphone" => out.push(Box::new(Microphone {
                 icons,
                 monitor: crate::microphone::Monitor::new(),
@@ -2536,6 +2584,7 @@ mod tests {
                         | "tasks"
                         | "layout"
                         | "dictation"
+                        | "privacy"
                         | "scratchpad"
                         | "recording"
                         | "niruxupdate"

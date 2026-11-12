@@ -47,6 +47,7 @@ const MODULES: &[&str] = &[
     "volume",
     "powerprofile",
     "bluetooth",
+    "privacy",
     "recording",
     "scratchpad",
     "dictation",

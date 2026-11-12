@@ -218,7 +218,7 @@ position = "top"
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "dictation", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "mode", "battery", "niruxupdate", "agent", "nirusec", "dnd", "quicksettings", "share", "clock"]
+modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "mode", "battery", "niruxupdate", "agent", "nirusec", "dnd", "quicksettings", "share", "clock"]
 # Missing input/provider stays visible even with "muted" visibility.
 microphone_visibility = "always" # "always" or "muted"
 # Left: information. Right: mute. Scroll: gain (never unmutes).

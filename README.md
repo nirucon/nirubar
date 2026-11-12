@@ -107,6 +107,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `tasks`, `agent` | NIRU/OpenCode task status; OpenCode prompt entry |
 | `scratchpad` | NIRUWM scratchpads; click a row to show or hide one |
 | `dictation` | NIRUDICTATE recording/transcribing mark |
+| `privacy` | A dot while an app uses the microphone, a camera or NIRUCLIP records the screen; click lists the apps |
 | `recording` | NIRUCLIP recording timer; right-click stop and save |
 | `share`, `nirusec` | NIRUSHARE inbox entry; NIRUSEC state mark |
 | `dnd`, `notifications` | Do Not Disturb toggle; notification history |
