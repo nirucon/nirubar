@@ -62,6 +62,23 @@ machine shows the same bar. The previous list stays in the settings history
 (`niructl config undo`). Set it to `false` to keep a list of your own. NIRUBAR
 itself only accepts the key; it does not change anything.
 
+## Hidden while presenting
+
+`presenting_hide` lists the modules that disappear while NIRUWM's root
+property `_NIRUWM_PRESENTING` is 1, which `niructl present on` sets (NIRUPRES
+does it when a presentation starts, NIRUWM 0.28). A hidden module draws
+nothing and has no click target, exactly like a module with nothing to show;
+the bar keeps running, and the modules come back when presenting ends. A panel
+open on a hidden module closes when presenting starts. The default:
+
+```toml
+[bar]
+presenting_hide = ["media", "notifications", "agent", "share", "tailscale", "updates", "niruxupdate", "nirusec", "dictation", "tasks", "weather"]
+```
+
+`presenting_hide = []` keeps every module. The bar shows no presenting mark of
+its own; the privacy dot still shows NIRUCLIP screen recording.
+
 ## Attention colour
 
 Urgent workspace cells use a semantic attention colour. The ten built-in

@@ -1294,6 +1294,13 @@ pub fn parse_studio(value: &[u8]) -> bool {
     String::from_utf8_lossy(value).trim() == "on"
 }
 
+/// The value of NIRUWM's `_NIRUWM_PRESENTING` root property (CARDINAL,
+/// format 32): presenting while the first item is 1. A missing or empty
+/// property is not presenting.
+pub fn parse_presenting(value: &[u8]) -> bool {
+    value.len() >= 4 && u32::from_ne_bytes([value[0], value[1], value[2], value[3]]) == 1
+}
+
 /// Active work mode and the seconds left, read from the shared state file.
 pub fn mode_status() -> Option<(String, u64)> {
     let base = std::env::var_os("XDG_STATE_HOME")
@@ -1470,6 +1477,15 @@ fn wifi_signal(iface: &str) -> Option<u8> {
 #[cfg(test)]
 mod detail_tests {
     use super::*;
+
+    #[test]
+    fn presenting_is_a_cardinal_one() {
+        assert!(parse_presenting(&1u32.to_ne_bytes()));
+        assert!(!parse_presenting(&0u32.to_ne_bytes()));
+        assert!(!parse_presenting(&2u32.to_ne_bytes()));
+        assert!(!parse_presenting(&[]));
+        assert!(!parse_presenting(&[1]));
+    }
 
     #[test]
     fn health_is_full_against_design() {

@@ -456,6 +456,9 @@ struct Bar {
     renderer: render::Renderer,
     last_frame: String,
     snapshot_dirty: bool,
+    /// NIRUWM's `_NIRUWM_PRESENTING` root property is 1: the modules in
+    /// `[bar] presenting_hide` render as empty (no text, no click target).
+    presenting: bool,
     /// When modules last looked at their own files (calendars.toml).
     files_checked: std::time::Instant,
     file_check_every: Option<std::time::Duration>,
@@ -606,6 +609,7 @@ impl Bar {
             "_NIRUWM_URGENT",
             "_NIRUWM_LAYOUT",
             "_NIRUWM_STUDIO",
+            "_NIRUWM_PRESENTING",
             "_NIRUWM_COMMAND",
             "_NIRUBAR_SELECTION",
             "_NIRUBAR_REDRAW",
@@ -790,6 +794,7 @@ impl Bar {
             renderer,
             last_frame: String::new(),
             snapshot_dirty: true,
+            presenting: false,
             files_checked: std::time::Instant::now(),
             file_check_every: file_check_every(),
             watched_clients: std::collections::HashSet::new(),
@@ -857,6 +862,34 @@ impl Bar {
             .and_then(|r| r.reply().ok())
             .is_some_and(|r| status::parse_studio(&r.value));
         status::STUDIO.store(studio, std::sync::atomic::Ordering::Relaxed);
+        // `niructl present on`: one small property read per root change.
+        let presenting = self
+            .c
+            .get_property(
+                false,
+                self.root,
+                self.atom("_NIRUWM_PRESENTING"),
+                AtomEnum::CARDINAL,
+                0,
+                1,
+            )
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .is_some_and(|r| status::parse_presenting(&r.value));
+        if presenting != self.presenting {
+            self.presenting = presenting;
+            // A panel left open on a module that is now hidden would keep
+            // showing exactly what presenting is meant to hide.
+            if presenting {
+                let open = self.popup.as_ref().map(|p| p.module);
+                let hide = open
+                    .and_then(|i| self.modules.get(i))
+                    .is_some_and(|m| self.cfg.bar.hidden_while_presenting(m.name(), true));
+                if hide {
+                    let _ = self.close_popup();
+                }
+            }
+        }
         let current_layout = self
             .c
             .get_property(
@@ -1521,7 +1554,21 @@ impl Bar {
             self.workspaces.scratch_urgent,
             self.workspaces.urgent_colour,
         );
-        let modules: Vec<String> = self.modules.iter_mut().map(|m| m.render()).collect();
+        let presenting = self.presenting;
+        let bar = &self.cfg.bar;
+        let modules: Vec<String> = self
+            .modules
+            .iter_mut()
+            .map(|m| {
+                // A hidden module is not asked to render at all, so its
+                // probes stay idle while presenting.
+                if bar.hidden_while_presenting(m.name(), presenting) {
+                    String::new()
+                } else {
+                    m.render()
+                }
+            })
+            .collect();
         self.rendered = modules.clone();
         let progress: Vec<Option<u16>> = self
             .modules

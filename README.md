@@ -156,7 +156,10 @@ Other useful keys: `show_title`, `title_max`, `cell_width`, `separator`,
 `date_format`, `time_format`, `media_width`, `update_check_minutes`,
 `graph_width`, `microphone_visibility` (`always` or `muted`),
 `follow_default_modules` (NIRUX keeps the default module list; `false` keeps
-yours), `disk_warn` (1-99, default 90: when the `disk` module appears), and
+yours), `disk_warn` (1-99, default 90: when the `disk` module appears),
+`presenting_hide` (modules hidden while `niructl present on` is active, such as
+media titles, notifications and updates; see
+[Hidden while presenting](docs/CONFIGURATION.md#hidden-while-presenting)), and
 `battery`/`network`/`wifi` switches. Set `NIRU_UI_SCALE` (0.75 to 2.5) to
 override HiDPI detection.
 

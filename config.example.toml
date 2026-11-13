@@ -227,6 +227,10 @@ modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "lay
 # `nirux update` keeps `modules` on the NIRUX default list and order, so every
 # machine looks the same. Set this to false to keep your own list.
 follow_default_modules = true
+# While you present (`niructl present on`, NIRUPRES does it for you) these
+# modules disappear from the bar, so a shared screen shows no media titles,
+# notifications, updates or other private status. Set [] to keep them all.
+presenting_hide = ["media", "notifications", "agent", "share", "tailscale", "updates", "niruxupdate", "nirusec", "dictation", "tasks", "weather"]
 # Missing input/provider stays visible even with "muted" visibility.
 microphone_visibility = "always" # "always" or "muted"
 # Left: information. Right: mute. Scroll: gain (never unmutes).

@@ -122,6 +122,11 @@ pub struct Bar {
     pub separator: String,
     /// Modules to show, in order: workspaces, network, battery, clock.
     pub modules: Vec<String>,
+    /// Modules hidden while NIRUWM's root property `_NIRUWM_PRESENTING` is 1
+    /// (`niructl present on`): private status such as media titles,
+    /// notifications and updates stays off a shared screen. Hidden modules
+    /// lose their click targets too, exactly as when they have nothing to show.
+    pub presenting_hide: Vec<String>,
     /// Read by `nirux update` only: `true` keeps `modules` on the NIRUX
     /// default list and order at every update; `false` keeps your own list.
     pub follow_default_modules: bool,
@@ -177,7 +182,33 @@ pub struct Bar {
     pub media_icons: Option<crate::av::MediaIcons>,
 }
 
+/// The modules `[bar] presenting_hide` lists when the file does not.
+pub fn default_presenting_hide() -> Vec<String> {
+    [
+        "media",
+        "notifications",
+        "agent",
+        "share",
+        "tailscale",
+        "updates",
+        "niruxupdate",
+        "nirusec",
+        "dictation",
+        "tasks",
+        "weather",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
 impl Bar {
+    /// True when `module` is hidden from the bar right now: presenting is on
+    /// and the module is listed in `presenting_hide`.
+    pub fn hidden_while_presenting(&self, module: &str, presenting: bool) -> bool {
+        presenting && self.presenting_hide.iter().any(|m| m == module)
+    }
+
     /// Volume icons resolved against the loaded font.
     pub fn volume_icons(&self) -> crate::av::VolumeIcons {
         self.volume_icons
@@ -291,6 +322,7 @@ impl Default for Bar {
             opacity: DEFAULT_BAR_OPACITY,
             separator: "|".into(),
             follow_default_modules: true,
+            presenting_hide: default_presenting_hide(),
             modules: vec![
                 "workspaces".into(),
                 "dictation".into(),
@@ -1737,6 +1769,34 @@ action = "terminal"
         let example = Config::from_text(include_str!("../config.example.toml")).unwrap();
         assert_eq!(example.bar.modules, want);
         assert_eq!(example.bar.disk_warn, 90);
+    }
+
+    #[test]
+    fn presenting_hides_the_private_modules_only_while_presenting() {
+        let bar = Config::default().bar;
+        for name in [
+            "media",
+            "notifications",
+            "agent",
+            "share",
+            "tailscale",
+            "updates",
+        ] {
+            assert!(bar.hidden_while_presenting(name, true), "{name}");
+            assert!(!bar.hidden_while_presenting(name, false), "{name}");
+        }
+        for name in ["workspaces", "clock", "volume", "battery", "privacy", "dnd"] {
+            assert!(!bar.hidden_while_presenting(name, true), "{name}");
+        }
+        // The example ships the default list; an own list replaces it and an
+        // empty list keeps everything.
+        let example = Config::from_text(include_str!("../config.example.toml")).unwrap();
+        assert_eq!(example.bar.presenting_hide, default_presenting_hide());
+        let own = Config::from_text("[bar]\npresenting_hide = [\"clock\"]\n").unwrap();
+        assert!(own.bar.hidden_while_presenting("clock", true));
+        assert!(!own.bar.hidden_while_presenting("media", true));
+        let none = Config::from_text("[bar]\npresenting_hide = []\n").unwrap();
+        assert!(!none.bar.hidden_while_presenting("media", true));
     }
 
     #[test]

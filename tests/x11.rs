@@ -1239,6 +1239,106 @@ fn an_urgent_window_colours_only_its_own_screens_workspace_cell() {
 
 #[test]
 #[ignore = "requires isolated X server and font"]
+fn presenting_hides_the_listed_modules_and_brings_them_back() {
+    let directory = std::env::temp_dir().join(format!("nirubar-present-{}", std::process::id()));
+    std::fs::create_dir_all(directory.join("niruwm")).unwrap();
+    std::fs::write(
+        directory.join("niruwm/config.toml"),
+        "theme = \"niru-noir\"\n[bar]\nmodules = [\"mode\"]\npresenting_hide = [\"mode\"]\ntray = false\npopup_timeout_seconds = 0\n",
+    )
+    .unwrap();
+    let (c, screen) = x11rb::connect(None).unwrap();
+    let root = c.setup().roots[screen].root;
+    let width = c.setup().roots[screen].width_in_pixels as i16;
+    let atom = |name: &str| {
+        c.intern_atom(false, name.as_bytes())
+            .unwrap()
+            .reply()
+            .unwrap()
+            .atom
+    };
+    let studio = atom("_NIRUWM_STUDIO");
+    let presenting = atom("_NIRUWM_PRESENTING");
+    let utf8 = atom("UTF8_STRING");
+    // Studio mode gives the mode module something to draw.
+    c.change_property8(PropMode::REPLACE, root, studio, utf8, b"on")
+        .unwrap();
+    c.delete_property(root, presenting).unwrap();
+    c.flush().unwrap();
+    let _bar = Process(
+        Command::new(env!("CARGO_BIN_EXE_nirubar"))
+            .env("XDG_CONFIG_HOME", &directory)
+            .env("XDG_STATE_HOME", directory.join("state"))
+            .spawn()
+            .unwrap(),
+    );
+    let ink = || -> usize {
+        let Ok(reply) = c
+            .get_image(ImageFormat::Z_PIXMAP, root, width - 240, 2, 236, 20, !0)
+            .unwrap()
+            .reply()
+        else {
+            return 0;
+        };
+        reply
+            .data
+            .chunks(4)
+            .filter(|p| {
+                (u32::from(p[2]) << 16 | u32::from(p[1]) << 8 | u32::from(p[0])) != 0x0f0f10
+            })
+            .count()
+    };
+    let wait_for = |what: &str, check: &dyn Fn() -> bool| {
+        let until = Instant::now() + Duration::from_secs(5);
+        while !check() {
+            assert!(Instant::now() < until, "{what}");
+            thread::sleep(Duration::from_millis(50));
+        }
+    };
+    wait_for("the mode module is drawn", &|| ink() > 20);
+    let pid = _bar.0.id();
+    c.change_property32(
+        PropMode::REPLACE,
+        root,
+        presenting,
+        AtomEnum::CARDINAL,
+        &[1],
+    )
+    .unwrap();
+    c.flush().unwrap();
+    wait_for("presenting hides the module", &|| ink() == 0);
+    // Hidden without a restart: the same process is still drawing.
+    assert!(std::path::Path::new(&format!("/proc/{pid}")).exists());
+    c.change_property32(
+        PropMode::REPLACE,
+        root,
+        presenting,
+        AtomEnum::CARDINAL,
+        &[0],
+    )
+    .unwrap();
+    c.flush().unwrap();
+    wait_for("0 is not presenting", &|| ink() > 20);
+    c.change_property32(
+        PropMode::REPLACE,
+        root,
+        presenting,
+        AtomEnum::CARDINAL,
+        &[1],
+    )
+    .unwrap();
+    c.flush().unwrap();
+    wait_for("hidden again", &|| ink() == 0);
+    c.delete_property(root, presenting).unwrap();
+    c.flush().unwrap();
+    wait_for("deleting the property brings it back", &|| ink() > 20);
+    c.delete_property(root, studio).unwrap();
+    c.flush().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+#[ignore = "requires isolated X server and font"]
 fn the_mode_module_shows_studio_mode_from_the_root_property() {
     let directory = std::env::temp_dir().join(format!("nirubar-studio-{}", std::process::id()));
     std::fs::create_dir_all(directory.join("niruwm")).unwrap();
