@@ -12,7 +12,7 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 | `workspaces` | Ten workspace cells; click to switch. A small accent marker shows occupied non-active workspaces. A cell with a window that asked for attention is filled with the theme's attention colour (see below); NIRUWM 0.19 lists those windows in `_NIRUWM_URGENT`, and each bar marks only its own screen's cells |
 | `network` | Wired link; `!` means link up without a default route. Wireless appears here only with `wifi = false`; click for interface, route and address |
 | `wifi` | Wi-Fi radio and connection; `!` means radio off or not connected; click to open the Wi-Fi selector |
-| `battery` | Aggregated battery packs; panel shows charge, state and remaining time when available |
+| `battery` | Aggregated battery packs; panel shows charge, state and remaining time when available, then `health: N% of design capacity` (`energy_full`/`energy_full_design`, or the `charge_*` pair; hidden without a design value), `cycles: N` (when the driver reports more than 0) and `last 24 h:` with one block character per hour from the charge history. NIRUBAR samples the charge every 10 minutes into `$XDG_STATE_HOME/nirubar/battery-history` (48 hours kept); an hour without samples is blank |
 | `volume` | Output level or mute; click for info, scroll to change, right-click mute, middle-click microphone mute |
 | `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |
 | `scratchpad` | NIRUWM scratchpads: a terminal mark (nf-fa-terminal, plain `>_`) while at least one exists, the mark and a count for several, accent while one is shown, nothing otherwise. Click: panel with key, slot, title and state per scratchpad; a row shows or hides it. Right-click: the default scratchpad. Reads the `_NIRUWM_SCRATCHPADS` root property (NIRUWM 0.17.4) only when it changes. A scratchpad that asked for attention turns the mark into the alert colour with a `!` (and its row starts with `!`); without this module a line in the attention colour under the workspace cells says the same |
@@ -37,6 +37,7 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 | `agent` | OpenCode entry; click to type a short prompt and start OpenCode in a centred floating terminal |
 | `dnd` | Bell or slashed bell; left click toggles DND, right click opens Quick Settings |
 | `notifications` | NIRUNOTIFY history count; click for recent notifications |
+| `disk` | Hidden until `/` or `$HOME` (listed once when they share a filesystem) is at least `disk_warn` percent used, measured like `df` every 60 seconds off the drawing thread. Then a disk mark and the fullest percentage in the warning colour, e.g. `93%`. The panel lists used, free and total space per filesystem; a click on it (or Return) opens your `terminal` running `nirux clean`, which shows what can be freed and asks once |
 | `quicksettings` | Gear entry that opens Quick Settings in the launcher |
 | `share` | NIRUSHARE entry; opens the inbox with `nirulauncher --share` |
 | `nirusec` | NIRUSEC state mark from its shared cache (refreshed with `nirusec --check --if-stale 300`) |
@@ -44,7 +45,22 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
-`~/.cache/nirubar/updates` for `update_check_minutes`.
+`~/.cache/nirubar/updates` for `update_check_minutes`. When the bar also has
+`niruxupdate`, `updates` shows only the package count, so a NIRUX release is
+not announced twice.
+
+## Disk warning threshold
+
+`disk_warn = 90` (1-99) is the percentage used at which the `disk` module
+appears. Lower it to be warned earlier.
+
+## Following the NIRUX default list
+
+`follow_default_modules = true` (the default) lets `nirux update` set
+`modules` to the NIRUX default list and order at every update, so every
+machine shows the same bar. The previous list stays in the settings history
+(`niructl config undo`). Set it to `false` to keep a list of your own. NIRUBAR
+itself only accepts the key; it does not change anything.
 
 ## Attention colour
 
@@ -87,7 +103,7 @@ receive the secondary action. The strip scales with the normal bar geometry.
 
 On high-DPI displays the bar reads `Xft.dpi` at startup and scales `font_size`,
 `bar_height` and `bar.cell_width`. Set `NIRU_UI_SCALE` (for example `1.25`) to
-override detection, or `1` to disable it. The value is bounded to 0.75–2.5.
+override detection, or `1` to disable it. The value is bounded to 0.75 to 2.5.
 
 `tags` accepts words or glyphs, for example `["web", "code", "chat"]` or a
 Nerd Font code point. `microphone_visibility = "muted"` hides a healthy unmuted
@@ -152,7 +168,7 @@ stay open until dismissed:
 
 | Stays open until dismissed | Closes after `popup_timeout_seconds` |
 | --- | --- |
-| `clock` (calendar), `weather` (rain timeline), `tasks`, `pulse` (load graph), `notifications` (history) | every other panel: `volume`, `microphone`, `network`, `battery`, `bluetooth`, `media`, `powerprofile`, `brightness`, `updates`, `niruxupdate`, `uptime`, `display`, `sun`, `tailscale`, `quicksettings`, `mode`, `layout`, `recording`, `dictation`, `privacy`, `scratchpad`, tray menus, the `+N` list |
+| `clock` (calendar), `weather` (rain timeline), `tasks`, `pulse` (load graph), `notifications` (history) | every other panel: `volume`, `microphone`, `network`, `battery`, `bluetooth`, `media`, `powerprofile`, `brightness`, `updates`, `niruxupdate`, `disk`, `uptime`, `display`, `sun`, `tailscale`, `quicksettings`, `mode`, `layout`, `recording`, `dictation`, `privacy`, `scratchpad`, tray menus, the `+N` list |
 
 (`wifi`, `agent`, `share`, `nirusec` and `dnd` open their own control
 window on a click rather than a panel, so no timeout applies to them.)

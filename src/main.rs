@@ -10,10 +10,12 @@
 mod ambient;
 mod audio_monitor;
 mod av;
+mod battery_history;
 mod bluetooth;
 mod calendar;
 mod config;
 mod dictation;
+mod disk;
 mod helpers;
 mod ics;
 mod layout;
@@ -381,6 +383,8 @@ fn module_priority(name: &str) -> i32 {
         // Empty unless a scratchpad exists; then it is how to reach them.
         "scratchpad" => 75,
         "battery" => 90,
+        // Empty unless a disk is nearly full; then it must stay visible.
+        "disk" => 88,
         "network" => 85,
         "volume" => 80,
         "bluetooth" => 84,
@@ -2625,6 +2629,7 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
         } else {
             plain.scratchpad
         },
+        disk: if ok(nerd.disk) { nerd.disk } else { plain.disk },
         dnd_off: if ok(nerd.dnd_off) {
             nerd.dnd_off
         } else {

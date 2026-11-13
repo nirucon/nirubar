@@ -44,6 +44,7 @@ const MODULES: &[&str] = &[
     "wifi",
     "updates",
     "niruxupdate",
+    "disk",
     "volume",
     "powerprofile",
     "bluetooth",

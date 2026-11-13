@@ -98,7 +98,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `wifi` | Wi-Fi radio and connection; click opens the Wi-Fi selector |
 | `bluetooth` | Off, on or connected device; right-click power |
 | `powerprofile` | Active power profile; right-click next profile |
-| `battery` | Aggregated battery charge and state |
+| `battery` | Aggregated battery charge and state; the panel adds battery health, charge cycles and a 24 h charge graph |
 | `updates` | Available package upgrades (`apt`, `pacman` or `xbps`) |
 | `niruxupdate` | A newer NIRUX release, or one that needs a new login |
 | `pulse` | CPU and memory; click for a one-minute graph |
@@ -111,6 +111,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `recording` | NIRUCLIP recording timer; right-click stop and save |
 | `share`, `nirusec` | NIRUSHARE inbox entry; NIRUSEC state mark |
 | `dnd`, `notifications` | Do Not Disturb toggle; notification history |
+| `disk` | Red disk mark and percentage, only while `/` or your home is at least `disk_warn` (90) percent full; click for used/free space and a clean-up with `nirux clean` |
 | `quicksettings` | Gear that opens Quick Settings (volume, Wi-Fi, Bluetooth, displays, power, theme, DND, idle, lock) |
 | `clock` | Date and time; click for a Monday-first calendar with ISO week numbers and, when configured, calendar events |
 
@@ -153,8 +154,10 @@ opacity = 94                 # 1-100
 
 Other useful keys: `show_title`, `title_max`, `cell_width`, `separator`,
 `date_format`, `time_format`, `media_width`, `update_check_minutes`,
-`graph_width`, `microphone_visibility` (`always` or `muted`), and
-`battery`/`network`/`wifi` switches. Set `NIRU_UI_SCALE` (0.75–2.5) to
+`graph_width`, `microphone_visibility` (`always` or `muted`),
+`follow_default_modules` (NIRUX keeps the default module list; `false` keeps
+yours), `disk_warn` (1-99, default 90: when the `disk` module appears), and
+`battery`/`network`/`wifi` switches. Set `NIRU_UI_SCALE` (0.75 to 2.5) to
 override HiDPI detection.
 
 Panels close on a click on the same module, a click elsewhere or Escape.

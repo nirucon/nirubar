@@ -122,6 +122,9 @@ pub struct Bar {
     pub separator: String,
     /// Modules to show, in order: workspaces, network, battery, clock.
     pub modules: Vec<String>,
+    /// Read by `nirux update` only: `true` keeps `modules` on the NIRUX
+    /// default list and order at every update; `false` keeps your own list.
+    pub follow_default_modules: bool,
     /// Always show input state, or hide healthy unmuted input until muted.
     pub microphone_visibility: String,
     /// Workspace labels shown instead of 1..9.
@@ -152,6 +155,9 @@ pub struct Bar {
     /// Minutes between package update checks. 0 asks every redraw, which is
     /// never a good idea; 30 is the default.
     pub update_check_minutes: u32,
+    /// The `disk` module appears when `/` or `$HOME` is at least this full,
+    /// in percent (1-99).
+    pub disk_warn: u8,
     /// Minutes the focused window must stay the same before its title is
     /// shown. 0 shows it at once. A title that appears while you are still
     /// switching windows is noise; a short delay makes it a reward.
@@ -284,6 +290,7 @@ impl Default for Bar {
             transparent: true,
             opacity: DEFAULT_BAR_OPACITY,
             separator: "|".into(),
+            follow_default_modules: true,
             modules: vec![
                 "workspaces".into(),
                 "dictation".into(),
@@ -301,10 +308,12 @@ impl Default for Bar {
                 "wifi".into(),
                 "mode".into(),
                 "battery".into(),
+                "updates".into(),
                 "niruxupdate".into(),
                 "agent".into(),
                 "nirusec".into(),
                 "dnd".into(),
+                "disk".into(),
                 "quicksettings".into(),
                 "share".into(),
                 "clock".into(),
@@ -324,6 +333,7 @@ impl Default for Bar {
             icons: true,
             media_width: 32,
             update_check_minutes: 30,
+            disk_warn: 90,
             title_delay_seconds: 0,
             graph_width: 24,
             tray: true,
@@ -616,6 +626,9 @@ impl Config {
         }
         if !matches!(self.bar.microphone_visibility.as_str(), "always" | "muted") {
             return Err("bar.microphone_visibility must be always or muted".into());
+        }
+        if !(1..=99).contains(&self.bar.disk_warn) {
+            return Err("bar.disk_warn must be between 1 and 99".into());
         }
 
         let wallpaper: WallpaperValidation = self.wallpaper.clone().try_into()?;
@@ -1675,6 +1688,67 @@ action = "terminal"
         )
         .unwrap();
         c.validate().unwrap();
+    }
+
+    #[test]
+    fn package_updates_are_in_the_default_bar_and_nirux_keeps_it() {
+        let c = Config::default();
+        let m = &c.bar.modules;
+        let at = |n: &str| m.iter().position(|x| x == n);
+        assert!(at("updates").unwrap() + 1 == at("niruxupdate").unwrap());
+        assert!(at("disk").unwrap() + 1 == at("quicksettings").unwrap());
+        assert_eq!(c.bar.disk_warn, 90);
+        assert!(c.bar.follow_default_modules);
+        let off: Config = toml::from_str("[bar]\nfollow_default_modules = false\n").unwrap();
+        assert!(!off.bar.follow_default_modules);
+    }
+
+    #[test]
+    fn default_modules_are_the_nirux_list() {
+        let want = [
+            "workspaces",
+            "dictation",
+            "privacy",
+            "recording",
+            "scratchpad",
+            "layout",
+            "media",
+            "volume",
+            "microphone",
+            "brightness",
+            "display",
+            "tailscale",
+            "network",
+            "wifi",
+            "mode",
+            "battery",
+            "updates",
+            "niruxupdate",
+            "agent",
+            "nirusec",
+            "dnd",
+            "disk",
+            "quicksettings",
+            "share",
+            "clock",
+        ];
+        assert_eq!(Config::default().bar.modules, want);
+        // The shipped example carries the same list.
+        let example = Config::from_text(include_str!("../config.example.toml")).unwrap();
+        assert_eq!(example.bar.modules, want);
+        assert_eq!(example.bar.disk_warn, 90);
+    }
+
+    #[test]
+    fn disk_warn_must_be_a_percentage_below_full() {
+        for bad in ["0", "100", "250"] {
+            let text = format!("[bar]\ndisk_warn = {bad}\n");
+            assert!(Config::from_text(&text).is_err(), "{bad} accepted");
+        }
+        for good in ["1", "75", "99"] {
+            let text = format!("[bar]\ndisk_warn = {good}\n");
+            assert!(Config::from_text(&text).is_ok(), "{good} rejected");
+        }
     }
 
     #[test]

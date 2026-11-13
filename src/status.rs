@@ -72,6 +72,8 @@ pub struct Icons {
     pub download: &'static str,
     /// NIRUWM scratchpads: a terminal prompt.
     pub scratchpad: &'static str,
+    /// The disk space warning: a hard disk.
+    pub disk: &'static str,
 }
 
 impl Icons {
@@ -116,6 +118,7 @@ impl Icons {
             nirusec: "\u{f132}", // nf-fa-shield
             download: "\u{f019}", // nf-fa-download
             scratchpad: "\u{f120}", // nf-fa-terminal
+            disk: "\u{f0a0}",    // nf-fa-hdd_o
         }
     }
 
@@ -155,6 +158,7 @@ impl Icons {
             nirusec: "sec",
             download: "new",
             scratchpad: ">_",
+            disk: "disk",
         }
     }
 }
@@ -261,7 +265,84 @@ fn battery_reading(path: &Path) -> Option<BatteryReading> {
 /// A machine without batteries returns `None`, so the bar draws nothing rather
 /// than a misleading empty battery.
 pub fn battery() -> Option<Battery> {
-    battery_in(Path::new("/sys/class/power_supply"))
+    battery_in(&power_supply_dir())
+}
+
+/// `/sys/class/power_supply`, or `NIRUBAR_POWER_SUPPLY` for a test tree (a
+/// screenshot of the battery panel on a machine without a battery).
+fn power_supply_dir() -> std::path::PathBuf {
+    std::env::var_os("NIRUBAR_POWER_SUPPLY")
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/sys/class/power_supply".into())
+}
+
+/// Battery wear: the full capacity now against the design capacity, and the
+/// charge cycles. Each is `None` when the driver does not report it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Health {
+    pub percent: Option<u8>,
+    pub cycles: Option<u64>,
+}
+
+/// Health in percent of the design capacity, capped at 100 (a new pack can
+/// report a little more than its design value). `None` without a design value.
+pub fn health_percent(full: f64, design: f64) -> Option<u8> {
+    (design > 0.0 && full > 0.0).then(|| (full / design * 100.0).round().clamp(1.0, 100.0) as u8)
+}
+
+pub fn battery_health() -> Option<Health> {
+    battery_health_in(&power_supply_dir())
+}
+
+fn battery_health_in(dir: &Path) -> Option<Health> {
+    let mut energy = (0.0, 0.0, 0usize);
+    let mut charge = (0.0, 0.0, 0usize);
+    let mut packs = 0usize;
+    let mut cycles: Option<u64> = None;
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        let kind = fs::read_to_string(path.join("type")).unwrap_or_default();
+        if kind.trim() != "Battery" {
+            continue;
+        }
+        packs += 1;
+        let pair = |a: &str, b: &str| read_number(&path.join(a)).zip(read_number(&path.join(b)));
+        if let Some((full, design)) = pair("energy_full", "energy_full_design") {
+            energy = (energy.0 + full, energy.1 + design, energy.2 + 1);
+        }
+        if let Some((full, design)) = pair("charge_full", "charge_full_design") {
+            charge = (charge.0 + full, charge.1 + design, charge.2 + 1);
+        }
+        if let Some(count) = read_number(&path.join("cycle_count")).filter(|c| *c > 0.0) {
+            cycles = Some(cycles.unwrap_or(0).max(count as u64));
+        }
+    }
+    if packs == 0 {
+        return None;
+    }
+    // Mixing energy and charge across packs would weigh them wrongly: use the
+    // unit every pack reports.
+    let percent = if energy.2 == packs {
+        health_percent(energy.0, energy.1)
+    } else if charge.2 == packs {
+        health_percent(charge.0, charge.1)
+    } else {
+        None
+    };
+    Some(Health { percent, cycles })
+}
+
+/// Panel lines for the battery health; empty when nothing is reported.
+pub fn health_detail(health: &Health) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(p) = health.percent {
+        lines.push(format!("health: {p}% of design capacity"));
+    }
+    if let Some(c) = health.cycles {
+        lines.push(format!("cycles: {c}"));
+    }
+    lines
 }
 
 fn battery_in(dir: &Path) -> Option<Battery> {
@@ -1389,6 +1470,51 @@ fn wifi_signal(iface: &str) -> Option<u8> {
 #[cfg(test)]
 mod detail_tests {
     use super::*;
+
+    #[test]
+    fn health_is_full_against_design() {
+        assert_eq!(health_percent(43.5, 50.0), Some(87));
+        assert_eq!(health_percent(52.0, 50.0), Some(100));
+        assert_eq!(health_percent(40.0, 0.0), None);
+        assert_eq!(health_percent(0.0, 50.0), None);
+    }
+
+    #[test]
+    fn health_reads_energy_charge_and_cycles() {
+        let dir = std::env::temp_dir().join(format!("nirubar-health-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let bat = dir.join("BAT0");
+        fs::create_dir_all(&bat).unwrap();
+        fs::write(bat.join("type"), "Battery\n").unwrap();
+        fs::write(bat.join("energy_full"), "43500000\n").unwrap();
+        fs::write(bat.join("energy_full_design"), "50000000\n").unwrap();
+        fs::write(bat.join("cycle_count"), "312\n").unwrap();
+        let h = battery_health_in(&dir).unwrap();
+        assert_eq!(h.percent, Some(87));
+        assert_eq!(h.cycles, Some(312));
+        assert_eq!(
+            health_detail(&h),
+            vec!["health: 87% of design capacity", "cycles: 312"]
+        );
+        // A driver with cycle_count 0 and no design value: both hidden.
+        fs::write(bat.join("cycle_count"), "0\n").unwrap();
+        fs::write(bat.join("energy_full_design"), "0\n").unwrap();
+        let h = battery_health_in(&dir).unwrap();
+        assert_eq!(h, Health::default());
+        assert!(health_detail(&h).is_empty());
+        // charge_* is used when the driver reports charge instead of energy.
+        fs::remove_file(bat.join("energy_full")).unwrap();
+        fs::remove_file(bat.join("energy_full_design")).unwrap();
+        fs::write(bat.join("charge_full"), "4000000\n").unwrap();
+        fs::write(bat.join("charge_full_design"), "5000000\n").unwrap();
+        assert_eq!(battery_health_in(&dir).unwrap().percent, Some(80));
+        let _ = fs::remove_dir_all(&dir);
+        // No battery: nothing at all.
+        let empty = std::env::temp_dir().join(format!("nirubar-nobat-{}", std::process::id()));
+        fs::create_dir_all(&empty).unwrap();
+        assert!(battery_health_in(&empty).is_none());
+        let _ = fs::remove_dir_all(&empty);
+    }
 
     #[test]
     fn battery_detail_mentions_charge() {

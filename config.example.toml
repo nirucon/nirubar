@@ -196,7 +196,10 @@ position = "top"
 #   pulse       cpu and memory, with a graph in the panel
 #   uptime      how long the machine has been on
 #   sun         sunrise and sunset, from top-level coordinates above
-#   battery     laptops only; other machines show nothing
+#   battery     laptops only; other machines show nothing. The panel shows
+#               the battery health, charge cycles and a 24 h charge graph
+#   disk        red disk mark and percentage, only while / or your home is
+#               at least `disk_warn` percent full; click to clean up
 #   clock       date and time
 #
 # `volume` and `media` need wpctl (or amixer) and playerctl. `pactl` is optional:
@@ -215,10 +218,15 @@ position = "top"
 # Add "bluetooth" for adapter/device status; hidden when no adapter exists.
 # Add "powerprofile" for Power saver/Balanced/Performance when PPD is available.
 # Add "layout" for the current NIRUWM layout; click it to list all layouts.
+# "updates" shows how many system packages can be upgraded (apt, pacman or
+# xbps-install); it is hidden when there are none.
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "mode", "battery", "niruxupdate", "agent", "nirusec", "dnd", "quicksettings", "share", "clock"]
+modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "mode", "battery", "updates", "niruxupdate", "agent", "nirusec", "dnd", "disk", "quicksettings", "share", "clock"]
+# `nirux update` keeps `modules` on the NIRUX default list and order, so every
+# machine looks the same. Set this to false to keep your own list.
+follow_default_modules = true
 # Missing input/provider stays visible even with "muted" visibility.
 microphone_visibility = "always" # "always" or "muted"
 # Left: information. Right: mute. Scroll: gain (never unmutes).
@@ -269,6 +277,11 @@ graph_width = 24
 # Minutes between package update checks. The result is cached in
 # ~/.cache/nirubar/updates so the bar never runs a package query per redraw.
 update_check_minutes = 30
+# The `disk` module appears when / or $HOME is at least this full (1-99,
+# percent used). Its panel lists used, free and total space; a click there
+# opens a terminal with `nirux clean`, which asks once before it removes
+# anything.
+disk_warn = 90
 # Let the bar own a system tray (XEmbed and D-Bus StatusNotifierItem).
 # Applications that show a tray icon appear in the bar without any other
 # program. Set false if another tray is running.

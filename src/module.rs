@@ -369,7 +369,16 @@ impl Module for Battery {
         // Always open. A machine without a battery explains that instead of
         // ignoring the click.
         match status::battery() {
-            Some(b) => Some(("Battery".into(), status::battery_detail(&b))),
+            Some(b) => {
+                let mut lines = status::battery_detail(&b);
+                if let Some(health) = status::battery_health() {
+                    lines.extend(status::health_detail(&health));
+                }
+                if let Some(graph) = crate::battery_history::panel_line() {
+                    lines.push(graph);
+                }
+                Some(("Battery".into(), lines))
+            }
             None => Some((
                 "Battery".into(),
                 vec!["no battery in this machine".to_string()],
@@ -1514,6 +1523,9 @@ impl Module for Media {
 pub struct Updates {
     pub icons: status::Icons,
     pub every: std::time::Duration,
+    /// Also show NIRUX releases. Off when the bar has `niruxupdate` too, so the
+    /// same notice (and its sound) is not shown twice.
+    pub nirux: bool,
 }
 
 impl Module for Updates {
@@ -1530,6 +1542,9 @@ impl Module for Updates {
             if !text.is_empty() {
                 parts.push(text);
             }
+        }
+        if !self.nirux {
+            return parts.join("  ");
         }
         if let Some(version) = crate::nirux_update::activation_pending() {
             parts.push(crate::nirux_update::activation_text(
@@ -1563,6 +1578,9 @@ impl Module for Updates {
             String::new(),
             how.to_string(),
         ];
+        if !self.nirux {
+            return Some(("Updates".into(), lines));
+        }
         if let Some(version) = crate::nirux_update::activation_pending() {
             lines.push(String::new());
             lines.push(format!("NIRUX {version} is installed"));
@@ -1574,6 +1592,49 @@ impl Module for Updates {
             lines.push("then log out and back in".into());
         }
         Some(("Updates".into(), lines))
+    }
+}
+
+/// Disk space warning. Hidden until `/` or `$HOME` is at least `warn`
+/// percent full, then a red disk mark with the percentage. The panel lists
+/// both filesystems; its click opens a terminal with `nirux clean`.
+pub struct Disk {
+    pub icons: status::Icons,
+    pub warn: u8,
+    pub terminal: Vec<String>,
+}
+
+impl Module for Disk {
+    fn name(&self) -> &'static str {
+        "disk"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::disk::text(&crate::disk::snapshot(), self.warn, self.icons.disk)
+    }
+    fn tint(&self) -> Tint {
+        Tint::Alert
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Disk space".into(),
+            crate::disk::detail(
+                &crate::disk::snapshot(),
+                self.warn,
+                command_present("nirux"),
+            ),
+        ))
+    }
+    fn controls(&self) -> Option<Control> {
+        if !command_present("nirux") {
+            return None;
+        }
+        Some(Control::ui(
+            "disk-clean",
+            crate::disk::clean_command(&self.terminal),
+        ))
     }
 }
 
@@ -2252,7 +2313,10 @@ pub fn build(
         }
         match name.as_str() {
             "clock" => out.push(Box::new(Clock::new(cfg).with_browser(&full.browser))),
-            "battery" => out.push(Box::new(Battery { icons })),
+            "battery" => {
+                crate::battery_history::start();
+                out.push(Box::new(Battery { icons }));
+            }
             "display" => out.push(Box::new(Display {
                 icons,
                 checked: None,
@@ -2294,8 +2358,14 @@ pub fn build(
             "updates" => out.push(Box::new(Updates {
                 icons,
                 every: std::time::Duration::from_secs(u64::from(cfg.update_check_minutes) * 60),
+                nirux: !cfg.modules.iter().any(|m| m == "niruxupdate"),
             })),
             "niruxupdate" => out.push(Box::new(NiruxUpdate { icons })),
+            "disk" => out.push(Box::new(Disk {
+                icons,
+                warn: cfg.disk_warn,
+                terminal: full.terminal.clone(),
+            })),
             "volume" => out.push(Box::new(Volume::new(cfg.volume_icons()))),
             "powerprofile" => out.push(Box::new(PowerProfile {
                 icons,
@@ -2588,6 +2658,7 @@ mod tests {
                         | "scratchpad"
                         | "recording"
                         | "niruxupdate"
+                        | "disk"
                 ),
                 "example config names an unknown module {name:?}"
             );
