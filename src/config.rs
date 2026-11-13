@@ -723,11 +723,22 @@ impl Config {
         {
             return Err("nightlight latitude/longitude/temperature out of range".into());
         }
-        if !matches!(nightlight.mode.as_str(), "manual" | "fixed" | "solar") {
-            return Err("nightlight.mode must be manual, fixed or solar".into());
+        if !(1000..=10_000).contains(&nightlight.start_temperature) {
+            return Err("nightlight.start_temperature must be 1000..10000 K".into());
+        }
+        if !matches!(
+            nightlight.mode.as_str(),
+            "manual" | "fixed" | "solar" | "gradual"
+        ) {
+            return Err("nightlight.mode must be manual, fixed, solar or gradual".into());
         }
         if parse_clock(&nightlight.on).is_none() || parse_clock(&nightlight.off).is_none() {
             return Err("nightlight.on/off must be HH:MM".into());
+        }
+        if parse_clock(&nightlight.not_before).is_none()
+            || parse_clock(&nightlight.deepest_at).is_none()
+        {
+            return Err("nightlight.not_before/deepest_at must be HH:MM".into());
         }
 
         let scratchpad: ScratchpadValidation = self.scratchpad.clone().try_into()?;
@@ -1076,6 +1087,12 @@ struct NightlightValidation {
     on: String,
     off: String,
     day_temperature: u32,
+    /// NIRUWM 0.30 gradual mode: the evening start temperature, the earliest
+    /// start and the time the night temperature is reached. Read by NIRUWM
+    /// only; accepted and checked here because the file is shared.
+    start_temperature: u32,
+    not_before: String,
+    deepest_at: String,
 }
 
 impl Default for NightlightValidation {
@@ -1088,6 +1105,9 @@ impl Default for NightlightValidation {
             on: "20:00".into(),
             off: "07:00".into(),
             day_temperature: 6500,
+            start_temperature: 4500,
+            not_before: "19:00".into(),
+            deepest_at: "22:00".into(),
         }
     }
 }
@@ -1634,6 +1654,16 @@ action = "terminal"
     }
 
     #[test]
+    fn accepts_niruwm_gradual_nightlight() {
+        // NIRUWM 0.30 writes these keys; the shared file must stay valid here.
+        let c: Config = toml::from_str(
+            "[scratchpad]\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\n[nightlight]\nmode = \"gradual\"\nstart_temperature = 4500\nnot_before = \"19:00\"\ndeepest_at = \"22:00\"\n",
+        )
+        .unwrap();
+        c.validate().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    #[test]
     fn accepts_niruwm_workspace_state_arrays() {
         let c: Config = toml::from_str(
             "[scratchpad]\ncommand = [\"kitty\", \"--class\", \"scratchpad\"]\n[monitors]\nmaster_ratios = [0.55, 0.7]\nnmasters = [1, 2]\n",
@@ -1670,6 +1700,13 @@ action = "terminal"
                 "[[monitors.profiles]]\nname = \"eDP-1\"\nworkspaces = []\nprimary = true\n",
             ),
             ("nightlight latitude", "[nightlight]\nlatitude = 91.0\n"),
+            (
+                "nightlight start temperature",
+                "[nightlight]\nstart_temperature = 12000\n",
+            ),
+            ("nightlight not_before", "[nightlight]\nnot_before = \"7pm\"\n"),
+            ("nightlight deepest_at", "[nightlight]\ndeepest_at = \"24:00\"\n"),
+            ("nightlight mode", "[nightlight]\nmode = \"sometimes\"\n"),
             (
                 "nightlight temperature",
                 "[nightlight]\ntemperature = 999\n",

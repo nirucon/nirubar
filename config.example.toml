@@ -145,15 +145,21 @@ return_workspace = 1
 
 # ── Night light and brightness ─────────────────────────────────────────────
 [nightlight]
-# Manual night light, applied by `niructl nightlight on` / Super+N.
+# Night light belongs to NIRUWM (`niructl nightlight`, Super+N); the bar only
+# checks the section because the file is shared. gradual (the NIRUWM default)
+# starts at sunset, not before not_before, at start_temperature and glides to
+# temperature by deepest_at. See NIRUWM's config.example.toml.
 # 0,0 means no location; manual temperature still works.
 latitude = 59.33
 longitude = 18.07
-temperature = 3400
-mode = "manual"
+temperature = 2700
+mode = "gradual"
 on = "20:00"
 off = "07:00"
 day_temperature = 6500
+start_temperature = 4500
+not_before = "19:00"
+deepest_at = "22:00"
 
 [brightness]
 device = ""
