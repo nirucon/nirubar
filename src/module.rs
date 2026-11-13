@@ -1569,11 +1569,16 @@ impl Module for Updates {
             updates::Manager::Unknown => "no package manager found",
         };
         let mut lines = vec![
-            match updates::query() {
+            // The cached answer: a click must not wait for the package
+            // manager either.
+            match updates::cached(self.every) {
                 Some(0) => "everything is up to date".to_string(),
                 Some(1) => "1 package can be upgraded".to_string(),
                 Some(n) => format!("{n} packages can be upgraded"),
-                None => "cannot read the package database".to_string(),
+                None if manager == updates::Manager::Unknown => {
+                    "cannot read the package database".to_string()
+                }
+                None => "checking the package database, try again shortly".to_string(),
             },
             String::new(),
             how.to_string(),

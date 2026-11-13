@@ -107,12 +107,13 @@ pub fn measure() -> Vec<Usage> {
 pub fn snapshot() -> Vec<Usage> {
     static SHARED: OnceLock<Arc<Mutex<Vec<Usage>>>> = OnceLock::new();
     let shared = SHARED.get_or_init(|| {
-        let shared = Arc::new(Mutex::new(measure()));
+        // Even the first measurement runs on the thread: statvfs on a hung
+        // network home would otherwise block drawing.
+        let shared = Arc::new(Mutex::new(Vec::new()));
         let writer = shared.clone();
         let _ = std::thread::Builder::new()
             .name("nirubar-disk".into())
             .spawn(move || loop {
-                std::thread::sleep(EVERY);
                 let fresh = measure();
                 let changed = match writer.lock() {
                     Ok(mut current) if *current != fresh => {
@@ -125,6 +126,7 @@ pub fn snapshot() -> Vec<Usage> {
                 if changed {
                     crate::wake_update();
                 }
+                std::thread::sleep(EVERY);
             });
         shared
     });

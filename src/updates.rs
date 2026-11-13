@@ -1,7 +1,8 @@
 //! Package update counts.
 //!
 //! A count of available upgrades, cached so the bar never runs a package query
-//! in a redraw loop. Checking is expensive on every distribution, so the result
+//! in a redraw loop, and queried on a background thread so drawing never
+//! waits for the package manager. Checking is expensive on every distribution, so the result
 //! lives for `update_check_minutes` and the value is read from a small file
 //! that the bar writes.
 //!
@@ -102,32 +103,82 @@ pub fn query() -> Option<usize> {
     Some(count)
 }
 
-/// The cached count, refreshed when it is older than `max_age`.
+/// The cached count. When it is missing or older than `max_age`, one
+/// background thread asks the package manager and wakes the bar when it has
+/// the answer: a query can take seconds (apt), and the X11 thread must never
+/// wait for it.
 ///
-/// Returns `None` when this system has no known package manager, so a bar on an
-/// unsupported distribution simply omits the module.
+/// Returns `None` until the first answer, and on a system without a known
+/// package manager, so the module simply stays empty.
 pub fn cached(max_age: Duration) -> Option<usize> {
     let path = cache_path();
-    if let Ok(meta) = std::fs::metadata(&path) {
-        let fresh = meta
-            .modified()
-            .ok()
-            .and_then(|m| SystemTime::now().duration_since(m).ok())
-            .map(|age| age < max_age)
-            .unwrap_or(false);
-        if fresh {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                return text.trim().parse::<usize>().ok();
-            }
+    let (value, fresh) = read_cache(&path, max_age);
+    if !fresh {
+        refresh_in_background(path, max_age);
+    }
+    value
+}
+
+fn read_cache(path: &std::path::Path, max_age: Duration) -> (Option<usize>, bool) {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return (None, false);
+    };
+    let fresh = meta
+        .modified()
+        .ok()
+        .and_then(|m| SystemTime::now().duration_since(m).ok())
+        .is_some_and(|age| age < max_age);
+    let value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| text.trim().parse::<usize>().ok());
+    (value, fresh && value.is_some())
+}
+
+/// Whether a refresh may start now: none running, and the last one started
+/// at least `max(max_age, 60 s)` ago, so a failing query is not retried on
+/// every redraw.
+fn may_start(last: Option<std::time::Instant>, now: std::time::Instant, max_age: Duration) -> bool {
+    let gap = max_age.max(Duration::from_secs(60));
+    last.map_or(true, |at| now.saturating_duration_since(at) >= gap)
+}
+
+fn refresh_in_background(path: PathBuf, max_age: Duration) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let now = std::time::Instant::now();
+    {
+        let Ok(mut last) = LAST.lock() else {
+            return;
+        };
+        if !may_start(*last, now, max_age) || RUNNING.swap(true, Ordering::AcqRel) {
+            return;
         }
+        *last = Some(now);
     }
-    let count = query()?;
-    // Write the new value; a failure to cache is not worth reporting.
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    let spawned = std::thread::Builder::new()
+        .name("nirubar-updates".into())
+        .spawn(move || {
+            if let Some(count) = query() {
+                // Written whole and renamed: another bar never reads half a
+                // number. A failure to cache is not worth reporting.
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+                if std::fs::write(&tmp, count.to_string()).is_ok()
+                    && std::fs::rename(&tmp, &path).is_err()
+                {
+                    let _ = std::fs::remove_file(&tmp);
+                }
+            }
+            RUNNING.store(false, Ordering::Release);
+            crate::wake_update();
+        });
+    if spawned.is_err() {
+        RUNNING.store(false, Ordering::Release);
     }
-    let _ = std::fs::write(&path, count.to_string());
-    Some(count)
 }
 
 /// Format the module text: ` 3 updates`, ` 1 update`, or empty at zero.
@@ -161,6 +212,41 @@ mod tests {
             m,
             Manager::Xbps | Manager::Pacman | Manager::Apt | Manager::Unknown
         ));
+    }
+
+    #[test]
+    fn a_refresh_is_not_retried_on_every_redraw() {
+        let now = std::time::Instant::now();
+        let thirty = Duration::from_secs(1800);
+        assert!(may_start(None, now, thirty));
+        assert!(!may_start(Some(now), now + Duration::from_secs(5), thirty));
+        assert!(may_start(Some(now), now + thirty, thirty));
+        // 0 minutes still waits a minute between queries.
+        assert!(!may_start(
+            Some(now),
+            now + Duration::from_secs(30),
+            Duration::ZERO
+        ));
+        assert!(may_start(
+            Some(now),
+            now + Duration::from_secs(60),
+            Duration::ZERO
+        ));
+    }
+
+    #[test]
+    fn the_cache_is_read_without_a_query() {
+        let dir = std::env::temp_dir().join(format!("nirubar-upd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("updates");
+        assert_eq!(read_cache(&file, Duration::from_secs(60)), (None, false));
+        std::fs::write(&file, "7").unwrap();
+        assert_eq!(read_cache(&file, Duration::from_secs(60)), (Some(7), true));
+        // Stale: the old value is still shown while a refresh runs.
+        assert_eq!(read_cache(&file, Duration::ZERO), (Some(7), false));
+        std::fs::write(&file, "junk").unwrap();
+        assert_eq!(read_cache(&file, Duration::from_secs(60)), (None, false));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
