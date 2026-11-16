@@ -566,7 +566,7 @@ impl Config {
         Self::from_text(&text)
     }
 
-    fn from_text(text: &str) -> Result<Self> {
+    pub(crate) fn from_text(text: &str) -> Result<Self> {
         let value: toml::Value = text.parse()?;
         let mut c: Self = value.clone().try_into()?;
         apply_appearance_defaults(&mut c, &value);

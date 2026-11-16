@@ -381,7 +381,8 @@ mod cache_tests {
 
     /// The cache tests share process-wide environment variables, so they run
     /// one at a time instead of overwriting each other's HOME.
-    static LOCK: Mutex<()> = Mutex::new(());
+    /// Held by every test that points HOME at its own directory.
+    pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
     struct Sandbox {
         dir: std::path::PathBuf,
@@ -466,6 +467,10 @@ mod live_tests {
     /// request. This is the path the bar takes on every redraw.
     #[test]
     fn the_bar_reads_the_cached_answer() {
+        // HOME is shared by the whole test process: the cache tests change it too.
+        let _guard = super::cache_tests::LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("nux-live-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".local/share/nirux/generations/0.12.1-X")).unwrap();

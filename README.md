@@ -124,9 +124,24 @@ The full module and panel reference is in
 nirubar --check-config   # validate the [bar] settings
 nirubar --reset-config   # only [bar] back to the defaults (NIRUWM's template with comments), then reload; undo with niructl config undo
 nirubar --version
+nirubar --modules                    # the modules on the bar, in order
+nirubar --modules all                # every module: name, on/off, what it shows
+nirubar --modules add pulse 3        # add a module (last, or at a position)
+nirubar --modules remove pulse       # also: toggle NAME
+nirubar --modules move clock up      # up, down, first, last or a position
+nirubar --modules default            # the NIRUX list again, followed by updates
+nirubar --settings                   # position, title, icons, date, time, tray, popups
+nirubar --set position bottom        # change one of them
 niructl restart-bar      # restart all bars
 niructl bar top|bottom|hide|show|toggle
 ```
+
+`--modules` and `--set` edit `[bar]` in the shared file and keep its comments
+and every other key; the whole file must still load before it is replaced, and
+the session reloads at once (`niructl config undo` goes back). A list arranged
+this way is your own: `follow_default_modules` becomes `false`, so `nirux
+update` keeps it. NIRULAUNCHER's Bar view (`nirulauncher --bar`, also under
+NIRUX Settings) does the same with the keyboard.
 
 ## Configuration
 

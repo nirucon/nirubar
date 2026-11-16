@@ -16,6 +16,7 @@ mod calendar;
 mod config;
 mod dictation;
 mod disk;
+mod editor;
 mod helpers;
 mod ics;
 mod layout;
@@ -2700,6 +2701,95 @@ fn niructl_has_config(niructl: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+/// `nirubar --modules ...`, `--settings` and `--set KEY VALUE`; the exit code.
+fn arrange(args: &[String]) -> i32 {
+    let fail = |e: &dyn std::fmt::Display, code: i32| {
+        eprintln!("nirubar: {e}");
+        code
+    };
+    let (text, modules) = match editor::read() {
+        Ok(read) => read,
+        Err(e) => return fail(&e, 1),
+    };
+    let rest = &args[1..];
+    let new_text = match args[0].as_str() {
+        "--modules" if rest.is_empty() => {
+            for module in &modules {
+                println!("{module}");
+            }
+            return 0;
+        }
+        "--modules" if rest.len() == 1 && rest[0] == "all" => {
+            for line in editor::all_lines(&modules) {
+                println!("{line}");
+            }
+            return 0;
+        }
+        "--modules" => {
+            let change = match editor::parse_change(rest) {
+                Ok(change) => change,
+                Err(e) => return fail(&e, 2),
+            };
+            let list = match editor::apply(&modules, &change) {
+                Ok(list) => list,
+                Err(e) => return fail(&e, 1),
+            };
+            let follow = change == editor::Change::Default;
+            editor::with_modules(&text, &list, follow)
+        }
+        "--settings" if rest.is_empty() => {
+            match Config::from_text(&text) {
+                Ok(config) => {
+                    for line in editor::settings_lines(&config) {
+                        println!("{line}");
+                    }
+                }
+                Err(e) => return fail(&e, 1),
+            }
+            return 0;
+        }
+        "--set" if rest.len() == 2 => editor::with_setting(&text, &rest[0], &rest[1]),
+        _ => return fail(&editor::USAGE, 2),
+    };
+    let new_text = match new_text {
+        Ok(text) => text,
+        Err(e) => return fail(&e, 1),
+    };
+    if new_text == text {
+        return 0;
+    }
+    if let Err(e) = editor::write(&new_text) {
+        return fail(&e, 1);
+    }
+    if !reload_session() {
+        println!("Saved; no session is running, so the bar uses it at the next start.");
+    }
+    0
+}
+
+/// Apply a saved change: NIRUWM's reload when it runs (it places the bars
+/// again for a new edge and keeps the old file in its settings history), else
+/// the bars' own reload signal. False when neither reached a session.
+fn reload_session() -> bool {
+    let niructl = std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(|d| std::path::Path::new(d).join("niructl"))
+        .find(|p| p.is_file());
+    if let Some(niructl) = niructl {
+        let done = std::process::Command::new(niructl)
+            .arg("reload")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if done {
+            return true;
+        }
+    }
+    signal_config_reload().is_ok()
+}
+
 fn signal_config_reload() -> Result<()> {
     let (c, s) = x11rb::connect(None)?;
     let root = c.setup().roots[s].root;
@@ -2792,6 +2882,9 @@ fn main() {
             }
         }
     }
+    if arg == "--modules" || arg == "--set" || arg == "--settings" {
+        std::process::exit(arrange(&args));
+    }
     if arg == "--check-config" {
         match Config::load().and_then(|c| Theme::load(&c.theme).map(|t| (c, t))) {
             Ok((c, t)) => {
@@ -2825,7 +2918,7 @@ fn main() {
         }
     };
     if monitor.is_none() && !args.is_empty() && !args.iter().any(|a| a == "--position") {
-        eprintln!("Usage: nirubar [--version|--check-config|--reset-config|--toggle-title] [--monitor X,Y,W[,H,NAME]] [--position top|bottom]");
+        eprintln!("Usage: nirubar [--version|--check-config|--reset-config|--toggle-title|--modules ...|--settings|--set KEY VALUE] [--monitor X,Y,W[,H,NAME]] [--position top|bottom]");
         std::process::exit(2)
     }
     if let Err(e) = Bar::new(monitor, edge).and_then(|mut b| b.run()) {

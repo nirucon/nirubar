@@ -12,6 +12,7 @@
 //! changed glyphs.
 use crate::config::{Config, Result};
 use ab_glyph::{point, Font, FontArc, PxScale, ScaleFont};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use x11rb::{connection::Connection, protocol::xproto::*, rust_connection::RustConnection};
 
@@ -44,6 +45,8 @@ pub struct Renderer {
     back_width: u16,
     pub height: u16,
     masks: HashMap<char, Mask>,
+    /// Cells each icon glyph takes (see `cells`), measured once per glyph.
+    icon_cells: RefCell<HashMap<char, i16>>,
     /// True when `back` is a window rather than a pixmap.
     direct: bool,
 }
@@ -132,6 +135,7 @@ impl Renderer {
             back_width: width.max(1),
             height: cfg.bar_height,
             masks: HashMap::new(),
+            icon_cells: RefCell::new(HashMap::new()),
             direct: target.is_some(),
         })
     }
@@ -165,10 +169,52 @@ impl Renderer {
         Ok(())
     }
 
+    /// Width of `text` on the bar: one cell per character, two for a wide icon.
     pub fn width(&self, text: &str) -> i16 {
-        i16::try_from(text.chars().count())
-            .unwrap_or(i16::MAX)
-            .saturating_mul(self.advance)
+        text.chars()
+            .filter(|ch| !ch.is_control())
+            .fold(0i16, |w, ch| {
+                w.saturating_add(self.cells(ch).saturating_mul(self.advance))
+            })
+    }
+
+    /// The font that draws `ch`, and its glyph there.
+    fn font_for(&self, ch: char) -> (&FontArc, ab_glyph::GlyphId) {
+        if self.font.glyph_id(ch).0 != 0 {
+            return (&self.font, self.font.glyph_id(ch));
+        }
+        match &self.fallback {
+            Some(f) if f.glyph_id(ch).0 != 0 => (f, f.glyph_id(ch)),
+            _ => (&self.font, self.font.glyph_id(ch)),
+        }
+    }
+
+    /// Cells a character takes on the bar.
+    ///
+    /// Text is one cell. Nerd Font icons (Private Use Areas) vary: many Font
+    /// Awesome glyphs, such as the desktop, the grid and the sun, are wider
+    /// than a cell, and drawn from the cell's left edge they cover the space
+    /// after them, so the text seemed glued to the icon. An icon whose ink is
+    /// clearly wider than a cell takes two cells and is centred in them,
+    /// which leaves about the same gap after it as after a narrow icon. The
+    /// width is measured on the installed font, so it holds for any Nerd Font
+    /// version and on every distribution.
+    pub fn cells(&self, ch: char) -> i16 {
+        let icon = matches!(u32::from(ch), 0xE000..=0xF8FF | 0xF0000..=0x10FFFD);
+        if !icon {
+            return 1;
+        }
+        if let Some(n) = self.icon_cells.borrow().get(&ch) {
+            return *n;
+        }
+        let (font, id) = self.font_for(ch);
+        let ink = font
+            .outline_glyph(id.with_scale(self.size))
+            .map(|o| o.px_bounds().width())
+            .unwrap_or(0.0);
+        let n = wide_cells(ink, self.advance);
+        self.icon_cells.borrow_mut().insert(ch, n);
+        n
     }
 
     /// Paint the whole bar background.
@@ -218,8 +264,9 @@ impl Renderer {
         background: u32,
     ) -> Result<i16> {
         let baseline = self.centred_baseline();
+        let span = self.cells(ch).saturating_mul(self.advance);
         let mask = self.mask(ch).clone();
-        let offset = (i32::from(self.advance) - i32::from(mask.width)) / 2 - i32::from(mask.x);
+        let offset = (i32::from(span) - i32::from(mask.width)) / 2 - i32::from(mask.x);
         self.blend(
             c,
             gc,
@@ -229,7 +276,7 @@ impl Renderer {
             colour,
             background,
         )?;
-        Ok(x.saturating_add(self.advance))
+        Ok(x.saturating_add(span))
     }
 
     /// Draw one line of text with its baseline at `baseline`.
@@ -290,15 +337,24 @@ impl Renderer {
             if ch.is_control() {
                 continue;
             }
-            if pen.saturating_add(self.advance) > clip_to {
+            let cells = self.cells(ch);
+            let span = cells.saturating_mul(self.advance);
+            if pen.saturating_add(span) > clip_to {
                 break;
             }
             // Clone the mask so the renderer can be borrowed immutably while
             // blending. Glyph masks are tiny (a few hundred bytes) and this
             // only runs for characters actually drawn.
             let mask = self.mask(ch).clone();
-            self.blend(c, gc, &mask, pen, baseline, colour, background)?;
-            pen = pen.saturating_add(self.advance);
+            // A wide icon is centred in its two cells.
+            let at = if cells > 1 {
+                let offset = (i32::from(span) - i32::from(mask.width)) / 2 - i32::from(mask.x);
+                pen.saturating_add(offset as i16)
+            } else {
+                pen
+            };
+            self.blend(c, gc, &mask, at, baseline, colour, background)?;
+            pen = pen.saturating_add(span);
         }
         Ok(pen)
     }
@@ -432,14 +488,7 @@ impl Renderer {
                 y: 0,
                 coverage: Vec::new(),
             };
-            let (font, id) = if self.font.glyph_id(ch).0 != 0 {
-                (&self.font, self.font.glyph_id(ch))
-            } else {
-                match &self.fallback {
-                    Some(f) if f.glyph_id(ch).0 != 0 => (f, f.glyph_id(ch)),
-                    _ => (&self.font, self.font.glyph_id(ch)),
-                }
-            };
+            let (font, id) = self.font_for(ch);
             // Rasterise on the baseline at (0, 0). `outline.draw` yields
             // coverage samples indexed from the glyph's own top-left corner,
             // while `px_bounds` says where that corner sits relative to the
@@ -542,6 +591,16 @@ impl Renderer {
             )?;
         }
         Ok(())
+    }
+}
+
+/// Two cells for an icon whose ink is more than a tenth wider than a cell.
+fn wide_cells(ink: f32, advance: i16) -> i16 {
+    let cell = f32::from(advance.max(1));
+    if ink > cell * 1.1 {
+        2
+    } else {
+        1
     }
 }
 
@@ -653,6 +712,15 @@ fn font_from(bytes: Vec<u8>) -> crate::Result<FontArc> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_wide_icon_takes_two_cells() {
+        assert_eq!(super::wide_cells(0.0, 10), 1);
+        assert_eq!(super::wide_cells(9.0, 10), 1);
+        assert_eq!(super::wide_cells(11.0, 10), 1);
+        assert_eq!(super::wide_cells(11.5, 10), 2);
+        assert_eq!(super::wide_cells(15.0, 10), 2);
+    }
+
     #[test]
     fn split_extracts_channels() {
         let (r, g, b) = super::split(0x0f1a2b);
