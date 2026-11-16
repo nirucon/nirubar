@@ -38,6 +38,9 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 | `dnd` | Bell or slashed bell; left click toggles DND, right click opens Quick Settings |
 | `notifications` | NIRUNOTIFY history count; click for recent notifications |
 | `disk` | Hidden until `/` or `$HOME` (listed once when they share a filesystem) is at least `disk_warn` percent used, measured like `df` every 60 seconds off the drawing thread. Then a disk mark and the fullest percentage in the warning colour, e.g. `93%`. The panel lists used, free and total space per filesystem; a click on it (or Return) opens your `terminal` running `nirux clean`, which shows what can be freed and asks once |
+| `drives` | Removable drives (USB sticks, SD cards, external disks) from UDisks2, read with one D-Bus call every 3 seconds; hidden while none is attached. One drive shows its label, several a count. The panel lists label, size, mount point and free space. Middle click (or Return in the panel) mounts the first drive if needed and opens it with `xdg-open`; right click ejects all of them safely: unmounted (which waits for writing to finish), then powered off, with a notification "LABEL can be removed" or why not (for example a file still open). A drive with a filesystem in `/etc/fstab` or `/etc/crypttab`, or mounted outside `/media`, is the system's and never listed. Also `nirubar --drives list\|open\|eject` |
+| `timer` | Focus and egg timer. Idle it is an hourglass; scroll sets the length (1-minute steps below 5, 5 up to 60, 15 above, at most 180), shown for a moment; right click starts, pauses and resumes; middle click resets. Running it shows the time left, e.g. `24:13`, repainted once a second only while it runs. At the end: a notification that stays and a short sound. Scroll while it runs adds or takes a minute. Every bar shows the same timer, and it survives a bar restart (state in `$XDG_RUNTIME_DIR`). Settings in `[timer]`, see below. Also `nirubar --timer status\|start\|pause\|toggle\|reset\|set MINUTES` for key bindings |
+| `headset` | Battery of connected Bluetooth devices from BlueZ (`org.bluez.Battery1`, read every 20 seconds); hidden when no connected device reports one. Shows the lowest, e.g. `64%`; at 15 % or less it turns red and one notification is shown per device until it is charged above 20 %. The panel lists every device; middle click opens the Bluetooth devices. The `bluetooth` panel also shows each device's battery |
 | `quicksettings` | Gear entry that opens Quick Settings in the launcher |
 | `share` | NIRUSHARE entry; opens the inbox with `nirulauncher --share` |
 | `nirusec` | NIRUSEC state mark from its shared cache (refreshed with `nirusec --check --if-stale 300`) |
@@ -48,6 +51,23 @@ The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `~/.cache/nirubar/updates` for `update_check_minutes`. When the bar also has
 `niruxupdate`, `updates` shows only the package count, so a NIRUX release is
 not announced twice.
+
+## Timer
+
+The `timer` module reads `[timer]` from NIRUBAR's own
+`~/.config/nirubar/config.toml` (not the shared file, so NIRUWM's check never
+sees it):
+
+```toml
+[timer]
+minutes = 25    # the length a reset timer starts with, 1 to 180
+sound = true    # a short sound at the end (pw-play or paplay)
+dnd = false     # Do Not Disturb while it runs, put back afterwards
+```
+
+`dnd = true` turns Do Not Disturb on with `niructl dnd on` when the timer
+starts, but only if it was off, and turns it off again when the timer ends or
+is reset. `nirubar --check-config` reports an entry it ignores.
 
 ## Disk warning threshold
 

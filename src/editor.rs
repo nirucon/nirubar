@@ -45,6 +45,12 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("dnd", "Do Not Disturb"),
     ("notifications", "Notification history"),
     ("disk", "A warning when the disk is nearly full"),
+    (
+        "drives",
+        "USB sticks and SD cards: open and eject; hidden without one",
+    ),
+    ("timer", "Focus and egg timer"),
+    ("headset", "Battery of connected Bluetooth devices"),
     ("pulse", "CPU and memory"),
     ("uptime", "Time since start"),
     ("sun", "Sunrise and sunset"),

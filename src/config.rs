@@ -63,6 +63,11 @@ pub struct Config {
     pub swallow: toml::Value,
     /// NIRUWM-only studio mode (`[studio]`, NIRUWM 0.20.0).
     pub studio: toml::Value,
+    /// NIRUWM-only picture-in-picture (`[pip]`, NIRUWM 0.32.0).
+    pub pip: toml::Value,
+    /// NIRUWM-only: no gaps or border with one tiled window (NIRUWM 0.32.0).
+    /// Accepted so the shared file loads; the bar does not use it.
+    pub smart_gaps: bool,
     /// NIRUWM-only window rules.
     pub rules: Vec<toml::Value>,
     /// The `sun` module's location: degrees, north and east positive. Set both
@@ -247,6 +252,8 @@ impl Default for Config {
             scratchpad: toml::Value::Table(Default::default()),
             swallow: toml::Value::Table(Default::default()),
             studio: toml::Value::Table(Default::default()),
+            pip: toml::Value::Table(Default::default()),
+            smart_gaps: true,
             rules: Vec::new(),
             popup_timeouts: Default::default(),
         }
@@ -1389,6 +1396,20 @@ mod tests {
         )
         .expect("[studio] belongs to NIRUWM and must not stop the bar");
         assert!(cfg.studio.get("auto_enable").is_some());
+    }
+
+    #[test]
+    fn the_window_manager_pip_table_and_smart_gaps_are_accepted() {
+        let cfg: Config = toml::from_str(
+            "smart_gaps = false\n[pip]\nsize = 25\ncorner = \"bottom-right\"\nauto = true\n",
+        )
+        .expect("[pip] and smart_gaps belong to NIRUWM and must not stop the bar");
+        assert!(!cfg.smart_gaps);
+        assert_eq!(
+            cfg.pip.get("corner").and_then(|v| v.as_str()),
+            Some("bottom-right")
+        );
+        assert!(Config::default().smart_gaps);
     }
 
     #[test]

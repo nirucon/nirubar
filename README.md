@@ -112,6 +112,9 @@ Add, remove or reorder modules in `[bar] modules`:
 | `share`, `nirusec` | NIRUSHARE inbox entry; NIRUSEC state mark |
 | `dnd`, `notifications` | Do Not Disturb toggle; notification history |
 | `disk` | Red disk mark and percentage, only while `/` or your home is at least `disk_warn` (90) percent full; click for used/free space and a clean-up with `nirux clean` |
+| `drives` | USB sticks, SD cards and external disks, only while one is attached; middle-click opens, right-click ejects all safely |
+| `timer` | Focus and egg timer; scroll sets minutes, right-click start/pause, middle-click reset, a notice and a sound at the end |
+| `headset` | Battery of connected Bluetooth devices (headsets, mice); red and one notice at 15 % or less |
 | `quicksettings` | Gear that opens Quick Settings (volume, Wi-Fi, Bluetooth, displays, power, theme, DND, idle, lock) |
 | `clock` | Date and time; click for a Monday-first calendar with ISO week numbers and, when configured, calendar events |
 
@@ -132,6 +135,8 @@ nirubar --modules move clock up      # up, down, first, last or a position
 nirubar --modules default            # the NIRUX list again, followed by updates
 nirubar --settings                   # position, title, icons, date, time, tray, popups
 nirubar --set position bottom        # change one of them
+nirubar --timer start                # also status, pause, toggle, reset, set MINUTES
+nirubar --drives eject               # also list, open
 niructl restart-bar      # restart all bars
 niructl bar top|bottom|hide|show|toggle
 ```

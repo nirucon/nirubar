@@ -206,6 +206,11 @@ position = "top"
 #               the battery health, charge cycles and a 24 h charge graph
 #   disk        red disk mark and percentage, only while / or your home is
 #               at least `disk_warn` percent full; click to clean up
+#   drives      USB sticks and SD cards; hidden without one; middle-click
+#               opens, right-click ejects all safely
+#   timer       focus and egg timer: scroll sets, right-click starts/pauses,
+#               middle-click resets; [timer] in ~/.config/nirubar/config.toml
+#   headset     battery of connected Bluetooth devices; red at 15 % or less
 #   clock       date and time
 #
 # `volume` and `media` need wpctl (or amixer) and playerctl. `pactl` is optional:

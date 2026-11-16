@@ -1643,6 +1643,157 @@ impl Module for Disk {
     }
 }
 
+/// Removable drives (USB sticks, SD cards, external disks). Hidden while
+/// none is attached. Opening and ejecting run in `nirubar --drives`, a
+/// process of their own, so a busy drive never holds the bar.
+pub struct Drives {
+    pub icons: status::Icons,
+    monitor: crate::drives::Monitor,
+}
+
+impl Drives {
+    pub fn new(icons: status::Icons) -> Self {
+        Self {
+            icons,
+            monitor: crate::drives::Monitor::new(),
+        }
+    }
+}
+
+fn self_command(args: &[&str]) -> Option<(String, Vec<String>)> {
+    let exe = std::env::current_exe().ok()?;
+    Some((
+        exe.to_string_lossy().into_owned(),
+        args.iter().map(|a| a.to_string()).collect(),
+    ))
+}
+
+impl Module for Drives {
+    fn name(&self) -> &'static str {
+        "drives"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::drives::text(&self.monitor.volumes(), self.icons.drives)
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Drives".into(),
+            crate::drives::detail(&self.monitor.volumes()),
+        ))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Right => Some(Control::ui(
+                "drives-eject",
+                self_command(&["--drives", "eject"]),
+            )),
+            Input::Middle => Some(Control::ui(
+                "drives-open",
+                self_command(&["--drives", "open"]),
+            )),
+            _ => None,
+        }
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "drives-open",
+            self_command(&["--drives", "open"]),
+        ))
+    }
+}
+
+/// Focus and egg timer; the state is shared by every bar (see `timer.rs`).
+pub struct TimerModule {
+    pub icons: status::Icons,
+    timer: crate::timer::Timer,
+}
+
+impl Module for TimerModule {
+    fn name(&self) -> &'static str {
+        "timer"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        self.timer.text(self.icons.timer, self.icons.pause)
+    }
+    fn tint(&self) -> Tint {
+        if self.timer.running() {
+            Tint::Accent
+        } else {
+            Tint::Normal
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some(("Timer".into(), self.timer.detail()))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        use crate::timer::Action;
+        let action = match input {
+            Input::Right => Action::Toggle,
+            Input::Middle => Action::Reset,
+            Input::ScrollUp => Action::Longer,
+            Input::ScrollDown => Action::Shorter,
+        };
+        crate::timer::act(action, &self.timer.settings);
+        if matches!(input, Input::ScrollUp | Input::ScrollDown) {
+            self.timer.adjusted = Some(Instant::now());
+        }
+        // A small file write; the bar repaints right after.
+        None
+    }
+}
+
+/// Battery of connected Bluetooth devices; hidden without one.
+pub struct Headset {
+    pub icons: status::Icons,
+    monitor: crate::headset::Monitor,
+}
+
+impl Module for Headset {
+    fn name(&self) -> &'static str {
+        "headset"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::headset::text(&self.monitor.devices(), self.icons.headset)
+    }
+    fn tint(&self) -> Tint {
+        if crate::headset::low(&self.monitor.devices()) {
+            Tint::Alert
+        } else {
+            Tint::Normal
+        }
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Device batteries".into(),
+            crate::headset::detail(&self.monitor.devices()),
+        ))
+    }
+    fn control(&mut self, input: Input) -> Option<Control> {
+        match input {
+            Input::Middle => Some(Control::ui(
+                "bluetooth-selector",
+                Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
+            )),
+            _ => None,
+        }
+    }
+    fn controls(&self) -> Option<Control> {
+        Some(Control::ui(
+            "bluetooth-controls",
+            Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
+        ))
+    }
+}
+
 /// A newer NIRUX release than the one installed.
 ///
 /// Silent when there is nothing to say, so the bar looks the same on a machine
@@ -2371,6 +2522,15 @@ pub fn build(
                 warn: cfg.disk_warn,
                 terminal: full.terminal.clone(),
             })),
+            "drives" => out.push(Box::new(Drives::new(icons))),
+            "timer" => out.push(Box::new(TimerModule {
+                icons,
+                timer: crate::timer::Timer::new(),
+            })),
+            "headset" => out.push(Box::new(Headset {
+                icons,
+                monitor: crate::headset::Monitor::new(),
+            })),
             "volume" => out.push(Box::new(Volume::new(cfg.volume_icons()))),
             "powerprofile" => out.push(Box::new(PowerProfile {
                 icons,
@@ -2664,6 +2824,9 @@ mod tests {
                         | "recording"
                         | "niruxupdate"
                         | "disk"
+                        | "drives"
+                        | "timer"
+                        | "headset"
                 ),
                 "example config names an unknown module {name:?}"
             );

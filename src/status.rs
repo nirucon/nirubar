@@ -74,6 +74,14 @@ pub struct Icons {
     pub scratchpad: &'static str,
     /// The disk space warning: a hard disk.
     pub disk: &'static str,
+    /// Removable drives: a USB plug.
+    pub drives: &'static str,
+    /// The focus timer: an hourglass.
+    pub timer: &'static str,
+    /// A paused timer.
+    pub pause: &'static str,
+    /// Bluetooth device battery: headphones.
+    pub headset: &'static str,
 }
 
 impl Icons {
@@ -119,6 +127,10 @@ impl Icons {
             download: "\u{f019}", // nf-fa-download
             scratchpad: "\u{f120}", // nf-fa-terminal
             disk: "\u{f0a0}",    // nf-fa-hdd_o
+            drives: "\u{f287}",  // nf-fa-usb
+            timer: "\u{f252}",   // nf-fa-hourglass_half
+            pause: "\u{f04c}",   // nf-fa-pause
+            headset: "\u{f025}", // nf-fa-headphones
         }
     }
 
@@ -159,6 +171,10 @@ impl Icons {
             download: "new",
             scratchpad: ">_",
             disk: "disk",
+            drives: "usb",
+            timer: "tmr",
+            pause: "||",
+            headset: "hs",
         }
     }
 }

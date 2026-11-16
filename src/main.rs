@@ -16,7 +16,9 @@ mod calendar;
 mod config;
 mod dictation;
 mod disk;
+mod drives;
 mod editor;
+mod headset;
 mod helpers;
 mod ics;
 mod layout;
@@ -24,6 +26,7 @@ mod media_monitor;
 mod microphone;
 mod module;
 mod nirux_update;
+mod objects;
 mod popup;
 mod popup_timeout;
 mod powerprofile;
@@ -38,6 +41,7 @@ mod scroll;
 mod sni;
 mod status;
 mod tailscale;
+mod timer;
 mod tray;
 mod tz;
 mod updates;
@@ -386,6 +390,11 @@ fn module_priority(name: &str) -> i32 {
         "battery" => 90,
         // Empty unless a disk is nearly full; then it must stay visible.
         "disk" => 88,
+        // Empty unless a drive is attached / a device battery reports.
+        "drives" => 86,
+        "headset" => 81,
+        // Running, it is what you are watching.
+        "timer" => 73,
         "network" => 85,
         "volume" => 80,
         "bluetooth" => 84,
@@ -2678,6 +2687,26 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             plain.scratchpad
         },
         disk: if ok(nerd.disk) { nerd.disk } else { plain.disk },
+        drives: if ok(nerd.drives) {
+            nerd.drives
+        } else {
+            plain.drives
+        },
+        timer: if ok(nerd.timer) {
+            nerd.timer
+        } else {
+            plain.timer
+        },
+        pause: if ok(nerd.pause) {
+            nerd.pause
+        } else {
+            plain.pause
+        },
+        headset: if ok(nerd.headset) {
+            nerd.headset
+        } else {
+            plain.headset
+        },
         dnd_off: if ok(nerd.dnd_off) {
             nerd.dnd_off
         } else {
@@ -2882,6 +2911,12 @@ fn main() {
             }
         }
     }
+    if arg == "--drives" {
+        std::process::exit(drives::cli(&args[1..]));
+    }
+    if arg == "--timer" {
+        std::process::exit(timer::cli(&args[1..]));
+    }
     if arg == "--modules" || arg == "--set" || arg == "--settings" {
         std::process::exit(arrange(&args));
     }
@@ -2893,6 +2928,9 @@ fn main() {
                     println!("{line}");
                 }
                 for line in calendar::check_lines() {
+                    println!("{line}");
+                }
+                for line in timer::check_lines() {
                     println!("{line}");
                 }
                 return;
@@ -2918,7 +2956,7 @@ fn main() {
         }
     };
     if monitor.is_none() && !args.is_empty() && !args.iter().any(|a| a == "--position") {
-        eprintln!("Usage: nirubar [--version|--check-config|--reset-config|--toggle-title|--modules ...|--settings|--set KEY VALUE] [--monitor X,Y,W[,H,NAME]] [--position top|bottom]");
+        eprintln!("Usage: nirubar [--version|--check-config|--reset-config|--toggle-title|--modules ...|--settings|--set KEY VALUE|--timer ...|--drives ...] [--monitor X,Y,W[,H,NAME]] [--position top|bottom]");
         std::process::exit(2)
     }
     if let Err(e) = Bar::new(monitor, edge).and_then(|mut b| b.run()) {
