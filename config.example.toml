@@ -231,10 +231,13 @@ position = "top"
 # Add "layout" for the current NIRUWM layout; click it to list all layouts.
 # "updates" shows how many system packages can be upgraded (apt, pacman or
 # xbps-install); it is hidden when there are none.
+# "restart" lists programs that still run from an older NIRUX version after
+# an update (from `nirux stale`); hidden when there are none. Left click runs
+# `nirux stale restart`, right click shows which ones reopen by hand.
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "mode", "battery", "updates", "niruxupdate", "agent", "nirusec", "dnd", "disk", "quicksettings", "share", "clock"]
+modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "mode", "battery", "updates", "niruxupdate", "restart", "agent", "nirusec", "dnd", "disk", "quicksettings", "share", "clock"]
 # `nirux update` keeps `modules` on the NIRUX default list and order, so every
 # machine looks the same. Set this to false to keep your own list.
 follow_default_modules = true

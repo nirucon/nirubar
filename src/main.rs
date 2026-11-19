@@ -36,6 +36,7 @@ mod pulse;
 mod recording;
 mod reminder;
 mod render;
+mod restart;
 mod scratchpad;
 mod scroll;
 mod sni;
@@ -393,6 +394,8 @@ fn module_priority(name: &str) -> i32 {
         // Empty unless a drive is attached / a device battery reports.
         "drives" => 86,
         "headset" => 81,
+        // Empty unless a program runs from an old NIRUX version.
+        "restart" => 76,
         // Running, it is what you are watching.
         "timer" => 73,
         "network" => 85,
@@ -1676,6 +1679,15 @@ impl Bar {
         Ok(())
     }
 
+    /// Whether the module under `x` opens its panel on a right click.
+    fn panel_on_right_at(&self, x: i16) -> bool {
+        self.placed
+            .iter()
+            .find(|p| p.contains(x))
+            .and_then(|p| self.modules.get(p.index))
+            .is_some_and(|module| module.panel_on_right())
+    }
+
     /// Open the existing control view for a module that has one.
     fn controls(&mut self, index: usize) -> Result<()> {
         let Some(control) = self.modules.get(index).and_then(|module| module.controls()) else {
@@ -1687,8 +1699,13 @@ impl Bar {
             } else {
                 self.helpers.spawn(&control.key, &program, &args)
             };
-            if let Err(error) = result {
-                helpers::notify_failure(&error);
+            match result {
+                Ok(()) => {
+                    if let Some(module) = self.modules.get_mut(index) {
+                        module.controlled();
+                    }
+                }
+                Err(error) => helpers::notify_failure(&error),
             }
         }
         self.last_frame.clear();
@@ -2006,12 +2023,18 @@ impl Bar {
                 matches!(
                     module.name(),
                     "wifi" | "agent" | "share" | "nirusec" | "dnd"
-                )
+                ) || module.panel_on_right()
             }) {
                 self.close_popup()?;
                 return self.controls(index);
             }
         }
+        self.open_panel(x)
+    }
+
+    /// Open the panel of the module under `x` (a left click, or a right click
+    /// on a module whose left click is an action).
+    fn open_panel(&mut self, x: i16) -> Result<()> {
         if !self.cfg.bar.popups {
             return Ok(());
         }
@@ -2333,6 +2356,25 @@ impl Bar {
                             }
                             continue;
                         }
+                    }
+                    // A module whose left click is an action shows its
+                    // panel on a right click, toggled like a left-click panel.
+                    if e.detail == 3 && e.event_x >= 0 && self.panel_on_right_at(e.event_x) {
+                        if let Some(p) = self.popup.take() {
+                            self.sni_menu = None;
+                            let same_module = self
+                                .placed
+                                .iter()
+                                .find(|pl| pl.contains(e.event_x))
+                                .map(|pl| pl.index == p.module)
+                                .unwrap_or(false);
+                            p.destroy(&self.c, self.root)?;
+                            if same_module {
+                                continue;
+                            }
+                        }
+                        self.open_panel(e.event_x)?;
+                        continue;
                     }
                     let control = match e.detail {
                         2 => Some(module::Input::Middle),
@@ -2706,6 +2748,14 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.headset
         } else {
             plain.headset
+        },
+        // Without the Nerd Font glyph, the plain arrow when the font has it.
+        restart: if ok(nerd.restart) {
+            nerd.restart
+        } else if ok("\u{21bb}") {
+            "\u{21bb}"
+        } else {
+            plain.restart
         },
         dnd_off: if ok(nerd.dnd_off) {
             nerd.dnd_off

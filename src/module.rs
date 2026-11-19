@@ -131,6 +131,14 @@ pub trait Module {
     fn controls(&self) -> Option<Control> {
         None
     }
+    /// Called after `controls` started its command (a click, Return or the
+    /// panel footer), so the module can look again sooner.
+    fn controlled(&mut self) {}
+    /// A left click runs `controls` directly, and a right click opens the
+    /// panel instead.
+    fn panel_on_right(&self) -> bool {
+        false
+    }
 }
 
 /// A workspace cell. Kept separate from the text modules because the bar draws
@@ -1794,6 +1802,50 @@ impl Module for Headset {
     }
 }
 
+/// Programs that still run from an older NIRUX version; hidden when none.
+///
+/// A left click runs `nirux stale restart` (it restarts the ones NIRUX can
+/// and names the ones to reopen); a right click opens the list.
+pub struct Restart {
+    pub icons: status::Icons,
+    monitor: crate::restart::Monitor,
+}
+
+impl Module for Restart {
+    fn name(&self) -> &'static str {
+        "restart"
+    }
+    fn side(&self) -> Side {
+        Side::Right
+    }
+    fn render(&mut self) -> String {
+        crate::restart::label(&self.monitor.entries(), self.icons.restart)
+    }
+    fn tint(&self) -> Tint {
+        Tint::Alert
+    }
+    fn popup(&mut self) -> Option<(String, Vec<String>)> {
+        Some((
+            "Restart needed".into(),
+            crate::restart::detail(&self.monitor.entries()),
+        ))
+    }
+    fn controls(&self) -> Option<Control> {
+        // Long-lived: an in-place restart must never be cut off by the short
+        // control timeout. The key keeps a second click from running it twice.
+        Some(Control::ui(
+            "nirux-stale-restart",
+            Some(("nirux".into(), vec!["stale".into(), "restart".into()])),
+        ))
+    }
+    fn controlled(&mut self) {
+        self.monitor.check_in(crate::restart::AFTER_CLICK);
+    }
+    fn panel_on_right(&self) -> bool {
+        true
+    }
+}
+
 /// A newer NIRUX release than the one installed.
 ///
 /// Silent when there is nothing to say, so the bar looks the same on a machine
@@ -2527,6 +2579,10 @@ pub fn build(
                 icons,
                 timer: crate::timer::Timer::new(),
             })),
+            "restart" => out.push(Box::new(Restart {
+                icons,
+                monitor: crate::restart::Monitor::new(),
+            })),
             "headset" => out.push(Box::new(Headset {
                 icons,
                 monitor: crate::headset::Monitor::new(),
@@ -2827,6 +2883,7 @@ mod tests {
                         | "drives"
                         | "timer"
                         | "headset"
+                        | "restart"
                 ),
                 "example config names an unknown module {name:?}"
             );

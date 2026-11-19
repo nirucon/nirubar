@@ -82,6 +82,8 @@ pub struct Icons {
     pub pause: &'static str,
     /// Bluetooth device battery: headphones.
     pub headset: &'static str,
+    /// Programs that need a restart after an update: a circular arrow.
+    pub restart: &'static str,
 }
 
 impl Icons {
@@ -131,6 +133,7 @@ impl Icons {
             timer: "\u{f252}",   // nf-fa-hourglass_half
             pause: "\u{f04c}",   // nf-fa-pause
             headset: "\u{f025}", // nf-fa-headphones
+            restart: "\u{f021}", // nf-fa-refresh
         }
     }
 
@@ -175,6 +178,7 @@ impl Icons {
             timer: "tmr",
             pause: "||",
             headset: "hs",
+            restart: "restart",
         }
     }
 }

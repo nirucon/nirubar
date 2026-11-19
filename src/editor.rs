@@ -39,6 +39,10 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("battery", "Battery charge and state"),
     ("updates", "Available package updates"),
     ("niruxupdate", "A newer NIRUX release"),
+    (
+        "restart",
+        "Programs to restart after a NIRUX update; hidden when none",
+    ),
     ("agent", "OpenCode prompt entry"),
     ("tasks", "NIRU and OpenCode task status"),
     ("nirusec", "NIRUSEC firewall state"),
