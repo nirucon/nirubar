@@ -39,12 +39,13 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 | `notifications` | NIRUNOTIFY history count; click for recent notifications |
 | `disk` | Hidden until `/` or `$HOME` (listed once when they share a filesystem) is at least `disk_warn` percent used, measured like `df` every 60 seconds off the drawing thread. Then a disk mark and the fullest percentage in the warning colour, e.g. `93%`. The panel lists used, free and total space per filesystem; a click on it (or Return) opens your `terminal` running `nirux clean`, which shows what can be freed and asks once |
 | `drives` | Removable drives (USB sticks, SD cards, external disks) from UDisks2, read with one D-Bus call every 3 seconds; hidden while none is attached. One drive shows its label, several a count. The panel lists label, size, mount point and free space. Middle click (or Return in the panel) mounts the first drive if needed and opens it with `xdg-open`; right click ejects all of them safely: unmounted (which waits for writing to finish), then powered off, with a notification "LABEL can be removed" or why not (for example a file still open). A drive with a filesystem in `/etc/fstab` or `/etc/crypttab`, or mounted outside `/media`, is the system's and never listed. Also `nirubar --drives list\|open\|eject` |
-| `timer` | Focus and egg timer. Idle it is an hourglass; scroll sets the length (1-minute steps below 5, 5 up to 60, 15 above, at most 180), shown for a moment; right click starts, pauses and resumes; middle click resets. Running it shows the time left, e.g. `24:13`, repainted once a second only while it runs. At the end: a notification that stays and a short sound. Scroll while it runs adds or takes a minute. Every bar shows the same timer, and it survives a bar restart (state in `$XDG_RUNTIME_DIR`). Settings in `[timer]`, see below. Also `nirubar --timer status\|start\|pause\|toggle\|reset\|set MINUTES` for key bindings |
+| `timer` | Focus and egg timer. Idle it is an hourglass; scroll sets the length (1-minute steps below 5, 5 up to 60, 15 above, at most 180), shown for a moment; right click starts, pauses and resumes; middle click resets. Running it shows the time left, e.g. `24:13`, repainted once a second only while it runs. At the end: a notification that stays and NIRUX's `timer-done` sound (see Sounds below). Scroll while it runs adds or takes a minute. Every bar shows the same timer, and it survives a bar restart (state in `$XDG_RUNTIME_DIR`). Settings in `[timer]`, see below. Also `nirubar --timer status\|start\|pause\|toggle\|reset\|set MINUTES` for key bindings |
 | `headset` | Battery of connected Bluetooth devices from BlueZ (`org.bluez.Battery1`, read every 20 seconds); hidden when no connected device reports one. Shows the lowest, e.g. `64%`; at 15 % or less it turns red and one notification is shown per device until it is charged above 20 %. The panel lists every device; middle click opens the Bluetooth devices. The `bluetooth` panel also shows each device's battery |
 | `quicksettings` | Gear entry that opens Quick Settings in the launcher |
 | `share` | NIRUSHARE entry; opens the inbox with `nirulauncher --share` |
 | `nirusec` | NIRUSEC state mark from its shared cache (refreshed with `nirusec --check --if-stale 300`) |
 | `niruxupdate` | A newer NIRUX release than the installed one, or an installed release that needs a new login; silent otherwise |
+| `restart` | Programs that still run from an older NIRUX version after an update (a browser started before the update, NIRUWM, ...), from `nirux stale --json`. Hidden when there are none (and on a NIRUX without the command). One program shows a circular arrow and its name, e.g. `Helium`; several show the arrow and a count, in the warning colour. Asked off the drawing thread shortly after the bar starts, every 120 seconds and 3 seconds after a click, so it costs nothing while idle. A left click runs `nirux stale restart`: it restarts the programs NIRUX can restart in place and shows a notice for the ones you must close and reopen. A right click opens the panel, which lists each program with "restarts automatically" or "close and reopen it"; Return or a click on the panel's footer runs the restart too |
 
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
@@ -61,13 +62,26 @@ sees it):
 ```toml
 [timer]
 minutes = 25    # the length a reset timer starts with, 1 to 180
-sound = true    # a short sound at the end (pw-play or paplay)
+sound = true    # the timer-done sound at the end
 dnd = false     # Do Not Disturb while it runs, put back afterwards
 ```
 
 `dnd = true` turns Do Not Disturb on with `niructl dnd on` when the timer
 starts, but only if it was off, and turns it off again when the timer ends or
 is reset. `nirubar --check-config` reports an entry it ignores.
+
+### Sounds
+
+A finished timer plays NIRUX's `timer-done` sound and a calendar reminder
+plays `reminder` (both in the `notifications` category, on by default; turn
+them off or change them with `nirux sounds`). The bar plays them with
+`nirux sounds play EVENT`, so the sound settings, volume and mute apply. The
+notification itself carries the standard `suppress-sound` hint, so the
+notification service does not add its own notification sound: one event, one
+sound. A reminder is silent while Do Not Disturb is on, like other
+notifications; several reminders due at once play the sound once. Without
+`nirux` the timer falls back to the freedesktop alarm sound (`pw-play` or
+`paplay`), and an older NIRUX that does not know the event stays silent.
 
 ## Disk warning threshold
 
@@ -205,10 +219,12 @@ stay open until dismissed:
 
 | Stays open until dismissed | Closes after `popup_timeout_seconds` |
 | --- | --- |
-| `clock` (calendar), `weather` (rain timeline), `tasks`, `pulse` (load graph), `notifications` (history) | every other panel: `volume`, `microphone`, `network`, `battery`, `bluetooth`, `media`, `powerprofile`, `brightness`, `updates`, `niruxupdate`, `disk`, `uptime`, `display`, `sun`, `tailscale`, `quicksettings`, `mode`, `layout`, `recording`, `dictation`, `privacy`, `scratchpad`, tray menus, the `+N` list |
+| `clock` (calendar), `weather` (rain timeline), `tasks`, `pulse` (load graph), `notifications` (history) | every other panel: `volume`, `microphone`, `network`, `battery`, `bluetooth`, `media`, `powerprofile`, `brightness`, `updates`, `niruxupdate`, `restart`, `disk`, `uptime`, `display`, `sun`, `tailscale`, `quicksettings`, `mode`, `layout`, `recording`, `dictation`, `privacy`, `scratchpad`, tray menus, the `+N` list |
 
 (`wifi`, `agent`, `share`, `nirusec` and `dnd` open their own control
-window on a click rather than a panel, so no timeout applies to them.)
+window on a click rather than a panel, so no timeout applies to them.
+`restart` runs its action on a left click and opens its panel on a right
+click.)
 
 Any panel can have its own timeout in NIRUBAR's own file,
 `~/.config/nirubar/config.toml`. Keys are the names from `[bar] modules`;
@@ -336,6 +352,8 @@ remind_minutes = 15     # optional: this calendar only; 0 turns its reminders of
 - A click works while the bar that sent the reminder runs; after a bar
   restart the notification still shows, but a click only closes it.
 - `nirubar --check-config` lists each calendar's reminder time.
+- A reminder plays NIRUX's `reminder` sound instead of the plain notification
+  sound (see [Sounds](#sounds)).
 
 Supported iCalendar: VEVENT with DATE and DATE-TIME start/end (UTC, TZID or
 floating), DURATION, all-day and multi-day events, line folding and text

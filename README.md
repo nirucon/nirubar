@@ -101,6 +101,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `battery` | Aggregated battery charge and state; the panel adds battery health, charge cycles and a 24 h charge graph |
 | `updates` | Available package upgrades (`apt`, `pacman` or `xbps`) |
 | `niruxupdate` | A newer NIRUX release, or one that needs a new login |
+| `restart` | Programs still running from an older NIRUX version after an update; hidden when none. Left click runs `nirux stale restart`, right click lists which restart automatically and which to reopen |
 | `pulse` | CPU and memory; click for a one-minute graph |
 | `uptime`, `sun`, `weather` | Uptime, sunrise/sunset, cached weather with an eight-hour rain timeline |
 | `mode`, `layout` | Active work mode and NIRUWM's studio mode; current NIRUWM layout |
@@ -113,7 +114,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `dnd`, `notifications` | Do Not Disturb toggle; notification history |
 | `disk` | Red disk mark and percentage, only while `/` or your home is at least `disk_warn` (90) percent full; click for used/free space and a clean-up with `nirux clean` |
 | `drives` | USB sticks, SD cards and external disks, only while one is attached; middle-click opens, right-click ejects all safely |
-| `timer` | Focus and egg timer; scroll sets minutes, right-click start/pause, middle-click reset, a notice and a sound at the end |
+| `timer` | Focus and egg timer; scroll sets minutes, right-click start/pause, middle-click reset, a notice and the `timer-done` sound at the end |
 | `headset` | Battery of connected Bluetooth devices (headsets, mice); red and one notice at 15 % or less |
 | `quicksettings` | Gear that opens Quick Settings (volume, Wi-Fi, Bluetooth, displays, power, theme, DND, idle, lock) |
 | `clock` | Date and time; click for a Monday-first calendar with ISO week numbers and, when configured, calendar events |
@@ -210,7 +211,7 @@ Calendar events are opt-in too: put ICS feed URLs in
 [calendars.example.toml](calendars.example.toml)). The clock popup then marks
 days with events, lists today and the next `days_ahead` days, and opens the
 calendar's page for a clicked day or event in the configured `browser`.
-Timed events get a reminder notification 10 minutes before they start
+Timed events get a reminder notification with the `reminder` sound 10 minutes before they start
 (`remind_minutes` in `calendars.toml`, per calendar or for all, 0 is off). See
 [Calendar events](docs/CONFIGURATION.md#calendar-events). Changes to
 `calendars.toml` take effect within a few seconds on their own, and at once
