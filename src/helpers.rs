@@ -138,6 +138,37 @@ pub(crate) fn notify_failure(detail: &str) {
         .spawn();
 }
 
+/// The freedesktop notification hint (`notify-send -h` form) that asks the
+/// notification service to stay silent: the bar plays a named NIRUX sound for
+/// the event instead, so one event is one sound.
+pub(crate) const SUPPRESS_SOUND: &str = "boolean:suppress-sound:true";
+
+/// Play a NIRUX sound event with `nirux sounds play EVENT`, which follows the
+/// sound settings (on/off, volume, mute) and stays silent for an event an
+/// older NIRUX does not know. Returns false when `nirux` is not installed.
+/// Never waits: the child is reaped on its own thread.
+pub(crate) fn play_nirux_sound(event: &str) -> bool {
+    if cfg!(test) {
+        return true;
+    }
+    let found = std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join("nirux").is_file()))
+        .unwrap_or(false);
+    if !found {
+        return false;
+    }
+    if let Ok(mut child) = Command::new("nirux")
+        .args(["sounds", "play", event])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        std::thread::spawn(move || child.wait());
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::HelperPool;

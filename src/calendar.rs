@@ -866,9 +866,11 @@ impl Calendar {
         let wanted: Vec<(String, i64)> = due.iter().map(|(k, o, _)| (k.clone(), o.0)).collect();
         let fresh =
             crate::reminder::claim(&crate::reminder::state_path(), &wanted, now.timestamp());
+        let mut sound = true;
         for (key, _, notice) in due {
             if fresh.contains(&key) {
-                crate::reminder::send(notice, browser.to_vec());
+                crate::reminder::send(notice, browser.to_vec(), sound);
+                sound = false;
             }
         }
     }

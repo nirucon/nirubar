@@ -331,6 +331,8 @@ fn finish(state: &State, end: u64, settings: &Settings) {
         1 => "1 minute is up".to_string(),
         m => format!("{m} minutes are up"),
     };
+    // The notification stays silent; the timer has its own sound below, so a
+    // finished timer is one sound, not the notification sound and another.
     spawn(
         "notify-send",
         &[
@@ -340,11 +342,15 @@ fn finish(state: &State, end: u64, settings: &Settings) {
             "critical",
             "-i",
             "alarm-symbolic",
+            "-h",
+            crate::helpers::SUPPRESS_SOUND,
             "Timer",
             &body,
         ],
     );
-    if settings.sound {
+    // `timer-done` in NIRUX's sound settings (category notifications). A bar
+    // without NIRUX plays the freedesktop alarm sound instead.
+    if settings.sound && !crate::helpers::play_nirux_sound("timer-done") {
         let sound = [
             "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
             "/usr/share/sounds/freedesktop/stereo/complete.oga",

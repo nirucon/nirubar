@@ -2211,7 +2211,7 @@ fn parse_dnd_status(text: &str) -> Option<bool> {
     }
 }
 
-fn notification_dnd() -> Option<bool> {
+pub(crate) fn notification_dnd() -> Option<bool> {
     // This is the same native provider selected first by niructl dnd, but a
     // direct bounded socket query avoids launching two processes every second.
     // If it is absent, stalled or returns an invalid response, retain niructl's

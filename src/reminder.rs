@@ -135,12 +135,13 @@ pub struct Notice {
 
 /// Show the notification on a short-lived thread: the bar's draw loop never
 /// waits for D-Bus. `browser` is the configured browser command (empty means
-/// `xdg-open`).
-pub fn send(notice: Notice, browser: Vec<String>) {
+/// `xdg-open`). `sound` plays NIRUX's `reminder` sound once it is shown;
+/// several reminders due together ask for it once.
+pub fn send(notice: Notice, browser: Vec<String>, sound: bool) {
     let spawned = std::thread::Builder::new()
         .name("calendar-reminder".into())
         .spawn(move || {
-            if let Err(e) = notify(&notice, &browser) {
+            if let Err(e) = notify(&notice, &browser, sound) {
                 // The error text is about D-Bus, never about the event.
                 eprintln!("nirubar: calendar reminder could not be shown: {e}");
             }
@@ -150,7 +151,7 @@ pub fn send(notice: Notice, browser: Vec<String>) {
     }
 }
 
-fn notify(notice: &Notice, browser: &[String]) -> Result<(), String> {
+fn notify(notice: &Notice, browser: &[String], sound: bool) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -197,6 +198,9 @@ fn notify(notice: &Notice, browser: &[String]) -> Result<(), String> {
             std::collections::HashMap::new();
         hints.insert("urgency", zbus::zvariant::Value::U8(1));
         hints.insert("category", zbus::zvariant::Value::from("x-nirux.calendar"));
+        // The bar plays the `reminder` sound itself (below); the service
+        // stays silent so a reminder is one sound, not two.
+        hints.insert("suppress-sound", zbus::zvariant::Value::Bool(true));
         let reply = tokio::time::timeout(
             Duration::from_secs(5),
             proxy.call_method(
@@ -219,6 +223,11 @@ fn notify(notice: &Notice, browser: &[String]) -> Result<(), String> {
         .map_err(|_| "the notification service did not answer".to_string())?
         .map_err(|e| e.to_string())?;
         let id: u32 = reply.body().deserialize().map_err(|e| e.to_string())?;
+        // Only for a reminder that was shown, and not while Do Not Disturb
+        // keeps notifications quiet.
+        if sound && crate::module::notification_dnd() != Some(true) {
+            crate::helpers::play_nirux_sound("reminder");
+        }
         let (Some(url), Some(actions), Some(closed)) =
             (&notice.open, actions.as_mut(), closed.as_mut())
         else {
