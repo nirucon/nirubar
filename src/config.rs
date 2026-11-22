@@ -675,8 +675,8 @@ impl Config {
         if !["random", "fixed", "single"].contains(&wallpaper.mode.as_str()) {
             return Err("wallpaper.mode must be random, fixed or single".into());
         }
-        if !["fill", "fit", "stretch", "center"].contains(&wallpaper.scale.as_str()) {
-            return Err("wallpaper.scale must be fill, fit, stretch or center".into());
+        if !["smart", "fill", "fit", "stretch", "center"].contains(&wallpaper.scale.as_str()) {
+            return Err("wallpaper.scale must be smart, fill, fit, stretch or center".into());
         }
         if wallpaper.rotation_minutes > 100_000 {
             return Err("wallpaper.rotation_minutes is too large".into());
