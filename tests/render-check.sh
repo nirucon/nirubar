@@ -4,8 +4,8 @@
 # Usage: render-check.sh /path/to/nirubar
 set -eu
 BIN="${1:?path to nirubar binary}"
-export DISPLAY=:99
-Xvfb :99 -screen 0 1280x36x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+export DISPLAY=${XVFB_DISPLAY:-:99}
+Xvfb "$DISPLAY" -screen 0 1280x36x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
 XVFB=$!
 trap 'kill $XVFB 2>/dev/null || :' EXIT INT TERM
 # Wait for the server socket.

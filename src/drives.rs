@@ -1,7 +1,7 @@
 //! Removable drives: USB sticks, SD cards and external disks, from UDisks2.
 //!
-//! The bar samples UDisks2's object manager every few seconds on the
-//! module's own worker (one D-Bus call, no helper process) and shows a mark
+//! The bar samples UDisks2's object manager on the module's own worker (one
+//! D-Bus call, no helper process) when UDisks2 signals a change, and shows a mark
 //! only while something removable is attached. Mounting, opening and ejecting
 //! run in a separate `nirubar --drives ...` process started by an explicit
 //! click, so a slow or busy drive never holds up the bar.
@@ -174,24 +174,39 @@ pub fn read(reader: &mut objects::Reader) -> Option<Vec<Volume>> {
     reader.objects(SERVICE, ROOT).map(|o| volumes(&o))
 }
 
-/// The module's background sampler.
-pub struct Monitor {
-    sample: crate::module::Cached<Vec<Volume>>,
+/// The module's background sampler: UDisks2's signals wake it, and a test
+/// fixture is read every second instead.
+pub enum Monitor {
+    Watched(objects::Watched<Vec<Volume>>),
+    Fixture(crate::module::Cached<Vec<Volume>>),
 }
 
 impl Monitor {
     pub fn new() -> Self {
-        let reader = std::sync::Mutex::new(objects::Reader::new());
-        Self {
-            sample: crate::module::Cached::new(Duration::from_secs(3), move || {
-                let mut reader = reader.lock().ok()?;
-                read(&mut reader)
-            }),
+        if std::env::var_os(FIXTURE).is_some() {
+            let reader = std::sync::Mutex::new(objects::Reader::new());
+            return Self::Fixture(crate::module::Cached::new(
+                Duration::from_secs(1),
+                move || {
+                    let mut reader = reader.lock().ok()?;
+                    read(&mut reader)
+                },
+            ));
         }
+        Self::Watched(objects::Watched::new(
+            SERVICE,
+            ROOT,
+            Duration::from_secs(120),
+            read,
+        ))
     }
 
     pub fn volumes(&self) -> Vec<Volume> {
-        self.sample.get().unwrap_or_default()
+        match self {
+            Self::Watched(sample) => sample.get(),
+            Self::Fixture(sample) => sample.get(),
+        }
+        .unwrap_or_default()
     }
 }
 

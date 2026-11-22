@@ -524,10 +524,13 @@ pub struct Display {
 impl Display {
     fn refresh(&mut self) {
         let now = std::time::Instant::now();
-        if self
-            .checked
-            .map(|then| now.duration_since(then).as_secs() >= 5)
-            .unwrap_or(true)
+        // RandR events keep the list current, so reading it is free; only
+        // the xrandr fallback is throttled.
+        if crate::displays::live()
+            || self
+                .checked
+                .map(|then| now.duration_since(then).as_secs() >= 5)
+                .unwrap_or(true)
         {
             self.checked = Some(now);
             self.outputs = status::display_outputs();
@@ -1348,7 +1351,7 @@ impl Module for Volume {
                 },
                 format!(
                     "microphone: {}",
-                    match av::Volume::mic_muted() {
+                    match self.sample.mic_muted() {
                         Some(true) => "muted",
                         Some(false) => "on",
                         None => "unknown",
@@ -2096,10 +2099,40 @@ impl Module for Brightness {
 pub struct Notifications {
     pub icons: status::Icons,
     count: Cached<usize>,
-    history: Cached<Vec<String>>,
+}
+
+/// NIRUNOTIFY's control socket, as `nirunotify` itself finds it.
+fn nirunotify_socket() -> std::path::PathBuf {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    runtime.join(format!("nirunotify-{}.sock", unsafe { libc::getuid() }))
+}
+
+/// One bounded request on the control socket (the daemon answers and
+/// closes), or `None` when it is not running or does not answer in time.
+fn nirunotify_request(command: &str, cap: u64) -> Option<String> {
+    use std::io::{Read, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(nirunotify_socket()).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(200)))
+        .ok()?;
+    stream.write_all(format!("{command}\n").as_bytes()).ok()?;
+    let mut reply = Vec::new();
+    stream.take(cap).read_to_end(&mut reply).ok()?;
+    Some(String::from_utf8_lossy(&reply).into_owned())
 }
 
 fn notification_count() -> Option<usize> {
+    // The socket first, like the DND module: no process every second.
+    if let Some(reply) = nirunotify_request("visible", 64) {
+        if let Ok(count) = reply.trim().parse() {
+            return Some(count);
+        }
+    }
     let out = crate::probe::run(
         "nirunotify",
         &["--count"],
@@ -2113,21 +2146,8 @@ fn notification_count() -> Option<usize> {
     String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
-fn notification_history() -> Vec<String> {
-    let Some(out) = crate::probe::run(
-        "nirunotify",
-        &["--history"],
-        &[],
-        std::time::Duration::from_secs(1),
-        65536,
-    ) else {
-        return Vec::new();
-    };
-    if !out.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
+fn history_lines(text: &str) -> Vec<String> {
+    text.lines()
         .take(10)
         .map(|line| {
             let mut fields = line.splitn(4, '\t');
@@ -2144,14 +2164,31 @@ fn notification_history() -> Vec<String> {
         .collect()
 }
 
+/// The history, read when the panel opens instead of every three seconds.
+fn notification_history() -> Vec<String> {
+    if let Some(reply) = nirunotify_request("history", 65536) {
+        return history_lines(&reply);
+    }
+    let Some(out) = crate::probe::run(
+        "nirunotify",
+        &["--history"],
+        &[],
+        std::time::Duration::from_secs(1),
+        65536,
+    ) else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    history_lines(&String::from_utf8_lossy(&out.stdout))
+}
+
 impl Notifications {
     pub fn new(icons: status::Icons) -> Self {
         Self {
             icons,
             count: Cached::new(std::time::Duration::from_secs(1), notification_count),
-            history: Cached::new(std::time::Duration::from_secs(3), || {
-                Some(notification_history())
-            }),
         }
     }
 }
@@ -2170,7 +2207,7 @@ impl Module for Notifications {
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        let history = self.history.get().unwrap_or_default();
+        let history = notification_history();
         let mut lines = if history.is_empty() {
             vec!["no notifications".to_string()]
         } else {
@@ -2216,11 +2253,7 @@ pub(crate) fn notification_dnd() -> Option<bool> {
     // direct bounded socket query avoids launching two processes every second.
     // If it is absent, stalled or returns an invalid response, retain niructl's
     // provider-aware Dunst/unavailable fallback.
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    let socket = runtime.join(format!("nirunotify-{}.sock", unsafe { libc::getuid() }));
-    if let Some(state) = read_dnd_socket(&socket) {
+    if let Some(state) = read_dnd_socket(&nirunotify_socket()) {
         return Some(state);
     }
     let out = crate::probe::run(

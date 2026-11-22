@@ -1,5 +1,8 @@
-//! Read-only microphone snapshots via the suite's audio CLI. All provider
-//! work runs off the X11 thread and has a deadline; painting only reads memory.
+//! Read-only microphone snapshots. The default source, its gain and mute
+//! come from the shared PipeWire hub (`crate::privacy::Hub`) as events, with
+//! the same states as `niructl audio mic-status`. Without `pw-dump` the suite's
+//! audio CLI is asked every two seconds instead, off the X11 thread and with
+//! a deadline; painting only reads memory.
 use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,18 +59,45 @@ fn query() -> Snapshot {
 }
 
 pub struct Monitor {
-    sample: crate::module::Cached<Snapshot>,
+    hub: std::sync::Arc<crate::privacy::Hub>,
+    fallback: Option<crate::module::Cached<Snapshot>>,
+}
+
+/// The hub's view of the default input, in this module's states.
+fn from_hub(input: &crate::privacy::Source) -> Snapshot {
+    match input {
+        crate::privacy::Source::Ready(level) => Snapshot::Ready {
+            name: level.name.clone(),
+            percent: level.percent,
+            muted: level.muted,
+        },
+        crate::privacy::Source::NoInput => Snapshot::NoInput,
+        crate::privacy::Source::Unavailable(reason) => Snapshot::Unavailable(reason.clone()),
+    }
 }
 
 impl Monitor {
     pub fn new() -> Self {
         Self {
-            sample: crate::module::Cached::new(Duration::from_secs(2), || Some(query())),
+            hub: crate::privacy::Hub::get(),
+            fallback: None,
         }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
-        self.sample
+    pub fn snapshot(&mut self) -> Snapshot {
+        let audio = self.hub.snapshot();
+        if !audio.audio_missing {
+            self.fallback = None;
+            return audio
+                .source
+                .as_ref()
+                .map(from_hub)
+                .unwrap_or_else(|| Snapshot::Unavailable("checking microphone".into()));
+        }
+        self.fallback
+            .get_or_insert_with(|| {
+                crate::module::Cached::new(Duration::from_secs(2), || Some(query()))
+            })
             .get()
             .unwrap_or_else(|| Snapshot::Unavailable("checking microphone".into()))
     }

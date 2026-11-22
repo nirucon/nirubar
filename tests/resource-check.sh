@@ -33,7 +33,8 @@ cat > "$TEST/bin/wpctl" <<'HELPER'
 printf 'wpctl\n' >> "$PROBE_LOG"
 printf 'Volume: 0.50\n'
 HELPER
-chmod +x "$TEST/bin/playerctl" "$TEST/bin/wpctl"
+printf '#!/bin/sh\nexit 1\n' > "$TEST/bin/pw-dump"
+chmod +x "$TEST/bin/playerctl" "$TEST/bin/wpctl" "$TEST/bin/pw-dump"
 cat > "$TEST/config/niruwm/config.toml" <<'CONFIG'
 [bar]
 modules = ["volume", "media", "clock"]
@@ -41,9 +42,9 @@ icons = false
 tray = false
 media_width = 12
 CONFIG
-export DISPLAY=:96 XDG_CONFIG_HOME=$TEST/config PROBE_LOG=$TEST/probes FOLLOW_PID=$TEST/follower.pid
+export DISPLAY=${XVFB_DISPLAY:-:96} XDG_CONFIG_HOME=$TEST/config PROBE_LOG=$TEST/probes FOLLOW_PID=$TEST/follower.pid
 export PATH=$TEST/bin:$PATH
-Xvfb :96 -screen 0 1280x80x24 -nolisten tcp > "$TEST/xvfb.log" 2>&1 & XVFB=$!
+Xvfb "$DISPLAY" -screen 0 1280x80x24 -nolisten tcp > "$TEST/xvfb.log" 2>&1 & XVFB=$!
 sleep 1
 "$BIN" > "$TEST/bar.log" 2>&1 & BAR=$!
 sleep 1

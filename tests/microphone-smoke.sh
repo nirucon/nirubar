@@ -27,7 +27,9 @@ cat > "$T/bin/nirulauncher" <<'EOF'
 #!/bin/sh
 printf 'launcher %s\n' "$*" >> "$MIC_FIXTURE/actions"
 EOF
-chmod +x "$T/bin/niructl" "$T/bin/nirulauncher"
+# No PipeWire graph here: the module uses the shared CLI fallback.
+printf '#!/bin/sh\nexit 1\n' > "$T/bin/pw-dump"
+chmod +x "$T/bin/niructl" "$T/bin/nirulauncher" "$T/bin/pw-dump"
 "$BIN" > "$T/bar.log" 2>&1 &
 BAR=$!
 i=0

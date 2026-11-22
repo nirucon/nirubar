@@ -25,7 +25,9 @@ printf '%s\n' "$$" > "$PACTL_PID"
 exec 3<> "$EVENT_FIFO"
 while IFS= read -r line <&3; do printf '%s\n' "$line"; done
 HELPER
-chmod +x "$TEST/bin/wpctl" "$TEST/bin/pactl"
+# No PipeWire graph here: the volume falls back to pactl/wpctl.
+printf '#!/bin/sh\nexit 1\n' > "$TEST/bin/pw-dump"
+chmod +x "$TEST/bin/wpctl" "$TEST/bin/pactl" "$TEST/bin/pw-dump"
 cat > "$TEST/config/niruwm/config.toml" <<'CONFIG'
 [bar]
 modules = ["volume", "clock"]

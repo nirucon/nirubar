@@ -1,7 +1,11 @@
-//! Output-volume snapshots driven by Pulse/PipeWire events when available.
+//! Output-volume snapshots driven by PipeWire events.
 //!
-//! A single supervised `pactl subscribe` wakes the worker on sink/server
-//! changes. The existing bounded wpctl/ALSA query remains the fallback.
+//! The default sink's volume and mute come from the shared PipeWire hub
+//! (`crate::privacy::Hub`, one `pw-dump --monitor` for the whole session),
+//! so nothing runs while the volume stays the same. Without `pw-dump` (or
+//! while PipeWire does not answer) the older provider takes over: a single
+//! supervised `pactl subscribe` wakes a worker on sink/server changes, and
+//! the bounded wpctl/ALSA query remains the last fallback.
 
 use std::{
     io::Read,
@@ -84,7 +88,49 @@ fn stop_child(child: &mut Child) {
     let _ = child.kill();
 }
 
+/// The default output's volume: from the PipeWire hub, or from the
+/// fallback provider while the hub has no `pw-dump`.
 pub(crate) struct Monitor {
+    hub: Arc<crate::privacy::Hub>,
+    fallback: Option<Fallback>,
+}
+
+impl Monitor {
+    pub(crate) fn new() -> Self {
+        Self {
+            hub: crate::privacy::Hub::get(),
+            fallback: None,
+        }
+    }
+
+    pub(crate) fn snapshot(&mut self) -> Option<Volume> {
+        let audio = self.hub.snapshot();
+        if !audio.audio_missing {
+            // Started, or reading the graph: the fallback is not needed.
+            self.fallback = None;
+            return audio.sink.map(|level| Volume {
+                percent: level.percent,
+                muted: level.muted,
+            });
+        }
+        self.fallback.get_or_insert_with(Fallback::new).snapshot()
+    }
+
+    /// Whether the default microphone is muted, for the volume panel.
+    pub(crate) fn mic_muted(&self) -> Option<bool> {
+        let audio = self.hub.snapshot();
+        if audio.audio_missing {
+            return Volume::mic_muted();
+        }
+        match audio.source {
+            Some(crate::privacy::Source::Ready(level)) => Some(level.muted),
+            _ => None,
+        }
+    }
+}
+
+/// The provider used without PipeWire's `pw-dump`.
+struct Fallback {
     state: Arc<Mutex<Option<Volume>>>,
     child: Arc<Mutex<Option<Child>>>,
     stop: Arc<AtomicBool>,
@@ -92,8 +138,8 @@ pub(crate) struct Monitor {
     worker: Option<JoinHandle<()>>,
 }
 
-impl Monitor {
-    pub(crate) fn new() -> Self {
+impl Fallback {
+    fn new() -> Self {
         let state = Arc::new(Mutex::new(None));
         let child = Arc::new(Mutex::new(None::<Child>));
         let stop = Arc::new(AtomicBool::new(false));
@@ -240,12 +286,12 @@ impl Monitor {
         }
     }
 
-    pub(crate) fn snapshot(&self) -> Option<Volume> {
+    fn snapshot(&self) -> Option<Volume> {
         self.state.lock().ok().and_then(|value| value.clone())
     }
 }
 
-impl Drop for Monitor {
+impl Drop for Fallback {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Ok(mut child) = self.child.lock() {

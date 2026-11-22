@@ -592,7 +592,68 @@ fn wifi_rfkill() -> (bool, bool) {
 
 /// Read the link without NetworkManager. `iw` is the kernel's own interface;
 /// `/proc/net/wireless` supplies the signal when `iw` is unavailable.
-fn wifi_link(interface: &str) -> (bool, Option<String>, Option<u8>) {
+/// The last `iw dev IF link` answer, with the interface's operstate when it
+/// was asked. The Wi-Fi module samples every second; `iw` runs again only
+/// when the operstate changes (connected, disconnected, radio off) or the
+/// answer is older than `IW_MAX_AGE`, and the signal in between comes from
+/// `/proc/net/wireless` in the same dBm scale.
+type IwAnswer = (bool, Option<String>, Option<u8>);
+static IW_CACHE: std::sync::Mutex<Option<(String, String, std::time::Instant, IwAnswer)>> =
+    std::sync::Mutex::new(None);
+const IW_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn wifi_link(interface: &str) -> IwAnswer {
+    let operstate = fs::read_to_string(format!("/sys/class/net/{interface}/operstate"))
+        .map(|state| state.trim().to_string())
+        .unwrap_or_default();
+    if let Ok(cache) = IW_CACHE.lock() {
+        if let Some((name, state, at, answer)) = cache.as_ref() {
+            if name == interface && *state == operstate && at.elapsed() < IW_MAX_AGE {
+                let (connected, ssid, signal) = answer.clone();
+                let fresh = connected.then(|| level_from_proc(interface)).flatten();
+                return (connected, ssid, fresh.or(signal));
+            }
+        }
+    }
+    let answer = wifi_link_iw(interface);
+    if let Ok(mut cache) = IW_CACHE.lock() {
+        *cache = Some((
+            interface.to_string(),
+            operstate,
+            std::time::Instant::now(),
+            answer.clone(),
+        ));
+    }
+    answer
+}
+
+/// The `iw` signal formula on a dBm value.
+fn signal_percent(dbm: i32) -> u8 {
+    ((dbm + 90) * 100 / 60).clamp(0, 100) as u8
+}
+
+/// The signal level column of `/proc/net/wireless` (dBm), as a percentage
+/// with the same formula as the `iw` answer.
+fn level_from_proc(interface: &str) -> Option<u8> {
+    level_from(&fs::read_to_string("/proc/net/wireless").ok()?, interface)
+}
+
+fn level_from(raw: &str, interface: &str) -> Option<u8> {
+    for line in raw.lines().skip(2) {
+        let Some((name, rest)) = line.trim_start().split_once(':') else {
+            continue;
+        };
+        if name != interface {
+            continue;
+        }
+        let level = rest.split_whitespace().nth(2)?;
+        let dbm: f32 = level.trim_end_matches('.').parse().ok()?;
+        return (dbm < 0.0).then(|| signal_percent(dbm.round() as i32));
+    }
+    None
+}
+
+fn wifi_link_iw(interface: &str) -> IwAnswer {
     let mut ssid = None;
     let mut signal = signal_from_proc(interface);
     let mut connected = false;
@@ -622,7 +683,7 @@ fn wifi_link(interface: &str) -> (bool, Option<String>, Option<u8>) {
                     .split_whitespace()
                     .next()
                     .and_then(|v| v.parse::<i32>().ok())
-                    .map(|dbm| ((dbm + 90) * 100 / 60).clamp(0, 100) as u8);
+                    .map(signal_percent);
             } else if line.contains("Not connected") {
                 connected = false;
             }
@@ -755,6 +816,14 @@ fn default_route_from(v4: &str, v6: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wifi_level_uses_the_iw_scale() {
+        let raw = "Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n wlan0: 0000   54.  -56.  -256        0      0      0      0     11        0\n";
+        assert_eq!(level_from(raw, "wlan0"), Some(signal_percent(-56)));
+        assert_eq!(signal_percent(-56), 56);
+        assert_eq!(level_from(raw, "wlan1"), None);
+    }
     use std::fs;
 
     fn tmpdir(name: &str) -> std::path::PathBuf {
@@ -1167,9 +1236,14 @@ fn display_outputs_from(text: &str) -> Vec<DisplayOutput> {
     outputs
 }
 
-/// Connected outputs through xrandr. The bar samples this at a slower cadence
-/// than battery/network: hotplug is rare and output enumeration is not free.
+/// Connected outputs, from RandR events (`crate::displays`).
 pub fn display_outputs() -> Option<Vec<DisplayOutput>> {
+    crate::displays::outputs()
+}
+
+/// Connected outputs through xrandr, for an X server without RandR 1.3.
+/// The bar samples this at a slower cadence: output enumeration is not free.
+pub fn display_outputs_xrandr() -> Option<Vec<DisplayOutput>> {
     let out = crate::probe::run(
         "xrandr",
         // Report the current RandR state without forcing a hardware reprobe.

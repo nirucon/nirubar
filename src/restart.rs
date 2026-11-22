@@ -13,8 +13,13 @@
 //! (`nirux stale restart` does it) and `manual` when you must close and
 //! reopen it yourself.
 //!
-//! The question runs on a worker thread, shortly after the bar starts, every
-//! two minutes and a few seconds after a click. A redraw only reads the last
+//! The question runs on a worker thread, shortly after the bar starts, a few
+//! seconds after a click, and every ten minutes while something is stale or
+//! a NIRUX generation (`~/.local/share/nirux/current`, the browser, LocalSend
+//! and OpenCode links) changed since the
+//! last answer. A program can only become stale when the generation changes,
+//! so while nothing is stale the check (half a second of CPU) waits for that,
+//! with one safety check every half hour. A redraw only reads the last
 //! answer, so the module costs a lock and a clone per second while idle. An
 //! old NIRUX without the command, or any failure, means "nothing is stale".
 
@@ -23,12 +28,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How often `nirux stale --json` runs.
-pub const CHECK_EVERY: Duration = Duration::from_secs(120);
+/// How often `nirux stale --json` runs while something is stale. A click
+/// on the module (which restarts what it can) checks again after
+/// `AFTER_CLICK`; a program closed and reopened by hand is noticed here.
+pub const CHECK_EVERY: Duration = Duration::from_secs(600);
 /// The first check after the bar starts: the session is still settling.
 pub const FIRST_CHECK: Duration = Duration::from_secs(8);
 /// The check after a click, when the restarted programs are back.
 pub const AFTER_CLICK: Duration = Duration::from_secs(3);
+/// While nothing is stale and the generation stays the same.
+pub const QUIET_CHECK_EVERY: Duration = Duration::from_secs(30 * 60);
 /// How long one check may take before it counts as a failure.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 /// The most entries shown; a longer list is cut, never an unbounded panel.
@@ -120,6 +129,29 @@ struct Shared {
     entries: Vec<Entry>,
     next: Instant,
     running: bool,
+    /// The generation the last answer was given for, and when.
+    generation: Vec<Option<std::path::PathBuf>>,
+    answered: Option<Instant>,
+    /// A click asked for the next check regardless of the generation.
+    forced: bool,
+}
+
+/// The links `nirux stale` compares running programs with: the suite
+/// generation and the separately updated browser, LocalSend and OpenCode.
+fn generation() -> Vec<Option<std::path::PathBuf>> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Vec::new();
+    };
+    let state = std::path::Path::new(&home).join(".local/share/nirux");
+    [
+        "current",
+        "browser-current",
+        "localsend/current",
+        "opencode/current",
+    ]
+    .iter()
+    .map(|link| std::fs::read_link(state.join(link)).ok())
+    .collect()
 }
 
 /// The last answer and when to ask again, shared with the worker thread.
@@ -157,6 +189,9 @@ impl Monitor {
                 entries: Vec::new(),
                 next: Instant::now() + FIRST_CHECK,
                 running: false,
+                generation: Vec::new(),
+                answered: None,
+                forced: false,
             })),
         }
     }
@@ -167,14 +202,29 @@ impl Monitor {
         let Ok(mut shared) = self.shared.lock() else {
             return Vec::new();
         };
-        if !shared.running && Instant::now() >= shared.next && !disabled() {
+        let due = !shared.running && Instant::now() >= shared.next && !disabled() && {
+            let current = generation();
+            let quiet = shared.entries.is_empty()
+                && !shared.forced
+                && current == shared.generation
+                && shared
+                    .answered
+                    .is_some_and(|at| at.elapsed() < QUIET_CHECK_EVERY);
+            if !quiet {
+                shared.generation = current;
+            }
+            !quiet
+        };
+        if due {
             shared.running = true;
+            shared.forced = false;
             let worker = self.shared.clone();
             let spawned = std::thread::Builder::new()
                 .name("nirubar-stale".into())
                 .spawn(move || {
                     let entries = ask();
                     if let Ok(mut shared) = worker.lock() {
+                        shared.answered = Some(Instant::now());
                         shared.entries = entries;
                         shared.next = Instant::now() + CHECK_EVERY;
                         shared.running = false;
@@ -192,6 +242,7 @@ impl Monitor {
     pub fn check_in(&self, after: Duration) {
         if let Ok(mut shared) = self.shared.lock() {
             shared.next = Instant::now() + after;
+            shared.forced = true;
         }
     }
 

@@ -16,6 +16,7 @@ mod calendar;
 mod config;
 mod dictation;
 mod disk;
+mod displays;
 mod drives;
 mod editor;
 mod headset;
@@ -39,6 +40,7 @@ mod render;
 mod restart;
 mod scratchpad;
 mod scroll;
+mod share;
 mod sni;
 mod status;
 mod tailscale;
@@ -526,6 +528,8 @@ struct Bar {
     /// then shows no titles at all, which is what the eye wants.
     title_shown: Option<Window>,
     title_since: std::time::Instant,
+    /// The PipeWire reader election between the bars on this display.
+    share: Option<share::Share>,
 }
 
 /// Keep a title compact. The limit includes the ellipsis.
@@ -749,7 +753,8 @@ impl Bar {
         // another tray program may already hold. Only the primary monitor
         // owns it: otherwise the first bar to start wins and the tray moves
         // between screens from one login to the next.
-        let primary = status::display_outputs()
+        let primary = displays::query(&c, root)
+            .or_else(status::display_outputs_xrandr)
             .and_then(|outputs| outputs.into_iter().find(|output| output.primary))
             .map(|output| output.name);
         let monitor_name = monitor.as_ref().and_then(|m| m.name.as_deref());
@@ -791,6 +796,8 @@ impl Bar {
         let screen = module::Screen {
             name: monitor.as_ref().and_then(|m| m.name.clone()),
         };
+        // Before the modules exist: a follower must not start pw-dump.
+        let share = share::Share::new(&c, s, root, win);
         let modules = module::build(&cfg, icons, layout_text.clone(), screen);
         let workspaces = Workspaces::new(&cfg.bar);
         let cells = cfg.bar.cell_width as i16;
@@ -836,6 +843,7 @@ impl Bar {
             popup: None,
             title_shown: None,
             title_since: std::time::Instant::now(),
+            share,
         })
     }
 
@@ -1545,6 +1553,9 @@ impl Bar {
         if self.snapshot_dirty {
             self.snapshot_dirty = false;
             self.snapshot();
+        }
+        if let Some(share) = &mut self.share {
+            share.publish(&self.c);
         }
         let frame = self.frame_key();
         if frame == self.last_frame {
@@ -2275,6 +2286,15 @@ impl Bar {
                     continue;
                 }
             };
+            // The PipeWire leader election and the leader's snapshots.
+            if self
+                .share
+                .as_mut()
+                .is_some_and(|share| share.handle(&self.c, &event))
+            {
+                self.draw()?;
+                continue;
+            }
             // Arrow keys navigate an open calendar panel. Handle this before
             // the generic popup handler, which closes on every key press.
             if let Event::KeyPress(e) = &event {

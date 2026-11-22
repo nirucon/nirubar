@@ -1,6 +1,7 @@
 //! Battery of connected Bluetooth devices (headsets, mice, keyboards), read
 //! from BlueZ's `org.bluez.Battery1` on the system bus: one object-manager
-//! call every 20 seconds on the module's worker, no helper process.
+//! call on the module's worker whenever BlueZ signals a change (a device
+//! connects, a battery level moves), no helper process and no polling.
 //!
 //! Hidden when no connected device reports a battery. At 15 % or less the
 //! text turns red and one notification is shown per device and discharge;
@@ -64,30 +65,42 @@ fn read(reader: &mut objects::Reader) -> Option<Vec<Device>> {
     )
 }
 
-pub struct Monitor {
-    sample: crate::module::Cached<Vec<Device>>,
+pub enum Monitor {
+    Watched(objects::Watched<Vec<Device>>),
+    Fixture(crate::module::Cached<Vec<Device>>),
+}
+
+fn sample(reader: &mut objects::Reader) -> Option<Vec<Device>> {
+    let devices = read(reader)?;
+    warn_low(&devices);
+    Some(devices)
 }
 
 impl Monitor {
     pub fn new() -> Self {
-        let reader = std::sync::Mutex::new(objects::Reader::new());
-        let every = if std::env::var_os(FIXTURE).is_some() {
-            Duration::from_secs(1)
-        } else {
-            Duration::from_secs(20)
-        };
-        Self {
-            sample: crate::module::Cached::new(every, move || {
-                let mut reader = reader.lock().ok()?;
-                let devices = read(&mut reader)?;
-                warn_low(&devices);
-                Some(devices)
-            }),
+        if std::env::var_os(FIXTURE).is_some() {
+            let reader = std::sync::Mutex::new(objects::Reader::new());
+            return Self::Fixture(crate::module::Cached::new(
+                Duration::from_secs(1),
+                move || sample(&mut *reader.lock().ok()?),
+            ));
         }
+        // BlueZ signals a battery change; the sample after at most a minute
+        // is only a safety net for a missed signal.
+        Self::Watched(objects::Watched::new(
+            SERVICE,
+            "/",
+            Duration::from_secs(60),
+            sample,
+        ))
     }
 
     pub fn devices(&self) -> Vec<Device> {
-        self.sample.get().unwrap_or_default()
+        match self {
+            Self::Watched(sample) => sample.get(),
+            Self::Fixture(sample) => sample.get(),
+        }
+        .unwrap_or_default()
     }
 }
 

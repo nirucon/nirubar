@@ -29,8 +29,10 @@ where a real control view exists, the panel hands over to NIRU Launcher.
 - XEmbed and D-Bus StatusNotifierItem trays with real icons and menus, on the
   primary monitor.
 - Narrow-width overflow: low-priority modules collapse into a clickable `+N`.
-- Event-driven media (MPRIS via `playerctl --follow`) and volume (`pactl`
-  events), with bounded polling fallbacks.
+- Event-driven media (MPRIS via `playerctl --follow`), volume, microphone and
+  privacy dot (one shared `pw-dump --monitor` for all bars), drives and
+  headset batteries (D-Bus signals) and displays (RandR events), with bounded
+  polling fallbacks where a provider is missing.
 - Bounded, cached provider queries for package updates and weather.
 - Read-only calendar events (ICS feeds such as Google Calendar's secret iCal
   address) in the clock's calendar: day markers, an agenda and click-to-open,
@@ -42,8 +44,8 @@ where a real control view exists, the panel hands over to NIRU Launcher.
 - Debian, Arch or Void Linux (glibc), x86_64, with X11.
 - NIRUWM for the workspace cells and dock behaviour (the bar can also run on
   its own).
-- Optional providers per module: `playerctl` (media), `pactl` or `wpctl`
-  (volume and microphone), BlueZ (Bluetooth), `power-profiles-daemon`
+- Optional providers per module: `playerctl` (media), PipeWire's `pw-dump`
+  (volume, microphone, privacy; `pactl`, `wpctl` or `amixer` without it), BlueZ (Bluetooth), `power-profiles-daemon`
   (power profiles), `tailscale` (Tailscale), `picom` (transparency).
 - A Nerd Font for icons; set `icons = false` for plain ASCII labels.
 - Building from source: a Rust toolchain (`cargo`).
@@ -253,6 +255,44 @@ With NIRUX, use `nirux uninstall`. A standalone install is one file:
 ```sh
 rm ~/.local/bin/nirubar
 ```
+
+## Performance
+
+NIRUWM starts one bar per monitor. Since 0.32.0 an idle bar runs no helper
+process on a timer:
+
+- Volume, microphone and the privacy dot read one `pw-dump --monitor` stream
+  (default sink and source from the `default` metadata, volume and mute from
+  the node `Props`, with `wpctl`'s rounding). The bars on a display elect one
+  of them through an X selection to run it and publish the snapshot in a root
+  property; the others read that property, and take over when the leader
+  exits. Without `pw-dump` the old providers are used (`pactl subscribe`,
+  `wpctl`, `amixer`, `niructl audio mic-status`).
+- Tailscale asks tailscaled's LocalAPI socket instead of running
+  `tailscale version` and `tailscale status --json` every five seconds.
+- Notification count and history use the NIRUNOTIFY control socket (the
+  history only when the panel opens).
+- Displays follow RandR events instead of `xrandr --current` every 5 s.
+- Drives and headset batteries are read when UDisks2 or BlueZ signal a change.
+- Wi-Fi runs `iw` only when the interface state changes (or every 30 s) and
+  takes the signal from `/proc/net/wireless` in between.
+- The `nirux stale` check (half a second of CPU) and the activation check
+  (a scan of `/proc`) no longer run every two minutes or every second: they
+  wait for a NIRUX generation to change.
+
+Measured on othala (two 2560x1440 monitors, the full NIRUX module list, a
+private Xvfb, the real PipeWire session), CPU of both bars together:
+
+| | 0.31.0 | 0.32.0 |
+| --- | --- | --- |
+| Idle CPU, two bars | 5.9 to 10.8 % of a core | 0.57 % |
+| Helper processes per minute | about 150 (`niructl`, `wpctl`, `tailscale`, `xrandr`) | none |
+| `pw-dump` processes | one per bar | one per display |
+| RSS per bar | 9.4 MB | 9.0 to 9.4 MB |
+
+`tests/xvfb.sh PATH/TO/nirubar` checks this end to end with a fake `pw-dump`:
+two bars, one reader, volume, mute and default-device events on both, the
+hand-over, and two idle bars using at most 10 ticks in 10 seconds.
 
 ## Building from source
 

@@ -13,7 +13,7 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 | `network` | Wired link; `!` means link up without a default route. Wireless appears here only with `wifi = false`; click for interface, route and address |
 | `wifi` | Wi-Fi radio and connection; `!` means radio off or not connected; click to open the Wi-Fi selector |
 | `battery` | Aggregated battery packs; panel shows charge, state and remaining time when available, then `health: N% of design capacity` (`energy_full`/`energy_full_design`, or the `charge_*` pair; hidden without a design value), `cycles: N` (when the driver reports more than 0) and `last 24 h:` with one block character per hour from the charge history. NIRUBAR samples the charge every 10 minutes into `$XDG_STATE_HOME/nirubar/battery-history` (48 hours kept); an hour without samples is blank |
-| `volume` | Output level or mute; click for info, scroll to change, right-click mute, middle-click microphone mute |
+| `volume` | Output level or mute of the default sink, from the shared PipeWire reader (events, no polling; `pactl subscribe`, `wpctl` or `amixer` without PipeWire); click for info, scroll to change, right-click mute, middle-click microphone mute |
 | `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |
 | `scratchpad` | NIRUWM scratchpads: a terminal mark (nf-fa-terminal, plain `>_`) while at least one exists, the mark and a count for several, accent while one is shown, nothing otherwise. Click: panel with key, slot, title and state per scratchpad; a row shows or hides it. Right-click: the default scratchpad. Reads the `_NIRUWM_SCRATCHPADS` root property (NIRUWM 0.17.4) only when it changes. A scratchpad that asked for attention turns the mark into the alert colour with a `!` (and its row starts with `!`); without this module a line in the attention colour under the workspace cells says the same |
 | `dictation` | NIRUDICTATE: a red `●` while recording, an accent `…` while transcribing, followed by `AI` while the dictation goes to the opencode agent (NIRUDICTATE 0.2 agent mode, Shift+Alt+Space), nothing when idle or not installed; right-click stops and inserts (or sends), middle-click opens its settings. Reads `$XDG_RUNTIME_DIR/nirudictate/state.json` only when it changed and repaints at once on the `_NIRUDICTATE_STATE` root property |
@@ -30,22 +30,22 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 | `sun` | Sunrise and sunset for the configured coordinates |
 | `weather` | Cached temperature, condition and rain; panel shows an eight-hour timeline |
 | `clock` | Date and time |
-| `display` | This bar's screen position (`Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`); click for outputs, Return/Open controls for display profiles |
-| `tailscale` | Tailscale peers; shown only when `tailscale` is installed. Click for peer state, Open controls opens `nirulauncher --tailscale` |
+| `display` | This bar's screen position (from RandR events, no `xrandr` polling) (`Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`); click for outputs, Return/Open controls for display profiles |
+| `tailscale` | Tailscale peers from tailscaled's LocalAPI socket every 5 seconds (no process; the `tailscale` CLI only without the socket); shown only when Tailscale is installed. Click for peer state, Open controls opens `nirulauncher --tailscale` |
 | `mode` | Active NIRU work mode (focus/presentation) and minutes left, and *studio* while NIRUWM's studio mode is on (`_NIRUWM_STUDIO`, NIRUWM 0.20); click shows `niructl mode stop` or `niructl studio off` |
 | `tasks` | Running or waiting NIRU/OpenCode tasks from `niructl task list`; click for recent states, Open controls opens NIRU Actions |
 | `agent` | OpenCode entry; click to type a short prompt and start OpenCode in a centred floating terminal |
 | `dnd` | Bell or slashed bell; left click toggles DND, right click opens Quick Settings |
-| `notifications` | NIRUNOTIFY history count; click for recent notifications |
+| `notifications` | NIRUNOTIFY history count, read on its control socket; click for recent notifications (read when the panel opens) |
 | `disk` | Hidden until `/` or `$HOME` (listed once when they share a filesystem) is at least `disk_warn` percent used, measured like `df` every 60 seconds off the drawing thread. Then a disk mark and the fullest percentage in the warning colour, e.g. `93%`. The panel lists used, free and total space per filesystem; a click on it (or Return) opens your `terminal` running `nirux clean`, which shows what can be freed and asks once |
-| `drives` | Removable drives (USB sticks, SD cards, external disks) from UDisks2, read with one D-Bus call every 3 seconds; hidden while none is attached. One drive shows its label, several a count. The panel lists label, size, mount point and free space. Middle click (or Return in the panel) mounts the first drive if needed and opens it with `xdg-open`; right click ejects all of them safely: unmounted (which waits for writing to finish), then powered off, with a notification "LABEL can be removed" or why not (for example a file still open). A drive with a filesystem in `/etc/fstab` or `/etc/crypttab`, or mounted outside `/media`, is the system's and never listed. Also `nirubar --drives list\|open\|eject` |
+| `drives` | Removable drives (USB sticks, SD cards, external disks) from UDisks2, read with one D-Bus call when UDisks2 signals a change; hidden while none is attached. One drive shows its label, several a count. The panel lists label, size, mount point and free space. Middle click (or Return in the panel) mounts the first drive if needed and opens it with `xdg-open`; right click ejects all of them safely: unmounted (which waits for writing to finish), then powered off, with a notification "LABEL can be removed" or why not (for example a file still open). A drive with a filesystem in `/etc/fstab` or `/etc/crypttab`, or mounted outside `/media`, is the system's and never listed. Also `nirubar --drives list\|open\|eject` |
 | `timer` | Focus and egg timer. Idle it is an hourglass; scroll sets the length (1-minute steps below 5, 5 up to 60, 15 above, at most 180), shown for a moment; right click starts, pauses and resumes; middle click resets. Running it shows the time left, e.g. `24:13`, repainted once a second only while it runs. At the end: a notification that stays and NIRUX's `timer-done` sound (see Sounds below). Scroll while it runs adds or takes a minute. Every bar shows the same timer, and it survives a bar restart (state in `$XDG_RUNTIME_DIR`). Settings in `[timer]`, see below. Also `nirubar --timer status\|start\|pause\|toggle\|reset\|set MINUTES` for key bindings |
-| `headset` | Battery of connected Bluetooth devices from BlueZ (`org.bluez.Battery1`, read every 20 seconds); hidden when no connected device reports one. Shows the lowest, e.g. `64%`; at 15 % or less it turns red and one notification is shown per device until it is charged above 20 %. The panel lists every device; middle click opens the Bluetooth devices. The `bluetooth` panel also shows each device's battery |
+| `headset` | Battery of connected Bluetooth devices from BlueZ (`org.bluez.Battery1`, read when BlueZ signals a change); hidden when no connected device reports one. Shows the lowest, e.g. `64%`; at 15 % or less it turns red and one notification is shown per device until it is charged above 20 %. The panel lists every device; middle click opens the Bluetooth devices. The `bluetooth` panel also shows each device's battery |
 | `quicksettings` | Gear entry that opens Quick Settings in the launcher |
 | `share` | NIRUSHARE entry; opens the inbox with `nirulauncher --share` |
 | `nirusec` | NIRUSEC state mark from its shared cache (refreshed with `nirusec --check --if-stale 300`) |
 | `niruxupdate` | A newer NIRUX release than the installed one, or an installed release that needs a new login; silent otherwise |
-| `restart` | Programs that still run from an older NIRUX version after an update (a browser started before the update, NIRUWM, ...), from `nirux stale --json`. Hidden when there are none (and on a NIRUX without the command). One program shows a circular arrow and its name, e.g. `Helium`; several show the arrow and a count, in the warning colour. Asked off the drawing thread shortly after the bar starts, every 120 seconds and 3 seconds after a click, so it costs nothing while idle. A left click runs `nirux stale restart`: it restarts the programs NIRUX can restart in place and shows a notice for the ones you must close and reopen. A right click opens the panel, which lists each program with "restarts automatically" or "close and reopen it"; Return or a click on the panel's footer runs the restart too |
+| `restart` | Programs that still run from an older NIRUX version after an update (a browser started before the update, NIRUWM, ...), from `nirux stale --json`. Hidden when there are none (and on a NIRUX without the command). One program shows a circular arrow and its name, e.g. `Helium`; several show the arrow and a count, in the warning colour. Asked off the drawing thread shortly after the bar starts, 3 seconds after a click, every 10 minutes while something is stale, and when a NIRUX generation (suite, browser, LocalSend, OpenCode) changes; otherwise once every half hour, so it costs nothing while idle. A left click runs `nirux stale restart`: it restarts the programs NIRUX can restart in place and shows a notice for the ones you must close and reopen. A right click opens the panel, which lists each program with "restarts automatically" or "close and reopen it"; Return or a click on the panel's footer runs the restart too |
 
 The `updates` module uses `xbps-install -un` on Void, `pacman -Qu` on Arch and
 `apt list --upgradable` on Debian. Results are cached in
@@ -171,9 +171,13 @@ keep wireless state in the combined `network` module instead.
 
 ### Microphone
 
-Requires WirePlumber (`wpctl`) and `niructl audio` support. A single bounded
-worker polls every two seconds; the X11 thread never waits for the audio
-provider. Gain is the configured input level, not a recording indicator.
+The default input, its gain and mute come from the shared PipeWire reader
+(one `pw-dump --monitor` for all bars, see Performance in the README), so a
+change shows at once and nothing is polled. Without PipeWire's `pw-dump` the
+module asks `niructl audio mic-status` every two seconds instead (WirePlumber's
+`wpctl` and `niructl audio` support required); the X11 thread never waits for
+the audio provider. Gain is the configured input level, not a recording
+indicator.
 
 ```sh
 niructl audio mic-status

@@ -130,9 +130,23 @@ pub fn activation_pending() -> Option<String> {
         return None;
     }
     let current = current_generation()?;
+    // The modules render every second; scanning /proc each time cost more
+    // than the rest of an idle bar. The answer can only change when the
+    // `current` link moves or a WM or bar restarts, so it is kept for a
+    // minute unless the link changed.
+    type Pending = Option<(PathBuf, std::time::Instant, Option<String>)>;
+    static CACHE: std::sync::Mutex<Pending> = std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((link, at, answer)) = cache.as_ref() {
+        if *link == current && at.elapsed() < std::time::Duration::from_secs(60) {
+            return answer.clone();
+        }
+    }
     let wm = running_exe("niruwm");
     let bar = running_exe("nirubar");
-    pending_for(&current, wm.as_deref(), bar.as_deref())
+    let answer = pending_for(&current, wm.as_deref(), bar.as_deref());
+    *cache = Some((current, std::time::Instant::now(), answer.clone()));
+    answer
 }
 
 /// Play the suite-update cue once for each newly discovered release.

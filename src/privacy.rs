@@ -13,6 +13,13 @@
 //!   while no device is opened or closed.
 //! - Screen recording: NIRUCLIP's state (`crate::recording`), read on paint.
 //! - NIRUDICTATE recording counts as microphone use (`crate::dictation`).
+//!
+//! The same `pw-dump` stream also carries the default sink and source (the
+//! `default` metadata) and their volume and mute (node `Props`), so the
+//! volume and microphone modules read them from here instead of running
+//! `wpctl` or `niructl audio mic-status` every two seconds. One process-wide
+//! hub serves all three modules, and the bars on several monitors share one
+//! hub between them (`crate::share`): only one bar runs `pw-dump`.
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::AsRawFd;
@@ -23,9 +30,26 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// A device's volume as `wpctl get-volume` reports it: the cubic volume,
+/// rounded to two decimals, as a percentage.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Level {
+    pub name: String,
+    pub percent: u32,
+    pub muted: bool,
+}
+
+/// The default input, with the states `niructl audio mic-status` reports.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Source {
+    Ready(Level),
+    NoInput,
+    Unavailable(String),
+}
+
 /// What the background worker sees. Screen recording and NIRUDICTATE are
 /// added on paint by the module.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     /// Apps capturing from a microphone (PipeWire).
     pub microphone: Vec<String>,
@@ -33,6 +57,16 @@ pub struct Snapshot {
     pub camera: Vec<String>,
     /// False while `pw-dump` is missing or not answering.
     pub audio_known: bool,
+    /// True when `pw-dump` is missing or failed: the volume and microphone
+    /// modules then use their own providers (wpctl, pactl, amixer, niructl).
+    #[serde(default)]
+    pub audio_missing: bool,
+    /// The default output, once the graph named one with a volume.
+    #[serde(default)]
+    pub sink: Option<Level>,
+    /// The default input; `None` until the first graph arrived.
+    #[serde(default)]
+    pub source: Option<Source>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -47,6 +81,10 @@ struct Object {
     media_name: String,
     device_api: String,
     capture_sink: bool,
+    description: String,
+    /// The average linear channel volume and the mute flag from `Props`.
+    volume: Option<f64>,
+    mute: Option<bool>,
     /// For links: (output node, input node).
     link: Option<(u32, u32)>,
 }
@@ -56,6 +94,36 @@ struct Object {
 #[derive(Default)]
 struct Graph {
     objects: HashMap<u32, Object>,
+    /// `default.audio.sink` and `default.audio.source` from the `default`
+    /// metadata: node names.
+    defaults: HashMap<String, String>,
+}
+
+const DEFAULT_SINK: &str = "default.audio.sink";
+const DEFAULT_SOURCE: &str = "default.audio.source";
+
+/// The node name in a default-device metadata value (`{"name": "..."}`,
+/// printed parsed or as a JSON string).
+fn default_name(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Object(_) => value.get("name")?.as_str().map(str::to_string),
+        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|inner| inner.get("name")?.as_str().map(str::to_string))
+            .or_else(|| Some(text.clone())),
+        _ => None,
+    }
+    .filter(|name| !name.is_empty())
+}
+
+/// `wpctl get-volume`: the cubic root of the linear volume, printed with two
+/// decimals; the bar shows that value as a whole percentage.
+fn percent(linear: f64) -> Option<u32> {
+    if !linear.is_finite() || linear < 0.0 {
+        return None;
+    }
+    let shown: f64 = format!("{:.2}", linear.cbrt()).parse().ok()?;
+    (shown <= 100.0).then(|| (shown * 100.0).round() as u32)
 }
 
 fn prop_str(props: &serde_json::Value, key: &str) -> String {
@@ -75,6 +143,35 @@ impl Graph {
             return;
         };
         let id = id as u32;
+        // Metadata objects carry their changed entries (not the whole set)
+        // in `metadata`; a null value removes the key.
+        if let Some(entries) = value.get("metadata").and_then(|m| m.as_array()) {
+            let name = value
+                .get("props")
+                .and_then(|props| props.get("metadata.name"))
+                .and_then(|name| name.as_str());
+            if name == Some("default") {
+                for entry in entries {
+                    let Some(key) = entry.get("key").and_then(|key| key.as_str()) else {
+                        continue;
+                    };
+                    if entry.get("subject").and_then(|s| s.as_u64()).unwrap_or(0) != 0
+                        || !matches!(key, DEFAULT_SINK | DEFAULT_SOURCE)
+                    {
+                        continue;
+                    }
+                    match entry.get("value").and_then(default_name) {
+                        Some(node) => {
+                            self.defaults.insert(key.to_string(), node);
+                        }
+                        None => {
+                            self.defaults.remove(key);
+                        }
+                    }
+                }
+            }
+            return;
+        }
         let info = value.get("info").filter(|info| !info.is_null());
         let Some(info) = info else {
             self.objects.remove(&id);
@@ -104,6 +201,77 @@ impl Graph {
             object.media_name = prop_str(props, "media.name");
             object.device_api = prop_str(props, "device.api");
             object.capture_sink = prop_str(props, "stream.capture.sink") == "true";
+            object.description = [
+                prop_str(props, "node.description"),
+                prop_str(props, "node.nick"),
+            ]
+            .into_iter()
+            .find(|name| !name.is_empty())
+            .unwrap_or_default();
+        }
+        // Volume and mute: the `Props` element with `channelVolumes`. An
+        // update without params keeps the last values.
+        if let Some(list) = info
+            .get("params")
+            .and_then(|params| params.get("Props"))
+            .and_then(|props| props.as_array())
+        {
+            for props in list {
+                let Some(volumes) = props.get("channelVolumes").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                let values: Vec<f64> = volumes.iter().filter_map(|v| v.as_f64()).collect();
+                if !values.is_empty() {
+                    object.volume = Some(values.iter().sum::<f64>() / values.len() as f64);
+                }
+                if let Some(mute) = props.get("mute").and_then(|m| m.as_bool()) {
+                    object.mute = Some(mute);
+                }
+                break;
+            }
+        }
+    }
+
+    /// The node a default-device key names, when it has the class wanted.
+    fn default_node(&self, key: &str, class: &str) -> Option<&Object> {
+        let name = self.defaults.get(key)?;
+        self.objects
+            .values()
+            .find(|o| o.kind == "Node" && o.class.starts_with(class) && &o.node_name == name)
+    }
+
+    fn level(node: &Object) -> Option<Level> {
+        let name = [&node.description, &node.node_name]
+            .into_iter()
+            .find(|name| !name.is_empty())?
+            .replace(['\t', '\r', '\n'], " ");
+        Some(Level {
+            name,
+            percent: percent(node.volume?)?,
+            muted: node.mute.unwrap_or(false),
+        })
+    }
+
+    /// The default output, like `wpctl get-volume @DEFAULT_AUDIO_SINK@`.
+    fn sink(&self) -> Option<Level> {
+        Self::level(self.default_node(DEFAULT_SINK, "Audio/Sink")?)
+    }
+
+    /// The default input, like `niructl audio mic-status`: no input at all,
+    /// no default among the inputs, or its level.
+    fn source(&self) -> Source {
+        let any = self.objects.values().any(|o| {
+            o.kind == "Node" && matches!(o.class.as_str(), "Audio/Source" | "Audio/Source/Virtual")
+        });
+        if !any {
+            return Source::NoInput;
+        }
+        match self.default_node(DEFAULT_SOURCE, "Audio/Source") {
+            None => Source::Unavailable("no default audio device is selected".into()),
+            Some(node) => match Self::level(node) {
+                Some(level) => Source::Ready(level),
+                None => Source::Unavailable("audio level is invalid".into()),
+            },
         }
     }
 
@@ -498,6 +666,9 @@ fn worker(shared: Arc<Mutex<Snapshot>>, stop: i32) {
     let mut graph = Graph::default();
     let mut stream = JsonStream::default();
     let mut dump: Option<(Child, ChildStdout)> = None;
+    // True once the first dump of the graph was read: before that the
+    // defaults and volumes are not known yet.
+    let mut parsed = false;
     let mut retry_at = Some(Instant::now());
     let mut chunk = vec![0u8; 64 * 1024];
     loop {
@@ -507,6 +678,7 @@ fn worker(shared: Arc<Mutex<Snapshot>>, stop: i32) {
             dump = pw_dump_path().and_then(|path| spawn_pw_dump(&path));
             graph = Graph::default();
             stream = JsonStream::default();
+            parsed = false;
             if dump.is_none() {
                 retry_at = Some(now + RETRY);
             }
@@ -521,15 +693,12 @@ fn worker(shared: Arc<Mutex<Snapshot>>, stop: i32) {
         let snapshot = Snapshot {
             microphone: graph.microphone(own_pid),
             camera: tidy(camera),
-            audio_known: dump.is_some(),
+            audio_known: dump.is_some() && parsed,
+            audio_missing: dump.is_none(),
+            sink: parsed.then(|| graph.sink()).flatten(),
+            source: parsed.then(|| graph.source()),
         };
-        if let Ok(mut current) = shared.lock() {
-            if *current != snapshot {
-                *current = snapshot;
-                drop(current);
-                crate::wake_update();
-            }
-        }
+        publish(&shared, snapshot);
 
         let mut fds = vec![libc::pollfd {
             fd: stop,
@@ -586,6 +755,7 @@ fn worker(shared: Arc<Mutex<Snapshot>>, stop: i32) {
                         }
                         Ok(read) => match stream.feed(&chunk[..read]) {
                             Ok(values) => {
+                                parsed |= !values.is_empty();
                                 for value in values {
                                     match value {
                                         serde_json::Value::Array(items) => {
@@ -615,6 +785,7 @@ fn worker(shared: Arc<Mutex<Snapshot>>, stop: i32) {
                 stop_child(&mut child);
             }
             graph = Graph::default();
+            parsed = false;
             retry_at = Some(Instant::now() + RETRY);
         }
     }
@@ -623,34 +794,129 @@ fn worker(shared: Arc<Mutex<Snapshot>>, stop: i32) {
     }
 }
 
-pub struct Monitor {
-    state: Arc<Mutex<Snapshot>>,
-    stop: Option<(i32, i32)>,
-    worker: Option<JoinHandle<()>>,
+/// Store a new snapshot and wake the bar when it differs.
+fn publish(shared: &Mutex<Snapshot>, snapshot: Snapshot) {
+    let Ok(mut current) = shared.lock() else {
+        return;
+    };
+    if *current == snapshot {
+        return;
+    }
+    if current.sink != snapshot.sink && std::env::var_os("NIRUBAR_TRACE_AUDIO").is_some() {
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros();
+        eprintln!(
+            "nirubar: audio volume={} time_us={time} source=pipewire",
+            snapshot
+                .sink
+                .as_ref()
+                .map(|v| v.percent.to_string())
+                .unwrap_or_else(|| "unavailable".into())
+        );
+    }
+    if current.source != snapshot.source && std::env::var_os("NIRUBAR_TRACE_AUDIO").is_some() {
+        let input = match &snapshot.source {
+            Some(Source::Ready(level)) => format!(
+                "{}{}",
+                level.percent,
+                if level.muted { "/muted" } else { "" }
+            ),
+            Some(Source::NoInput) => "none".into(),
+            Some(Source::Unavailable(_)) | None => "unavailable".into(),
+        };
+        eprintln!("nirubar: audio input={input}");
+    }
+    *current = snapshot;
+    drop(current);
+    crate::wake_update();
 }
 
-impl Monitor {
-    pub fn new() -> Self {
-        let state = Arc::new(Mutex::new(Snapshot::default()));
+/// The `pw-dump` reader thread, stopped through a pipe.
+struct Worker {
+    stop: (i32, i32),
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Worker {
+    fn start(state: Arc<Mutex<Snapshot>>) -> Option<Self> {
         let mut fds = [0i32; 2];
         if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
-            return Self {
-                state,
-                stop: None,
-                worker: None,
-            };
+            return None;
         }
-        let shared = state.clone();
         let read = fds[0];
-        let worker = std::thread::Builder::new()
-            .name("nirubar-privacy".into())
-            .spawn(move || worker(shared, read))
+        let handle = std::thread::Builder::new()
+            .name("nirubar-pipewire".into())
+            .spawn(move || worker(state, read))
             .ok();
-        Self {
-            state,
-            stop: Some((fds[0], fds[1])),
-            worker,
+        if handle.is_none() {
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+            }
+            return None;
         }
+        Some(Self {
+            stop: (fds[0], fds[1]),
+            handle,
+        })
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        unsafe {
+            let byte = [1u8];
+            libc::write(self.stop.1, byte.as_ptr() as *const _, 1);
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        unsafe {
+            libc::close(self.stop.0);
+            libc::close(self.stop.1);
+        }
+    }
+}
+
+/// The PipeWire hub of this process. It runs the `pw-dump` worker itself,
+/// or, while another bar on the same display leads (`crate::share`), only
+/// holds what that bar published.
+pub struct Hub {
+    state: Arc<Mutex<Snapshot>>,
+    worker: Mutex<Option<Worker>>,
+}
+
+/// Whether this process follows another bar's hub. Set by `crate::share`.
+static FOLLOWING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HUB: Mutex<std::sync::Weak<Hub>> = Mutex::new(std::sync::Weak::new());
+
+impl Hub {
+    /// The shared hub, started on first use. Modules keep it alive; when the
+    /// last one is gone (a reload without audio modules) `pw-dump` stops.
+    pub fn get() -> Arc<Hub> {
+        let mut slot = HUB.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(hub) = slot.upgrade() {
+            return hub;
+        }
+        let state = Arc::new(Mutex::new(Snapshot::default()));
+        let worker = if FOLLOWING.load(std::sync::atomic::Ordering::Acquire) {
+            None
+        } else {
+            Worker::start(state.clone())
+        };
+        let hub = Arc::new(Hub {
+            state,
+            worker: Mutex::new(worker),
+        });
+        *slot = Arc::downgrade(&hub);
+        hub
+    }
+
+    /// The running hub, if any module uses one.
+    pub fn current() -> Option<Arc<Hub>> {
+        HUB.lock().ok()?.upgrade()
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -659,25 +925,48 @@ impl Monitor {
             .map(|state| state.clone())
             .unwrap_or_default()
     }
+
+    /// Another bar leads: stop the own worker and take its snapshots.
+    pub fn follow() {
+        FOLLOWING.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(hub) = Self::current() {
+            let worker = hub.worker.lock().ok().and_then(|mut w| w.take());
+            drop(worker);
+        }
+    }
+
+    /// This bar leads (or there is nobody to follow): run the worker.
+    pub fn lead() {
+        FOLLOWING.store(false, std::sync::atomic::Ordering::Release);
+        if let Some(hub) = Self::current() {
+            if let Ok(mut worker) = hub.worker.lock() {
+                if worker.is_none() {
+                    *worker = Worker::start(hub.state.clone());
+                }
+            }
+        }
+    }
+
+    /// A snapshot the leading bar published.
+    pub fn receive(snapshot: Snapshot) {
+        if let Some(hub) = Self::current() {
+            publish(&hub.state, snapshot);
+        }
+    }
 }
 
-impl Drop for Monitor {
-    fn drop(&mut self) {
-        if let Some((_, write)) = self.stop {
-            unsafe {
-                let byte = [1u8];
-                libc::write(write, byte.as_ptr() as *const _, 1);
-            }
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        if let Some((read, write)) = self.stop.take() {
-            unsafe {
-                libc::close(read);
-                libc::close(write);
-            }
-        }
+/// The privacy module's view of the hub.
+pub struct Monitor {
+    hub: Arc<Hub>,
+}
+
+impl Monitor {
+    pub fn new() -> Self {
+        Self { hub: Hub::get() }
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        self.hub.snapshot()
     }
 }
 
@@ -905,6 +1194,127 @@ mod tests {
         assert!(stream.feed(b"} nonsense").is_err());
     }
 
+    fn metadata(id: u32, entries: serde_json::Value) -> serde_json::Value {
+        json!({"id": id, "type": "PipeWire:Interface:Metadata",
+               "props": {"metadata.name": "default"}, "metadata": entries})
+    }
+
+    fn device(id: u32, class: &str, name: &str, volume: f64, mute: bool) -> serde_json::Value {
+        json!({"id": id, "type": "PipeWire:Interface:Node",
+               "info": {"state": "suspended",
+                        "props": {"media.class": class, "node.name": name,
+                                  "node.description": format!("{name} desc")},
+                        "params": {"Props": [
+                            {"volume": 1.0, "mute": mute, "channelVolumes": [volume, volume]},
+                            {"params": []}]}}})
+    }
+
+    #[test]
+    fn the_default_sink_and_source_follow_metadata_and_props() {
+        let mut g = graph(&[
+            device(66, "Audio/Sink", "speaker", 0.064195, false),
+            device(65, "Audio/Source", "brio", 1.0, false),
+            device(67, "Audio/Source", "builtin", 0.125, true),
+            metadata(
+                40,
+                json!([
+                    {"subject": 0, "key": "default.configured.audio.sink", "value": {"name": "gone"}},
+                    {"subject": 0, "key": "default.audio.sink", "type": "Spa:String:JSON",
+                     "value": {"name": "speaker"}},
+                    {"subject": 0, "key": "default.audio.source", "value": "{\"name\": \"brio\"}"}
+                ]),
+            ),
+        ]);
+        // cbrt(0.064195) = 0.4003, which wpctl prints as 0.40.
+        assert_eq!(
+            g.sink(),
+            Some(Level {
+                name: "speaker desc".into(),
+                percent: 40,
+                muted: false
+            })
+        );
+        assert_eq!(
+            g.source(),
+            Source::Ready(Level {
+                name: "brio desc".into(),
+                percent: 100,
+                muted: false
+            })
+        );
+        // A delta names only the changed key; a params update keeps props.
+        g.apply(&metadata(
+            40,
+            json!([{"subject": 0, "key": "default.audio.source", "value": {"name": "builtin"}}]),
+        ));
+        assert_eq!(
+            g.source(),
+            Source::Ready(Level {
+                name: "builtin desc".into(),
+                percent: 50,
+                muted: true
+            })
+        );
+        assert_eq!(g.sink().map(|s| s.percent), Some(40));
+        g.apply(&json!({"id": 66, "type": "PipeWire:Interface:Node",
+            "info": {"change-mask": ["params"], "params": {"Props": [
+                {"mute": true, "channelVolumes": [0.729, 0.729]}]}}}));
+        assert_eq!(
+            g.sink(),
+            Some(Level {
+                name: "speaker desc".into(),
+                percent: 90,
+                muted: true
+            })
+        );
+        // A removed key, then a removed node.
+        g.apply(&metadata(
+            40,
+            json!([{"subject": 0, "key": "default.audio.source", "value": null}]),
+        ));
+        assert_eq!(
+            g.source(),
+            Source::Unavailable("no default audio device is selected".into())
+        );
+        g.apply(&json!({"id": 65, "info": null}));
+        g.apply(&json!({"id": 67, "info": null}));
+        assert_eq!(g.source(), Source::NoInput);
+        g.apply(&json!({"id": 66, "info": null}));
+        assert_eq!(g.sink(), None);
+    }
+
+    #[test]
+    fn percent_matches_wpctl_rounding() {
+        assert_eq!(percent(1.0), Some(100));
+        assert_eq!(percent(0.0), Some(0));
+        assert_eq!(percent(0.064), Some(40));
+        assert_eq!(percent(0.125), Some(50));
+        assert_eq!(percent(f64::NAN), None);
+        assert_eq!(percent(-1.0), None);
+        // Above 100 %, as wpctl allows.
+        assert_eq!(percent(1.728), Some(120));
+    }
+
+    #[test]
+    fn snapshots_survive_the_shared_property() {
+        let snapshot = Snapshot {
+            microphone: vec!["Firefox".into()],
+            camera: vec![],
+            audio_known: true,
+            audio_missing: false,
+            sink: Some(Level {
+                name: "Speaker".into(),
+                percent: 40,
+                muted: false,
+            }),
+            source: Some(Source::Unavailable(
+                "no default audio device is selected".into(),
+            )),
+        };
+        let text = serde_json::to_string(&snapshot).unwrap();
+        assert_eq!(serde_json::from_str::<Snapshot>(&text).unwrap(), snapshot);
+    }
+
     #[test]
     fn video_names_are_exact() {
         assert!(is_video_name("video0"));
@@ -930,6 +1340,7 @@ mod tests {
                 microphone: vec!["nirudictate".into(), "Firefox".into()],
                 camera: vec![],
                 audio_known: true,
+                ..Snapshot::default()
             },
             true,
             false,
