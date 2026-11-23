@@ -1019,6 +1019,15 @@ mod tests {
         };
         assert_eq!(display_text(&outputs, "D", &left), "D Left");
         assert_eq!(display_text(&outputs, "D", &right), "D Right");
+        // Docked with the lid shut: the laptop panel is connected but off.
+        let docked = display_outputs_from(
+            "eDP-1 connected (normal left inverted right x axis y axis)\nDP-2-1 connected primary 3440x1440+0+0 (normal left inverted right x axis y axis) 797mm x 334mm\n",
+        );
+        let big = crate::module::Screen {
+            name: Some("DP-2-1".into()),
+        };
+        assert_eq!(display_text(&docked, "D", &big), "");
+        assert_eq!(display_detail(&docked)[1], "eDP-1: off");
         // One screen does not need a permanent module.
         assert_eq!(display_text(&outputs[..1], "D", &left), "");
         assert_eq!(display_detail(&outputs)[0], "2 connected output(s)");
@@ -1177,6 +1186,12 @@ pub struct DisplayOutput {
 }
 
 impl DisplayOutput {
+    /// Connected and showing a picture. A closed laptop lid or a profile can
+    /// leave an output connected with no mode: it is not a screen then.
+    pub fn active(&self) -> bool {
+        self.resolution != "?"
+    }
+
     fn rect(&self) -> (i32, i32, i32, i32) {
         let (w, h) = self
             .resolution
@@ -1268,6 +1283,10 @@ pub fn display_text(
     icon: &str,
     screen: &crate::module::Screen,
 ) -> String {
+    // Connected outputs that are switched off are not a place to point at:
+    // eDP-1 under a closed lid would otherwise sit as a 1x1 screen at 0,0.
+    let outputs: Vec<DisplayOutput> = outputs.iter().filter(|o| o.active()).cloned().collect();
+    let outputs = outputs.as_slice();
     if outputs.len() <= 1 {
         return String::new();
     }
@@ -1363,6 +1382,9 @@ pub fn display_detail(outputs: &[DisplayOutput]) -> Vec<String> {
     }
     let mut lines = vec![format!("{} connected output(s)", outputs.len())];
     lines.extend(outputs.iter().map(|output| {
+        if !output.active() {
+            return format!("{}: off", output.name);
+        }
         format!(
             "{}: {}{} at {:+},{:+}",
             output.name,
