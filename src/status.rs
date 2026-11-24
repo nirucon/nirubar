@@ -55,6 +55,8 @@ pub struct Icons {
     pub share: &'static str,
     /// The optional Bluetooth module.
     pub bluetooth: &'static str,
+    pub bluetooth_off: &'static str,
+    pub bluetooth_connected: &'static str,
     /// The optional power-profile module.
     pub powerprofile: &'static str,
     /// The optional unread-indicator module.
@@ -116,6 +118,8 @@ impl Icons {
             layout: "\u{f009}",  // nf-fa-th-large
             microphone: "\u{f130}", // nf-fa-microphone
             bluetooth: "\u{f293}", // nf-fa-bluetooth
+            bluetooth_off: "\u{f00b2}", // nf-md-bluetooth_off
+            bluetooth_connected: "\u{f00b1}", // nf-md-bluetooth_connect
             tailscale: "\u{f0e8}", // nf-fa-sitemap (mesh)
             quicksettings: "\u{f013}", // nf-fa-cog
             agent: "\u{f17b}",   // nf-fa-android: a small friendly robot
@@ -161,6 +165,8 @@ impl Icons {
             layout: "layout",
             microphone: "mic",
             bluetooth: "bt",
+            bluetooth_off: "bt off",
+            bluetooth_connected: "bt",
             tailscale: "ts",
             quicksettings: "q",
             agent: "agent",

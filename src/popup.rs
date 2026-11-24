@@ -413,7 +413,7 @@ impl Popup {
                 self.gc,
                 14,
                 row(first + self.actions.len() as i16),
-                "Click or Up/Down and Return    Esc: close",
+                "Click, or Up/Down and Return",
                 muted,
                 bg,
             )?;

@@ -481,11 +481,8 @@ impl Timer {
             lines.push("Do Not Disturb while it runs".into());
         }
         lines.extend([
-            String::new(),
-            "scroll: length (a minute more or less while it runs)".into(),
-            "right-click: start, pause, resume".into(),
-            "middle-click: reset".into(),
-            "nirubar --timer start|pause|reset|set MINUTES".into(),
+            "type minutes, Return starts".into(),
+            "Space pauses or resumes".into(),
         ]);
         lines
     }
@@ -498,6 +495,36 @@ pub fn cli(args: &[String]) -> i32 {
     let action = match words.as_slice() {
         [] | ["status"] => None,
         ["start"] => Some(Action::Start),
+        // `start N`: that many minutes, from now (a running timer starts over).
+        ["start", m] => match m.parse::<u32>() {
+            Ok(m) if (1..=MAX_MINUTES).contains(&m) => {
+                act(Action::Reset, &settings);
+                act(Action::Set(m), &settings);
+                Some(Action::Start)
+            }
+            _ => {
+                eprintln!("nirubar: minutes must be 1 to {MAX_MINUTES}");
+                return 2;
+            }
+        },
+        // `add N` / `add -N`: minutes more or less on a running or paused timer.
+        ["add", m] => match m.parse::<i32>() {
+            Ok(m) if m != 0 && m.unsigned_abs() <= MAX_MINUTES => {
+                let step = if m > 0 {
+                    Action::Longer
+                } else {
+                    Action::Shorter
+                };
+                for _ in 1..m.unsigned_abs() {
+                    act(step, &settings);
+                }
+                Some(step)
+            }
+            _ => {
+                eprintln!("nirubar: add needs a number of minutes");
+                return 2;
+            }
+        },
         ["pause"] => Some(Action::Pause),
         ["toggle"] => Some(Action::Toggle),
         ["reset"] => Some(Action::Reset),
@@ -509,7 +536,9 @@ pub fn cli(args: &[String]) -> i32 {
             }
         },
         _ => {
-            eprintln!("Usage: nirubar --timer [status|start|pause|toggle|reset|set MINUTES]");
+            eprintln!(
+                "Usage: nirubar --timer [status|start [MINUTES]|pause|toggle|reset|set MINUTES|add [-]MINUTES]"
+            );
             return 2;
         }
     };

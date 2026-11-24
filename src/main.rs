@@ -2481,6 +2481,41 @@ impl Bar {
                 self.draw()?;
                 continue;
             }
+            // Keys a module reads in its own open panel (typed minutes in the
+            // timer), before the generic handler, which closes on most keys.
+            if let Event::KeyPress(e) = &event {
+                let open = self
+                    .popup
+                    .as_ref()
+                    .map(|p| p.module)
+                    .filter(|m| *m < self.modules.len() && self.scratch_menu.is_none());
+                if let Some(module) = open {
+                    match self.modules[module].panel_key(e.detail) {
+                        module::PanelKey::Ignored => {}
+                        module::PanelKey::Refresh => {
+                            self.close_popup()?;
+                            self.reopen = Some((module, std::time::Instant::now()));
+                            self.reopen_due()?;
+                            continue;
+                        }
+                        module::PanelKey::Run(control) => {
+                            self.close_popup()?;
+                            if let Some((program, args)) = control.command {
+                                if let Err(error) =
+                                    self.helpers.spawn(&control.key, &program, &args)
+                                {
+                                    helpers::notify_failure(&error);
+                                }
+                            }
+                            self.reopen = Some((
+                                module,
+                                std::time::Instant::now() + std::time::Duration::from_millis(300),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+            }
             // Arrow keys navigate an open calendar panel. Handle this before
             // the generic popup handler, which closes on every key press.
             if let Event::KeyPress(e) = &event {
@@ -2922,6 +2957,23 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
             nerd.bluetooth
         } else {
             plain.bluetooth
+        },
+        // The off and connected marks are newer Nerd Font glyphs: without
+        // them the plain Bluetooth rune stands in (the off state then reads
+        // dimmed, the connected one in the accent).
+        bluetooth_off: if ok(nerd.bluetooth_off) {
+            nerd.bluetooth_off
+        } else if ok(nerd.bluetooth) {
+            nerd.bluetooth
+        } else {
+            plain.bluetooth_off
+        },
+        bluetooth_connected: if ok(nerd.bluetooth_connected) {
+            nerd.bluetooth_connected
+        } else if ok(nerd.bluetooth) {
+            nerd.bluetooth
+        } else {
+            plain.bluetooth_connected
         },
         tailscale: if ok(nerd.tailscale) {
             nerd.tailscale

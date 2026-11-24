@@ -237,7 +237,7 @@ position = "top"
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "mode", "battery", "updates", "niruxupdate", "restart", "agent", "nirusec", "dnd", "disk", "quicksettings", "share", "clock"]
+modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "bluetooth", "mode", "battery", "updates", "niruxupdate", "restart", "agent", "nirusec", "dnd", "disk", "quicksettings", "share", "clock"]
 # `nirux update` keeps `modules` on the NIRUX default list and order, so every
 # machine looks the same. Set this to false to keep your own list.
 follow_default_modules = true

@@ -123,6 +123,16 @@ fn command(program: &str, args: &[&str]) -> (String, Vec<String>) {
     )
 }
 
+/// What a key in a module's panel did.
+pub enum PanelKey {
+    /// Not for the module: the panel handles it (arrows, Return, Escape).
+    Ignored,
+    /// The panel's content changed: show it again.
+    Refresh,
+    /// Run this, then show the panel again.
+    Run(Control),
+}
+
 /// A chosen item in a list of actions: a filled mark for the current one.
 pub(crate) fn chosen(on: bool, label: &str) -> String {
     format!("{} {label}", if on { "●" } else { "○" })
@@ -206,6 +216,11 @@ pub trait Module {
     /// adds the module's `controls` view as a last row by itself.
     fn actions(&mut self) -> Vec<Action> {
         Vec::new()
+    }
+    /// A key pressed in the module's open panel (X keycode). The timer reads
+    /// typed minutes this way.
+    fn panel_key(&mut self, _keycode: u8) -> PanelKey {
+        PanelKey::Ignored
     }
     /// A scroll step of `delta` units (several wheel clicks while the last
     /// command still ran, added up instead of dropped).
@@ -1240,6 +1255,7 @@ impl Module for PowerProfile {
 pub struct Bluetooth {
     pub icons: status::Icons,
     monitor: crate::bluetooth::Monitor,
+    connected: bool,
 }
 
 impl Module for Bluetooth {
@@ -1250,7 +1266,16 @@ impl Module for Bluetooth {
         Side::Right
     }
     fn render(&mut self) -> String {
-        crate::bluetooth::text(&self.monitor.snapshot(), self.icons.bluetooth)
+        let snap = self.monitor.snapshot();
+        self.connected = snap.powered && snap.devices.iter().any(|d| d.connected);
+        crate::bluetooth::text(&snap, &self.icons)
+    }
+    fn tint(&self) -> Tint {
+        if self.connected {
+            Tint::Accent
+        } else {
+            Tint::Normal
+        }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         Some((
@@ -1313,6 +1338,12 @@ impl Module for Bluetooth {
                     &["bluetooth", cmd, &d.mac],
                 ));
             }
+            rows.push(Action::ui(
+                "Pair a new device…",
+                "bluetooth-pair",
+                "nirulauncher",
+                &["--bluetooth-pair"],
+            ));
         }
         rows
     }
@@ -2196,6 +2227,32 @@ impl Module for Drives {
 pub struct TimerModule {
     pub icons: status::Icons,
     timer: crate::timer::Timer,
+    /// Minutes typed in the open panel, started with Return.
+    typed: String,
+}
+
+/// A digit from an X keycode: the number row and the keypad.
+fn digit_of(keycode: u8) -> Option<u32> {
+    match keycode {
+        10..=18 => Some(u32::from(keycode) - 9),
+        19 | 90 => Some(0),
+        87 => Some(1),
+        88 => Some(2),
+        89 => Some(3),
+        83 => Some(4),
+        84 => Some(5),
+        85 => Some(6),
+        79 => Some(7),
+        80 => Some(8),
+        81 => Some(9),
+        _ => None,
+    }
+}
+
+fn timer_command(args: &[&str]) -> Option<Control> {
+    let mut all = vec!["--timer"];
+    all.extend_from_slice(args);
+    self_command(&all).map(|c| Control::run("timer-action", Some(c)))
 }
 
 impl Module for TimerModule {
@@ -2216,7 +2273,78 @@ impl Module for TimerModule {
         }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
-        Some(("Timer".into(), self.timer.detail()))
+        let mut lines = self.timer.detail();
+        if !self.typed.is_empty() {
+            lines.insert(0, format!("start {} min: press Return", self.typed));
+        }
+        Some(("Timer".into(), lines))
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        use crate::timer::Run;
+        let state = crate::timer::load(&self.timer.settings);
+        let row = |label: String, args: &[&str]| Action {
+            label,
+            control: timer_command(args),
+            stay: true,
+        };
+        match state.run {
+            Run::Idle => {
+                let mut rows = Vec::new();
+                let mut presets = vec![5u32, 15, 25, 45, 60];
+                if !presets.contains(&state.minutes) {
+                    presets.insert(0, state.minutes);
+                }
+                for m in presets {
+                    let label = if m == state.minutes {
+                        format!("Start {m} min (last used)")
+                    } else {
+                        format!("Start {m} min")
+                    };
+                    rows.push(row(label, &["start", &m.to_string()]));
+                }
+                rows
+            }
+            Run::Running { .. } => vec![
+                row("Pause".into(), &["pause"]),
+                row("5 minutes more".into(), &["add", "5"]),
+                row("1 minute more".into(), &["add", "1"]),
+                row("5 minutes less".into(), &["add", "-5"]),
+                row("Stop and reset".into(), &["reset"]),
+            ],
+            Run::Paused { .. } => vec![
+                row("Resume".into(), &["start"]),
+                row("5 minutes more".into(), &["add", "5"]),
+                row("Stop and reset".into(), &["reset"]),
+            ],
+        }
+    }
+    fn panel_key(&mut self, keycode: u8) -> PanelKey {
+        if let Some(d) = digit_of(keycode) {
+            if self.typed.len() < 3 && !(self.typed.is_empty() && d == 0) {
+                self.typed.push(char::from_digit(d, 10).unwrap_or('0'));
+            }
+            return PanelKey::Refresh;
+        }
+        match keycode {
+            // BackSpace
+            22 if !self.typed.is_empty() => {
+                self.typed.pop();
+                PanelKey::Refresh
+            }
+            // Return / KP_Enter with typed minutes
+            36 | 104 if !self.typed.is_empty() => {
+                let m: u32 = self.typed.parse().unwrap_or(0);
+                self.typed.clear();
+                match m.clamp(1, crate::timer::MAX_MINUTES) {
+                    m if m > 0 => timer_command(&["start", &m.to_string()])
+                        .map_or(PanelKey::Refresh, PanelKey::Run),
+                    _ => PanelKey::Refresh,
+                }
+            }
+            // Space: start, pause or resume
+            65 => timer_command(&["toggle"]).map_or(PanelKey::Ignored, PanelKey::Run),
+            _ => PanelKey::Ignored,
+        }
     }
     fn control(&mut self, input: Input) -> Option<Control> {
         use crate::timer::Action;
@@ -3171,6 +3299,7 @@ pub fn build(
             "timer" => out.push(Box::new(TimerModule {
                 icons,
                 timer: crate::timer::Timer::new(),
+                typed: String::new(),
             })),
             "restart" => out.push(Box::new(Restart {
                 icons,
@@ -3188,6 +3317,7 @@ pub fn build(
             "bluetooth" => out.push(Box::new(Bluetooth {
                 icons,
                 monitor: crate::bluetooth::Monitor::new(),
+                connected: false,
             })),
             "recording" => out.push(Box::new(Recording)),
             "scratchpad" => out.push(Box::new(Scratchpad::new(icons))),

@@ -103,7 +103,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `tailscale` | Tailscale peers, only when Tailscale is installed |
 | `network` | Wired link (`!` = link up without a default route) |
 | `wifi` | Wi-Fi radio and connection; click opens the Wi-Fi selector, right-click the details |
-| `bluetooth` | Off, on or connected device; right-click power; the panel turns it on or off and connects or disconnects paired devices. Follows BlueZ's signals, no polling |
+| `bluetooth` | On by default, hidden on a computer without Bluetooth. A mark for off, on and connected (the device's name and battery, in the accent colour); right-click power; the panel turns it on or off, connects or disconnects paired devices and pairs a new one (`nirulauncher --bluetooth-pair`). Follows BlueZ's signals, no polling |
 | `powerprofile` | Active power profile; right-click next profile; the panel sets any profile or Automatic |
 | `battery` | Aggregated battery charge and state, red at 15 % or less while discharging, with one notice at 15 % and at 7 %; the panel adds battery health, charge cycles and a 24 h charge graph |
 | `updates` | Available package upgrades (`apt`, `pacman` or `xbps`); the panel checks now or upgrades in a terminal |
@@ -121,7 +121,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `dnd`, `notifications` | Do Not Disturb toggle; notification history, with Clear all and Do Not Disturb in the panel |
 | `disk` | Red disk mark and percentage, only while `/` or your home is at least `disk_warn` (90) percent full; click for used/free space and a clean-up with `nirux clean` |
 | `drives` | USB sticks, SD cards and external disks, only while one is attached; middle-click opens, right-click ejects all safely |
-| `timer` | Focus and egg timer; scroll sets minutes, right-click start/pause, middle-click reset, a notice and the `timer-done` sound at the end |
+| `timer` | Focus and egg timer; the panel starts 5, 15, 25, 45 or 60 minutes, pauses, adds or takes minutes and resets; type minutes in it and press Return, Space pauses. On the bar: scroll sets minutes, right-click start/pause, middle-click reset. A notice and the `timer-done` sound at the end |
 | `headset` | Battery of connected Bluetooth devices (headsets, mice); red and one notice at 15 % or less |
 | `quicksettings` | Gear that opens Quick Settings (volume, Wi-Fi, Bluetooth, displays, power, theme, DND, idle, lock) |
 | `clock` | Date and time; click for a Monday-first calendar with ISO week numbers and, when configured, calendar events |

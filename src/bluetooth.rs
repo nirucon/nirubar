@@ -167,22 +167,30 @@ impl Monitor {
     }
 }
 
-pub fn text(snapshot: &Snapshot, icon: &str) -> String {
+/// The bar text: the mark for off, on or connected, and the connected
+/// device's name (short) with its battery when it reports one. Empty when
+/// the computer has no Bluetooth: the module is then not on the bar.
+pub fn text(snapshot: &Snapshot, icons: &crate::status::Icons) -> String {
     if snapshot.adapter.is_none() {
         return String::new();
     }
     if snapshot.error.is_some() {
-        return format!("{icon} --");
+        return format!("{} --", icons.bluetooth);
     }
     if !snapshot.powered {
-        return format!("{icon} off");
+        return icons.bluetooth_off.to_string();
     }
-    match snapshot.devices.iter().find(|d| d.connected) {
-        Some(device) => {
-            let name: String = device.name.chars().take(14).collect();
-            format!("{icon} {name}")
+    let connected: Vec<&Device> = snapshot.devices.iter().filter(|d| d.connected).collect();
+    match connected.as_slice() {
+        [] => icons.bluetooth.to_string(),
+        [one] => {
+            let name: String = one.name.chars().take(12).collect();
+            match one.battery {
+                Some(b) => format!("{} {name} {b}%", icons.bluetooth_connected),
+                None => format!("{} {name}", icons.bluetooth_connected),
+            }
         }
-        None => icon.to_string(),
+        many => format!("{} {}", icons.bluetooth_connected, many.len()),
     }
 }
 
@@ -256,7 +264,7 @@ mod tests {
         // No adapter: hidden, not an error.
         let none = from_objects(&crate::objects::Objects::new());
         assert!(none.adapter.is_none() && none.error.is_none());
-        assert_eq!(text(&none, "B"), "");
+        assert_eq!(text(&none, &crate::status::Icons::plain()), "");
     }
 
     use super::*;
@@ -264,16 +272,29 @@ mod tests {
     #[test]
     fn parses_state_and_never_invents_battery_or_connection() {
         let snapshot = parse("state=ready\nadapter=AA:BB\npowered=true\ndevice=CC:DD\tHeadphones\ttrue\t75\ndevice=EE:FF\tKeyboard\tfalse\t\n");
-        assert_eq!(text(&snapshot, "bt"), "bt Headphones");
+        let plain = crate::status::Icons::plain();
+        assert_eq!(text(&snapshot, &plain), "bt Headphones 75%");
         assert_eq!(snapshot.devices[1].battery, None);
         assert!(!snapshot.devices[1].connected);
         assert_eq!(
-            text(&parse("state=ready\nadapter=\npowered=false\n"), "bt"),
+            text(&parse("state=ready\nadapter=\npowered=false\n"), &plain),
             ""
         );
         assert_eq!(
-            text(&parse("state=provider-unavailable\nreason=missing\n"), "bt"),
+            text(
+                &parse("state=provider-unavailable\nreason=missing\n"),
+                &plain
+            ),
             ""
         );
+        // Off, and two connected.
+        assert_eq!(
+            text(&parse("state=ready\nadapter=AA\npowered=false\n"), &plain),
+            "bt off"
+        );
+        let two = parse(
+            "state=ready\nadapter=AA\npowered=true\ndevice=C\tA\ttrue\t\ndevice=D\tB\ttrue\t\n",
+        );
+        assert_eq!(text(&two, &plain), "bt 2");
     }
 }

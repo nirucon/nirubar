@@ -193,7 +193,11 @@ Requires BlueZ and the distribution Bluetooth service. The module is hidden
 when no adapter exists. The service is enabled by a normal NIRUX install. The
 state comes from BlueZ's own signals on the system bus (a device connects,
 the power changes), so nothing is polled. The panel turns Bluetooth on or off
-and connects or disconnects each paired device.
+and connects or disconnects each paired device. **Pair a new device…** opens
+the launcher's search (`nirulauncher --bluetooth-pair`): ten seconds of
+scanning, the devices nearby with their kind and signal, and Enter pairs,
+trusts and connects one. `bluetooth` is in the default module list; a computer
+without an adapter shows nothing.
 
 ```sh
 niructl bluetooth status
@@ -233,13 +237,14 @@ window, where it has one, is the last row, Open settings.
 | `volume` | mute or unmute, 25/50/75/100 %, the output device, a mixer (`pavucontrol`) |
 | `microphone` | mute or unmute, the input device |
 | `media` | play or pause, next, previous |
-| `bluetooth` | on or off, connect or disconnect each paired device |
+| `bluetooth` | on or off, connect or disconnect each paired device, pair a new device |
 | `powerprofile` | each profile, Automatic |
 | `battery` | the power profile selector |
 | `network` | choose a Wi-Fi network |
 | `updates` | check now, upgrade the system in a terminal, update NIRUX in a terminal |
 | `notifications` | clear all, Do Not Disturb on or off |
 | `pulse` | a system monitor (`btop`, `htop` or `top`) in a terminal |
+| `timer` | start 5, 15, 25, 45 or 60 minutes; pause or resume, a minute or five more or less, reset. Typed digits and Return start that many minutes, Space pauses |
 
 Panels close on a click on the same module, a click elsewhere or Escape.
 A panel with actions waits at least 10 seconds, counted from the last move
