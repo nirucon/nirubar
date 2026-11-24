@@ -104,6 +104,19 @@ pub struct Reader {
     signals: Option<zbus::MessageStream>,
 }
 
+/// The stream and the connection remove their match rule and close inside
+/// the runtime: dropped after it, zbus found no reactor and the thread
+/// panicked when a watcher stopped (a bar restart).
+impl Drop for Reader {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.as_ref() {
+            let _inside = runtime.enter();
+            self.signals.take();
+            self.connection.take();
+        }
+    }
+}
+
 impl Reader {
     pub fn new() -> Self {
         Self {
@@ -343,6 +356,35 @@ pub fn fixture(var: &str) -> Option<Objects> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_reader_with_a_live_stream_stops_without_a_panic() {
+        // Needs the system bus; without one the reader holds nothing to drop.
+        let worker = std::thread::spawn(|| {
+            let mut reader = Reader::new();
+            let bus = reader.runtime.as_ref().and_then(|r| {
+                r.block_on(async {
+                    tokio::time::timeout(Duration::from_secs(2), zbus::Connection::system()).await
+                })
+                .ok()?
+                .ok()
+            });
+            let Some(bus) = bus else { return false };
+            reader.connection = Some(bus);
+            let stop = tokio::sync::Notify::new();
+            let _ = reader.wait(
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                Duration::from_millis(20),
+                &stop,
+            );
+            let streaming = reader.signals.is_some();
+            drop(reader);
+            streaming
+        });
+        let streaming = worker.join();
+        assert!(streaming.is_ok(), "the reader panicked when it was dropped");
+    }
     use super::*;
 
     #[test]
