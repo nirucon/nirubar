@@ -165,8 +165,9 @@ input; missing providers remain visible.
 ### Wi-Fi
 
 The `wifi` module appears automatically after `network` when an adapter exists,
-including while the radio is off. Left click opens `nirulauncher --wifi`; the
-bar does not keep a separate network editor. Set `wifi = false` in `[bar]` to
+including while the radio is off. Left click opens `nirulauncher --wifi` and
+right click shows the connection's details; the bar does not keep a separate
+network editor. Set `wifi = false` in `[bar]` to
 keep wireless state in the combined `network` module instead.
 
 ### Microphone
@@ -189,7 +190,10 @@ nirulauncher --microphone
 ### Bluetooth
 
 Requires BlueZ and the distribution Bluetooth service. The module is hidden
-when no adapter exists. The service is enabled by a normal NIRUX install.
+when no adapter exists. The service is enabled by a normal NIRUX install. The
+state comes from BlueZ's own signals on the system bus (a device connects,
+the power changes), so nothing is polled. The panel turns Bluetooth on or off
+and connects or disconnects each paired device.
 
 ```sh
 niructl bluetooth status
@@ -200,7 +204,9 @@ nirulauncher --bluetooth
 ### Power profiles
 
 Requires `power-profiles-daemon` and `powerprofilesctl`. Only profiles reported
-by the provider are offered; unsupported or denied changes are reported.
+by the provider are offered; unsupported or denied changes are reported. The
+panel sets any of them, or Automatic (follow the charger); the state is read
+every 20 seconds and at once after a change from the bar.
 
 ```sh
 niructl powerprofile status
@@ -216,7 +222,28 @@ panel never applies a layout.
 
 ## Display and panels
 
+A panel shows what the module knows and, under it, what can be done: click a
+row, or choose one with Up/Down and Return (the chosen row has a bar in the
+accent colour). A row that changes a state (mute, a level, a device, a
+profile) shows the panel again with the new state. The module's own control
+window, where it has one, is the last row, Open settings.
+
+| Module | Panel actions |
+| --- | --- |
+| `volume` | mute or unmute, 25/50/75/100 %, the output device, a mixer (`pavucontrol`) |
+| `microphone` | mute or unmute, the input device |
+| `media` | play or pause, next, previous |
+| `bluetooth` | on or off, connect or disconnect each paired device |
+| `powerprofile` | each profile, Automatic |
+| `battery` | the power profile selector |
+| `network` | choose a Wi-Fi network |
+| `updates` | check now, upgrade the system in a terminal, update NIRUX in a terminal |
+| `notifications` | clear all, Do Not Disturb on or off |
+| `pulse` | a system monitor (`btop`, `htop` or `top`) in a terminal |
+
 Panels close on a click on the same module, a click elsewhere or Escape.
+A panel with actions waits at least 10 seconds, counted from the last move
+of the pointer in it.
 Quick-glance panels also close after `popup_timeout_seconds` (default 4;
 0 keeps them open until dismissed). Reading panels ignore that timeout and
 stay open until dismissed:
@@ -225,8 +252,9 @@ stay open until dismissed:
 | --- | --- |
 | `clock` (calendar), `weather` (rain timeline), `tasks`, `pulse` (load graph), `notifications` (history) | every other panel: `volume`, `microphone`, `network`, `battery`, `bluetooth`, `media`, `powerprofile`, `brightness`, `updates`, `niruxupdate`, `restart`, `disk`, `uptime`, `display`, `sun`, `tailscale`, `quicksettings`, `mode`, `layout`, `recording`, `dictation`, `privacy`, `scratchpad`, tray menus, the `+N` list |
 
-(`wifi`, `agent`, `share`, `nirusec` and `dnd` open their own control
-window on a click rather than a panel, so no timeout applies to them.
+(`wifi`, `agent`, `share`, `nirusec`, `dnd` and `quicksettings` open their
+own control window on a click rather than a panel, so no timeout applies to
+them.
 `restart` runs its action on a left click and opens its panel on a right
 click.)
 

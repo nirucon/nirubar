@@ -85,6 +85,52 @@ pub struct Volume {
 }
 
 impl Volume {
+    /// A volume step that never goes past 100% and unmutes on the way up.
+    pub fn step_capped(delta: i32) -> Option<(String, Vec<String>)> {
+        if delta == 0 {
+            return Self::step_command(5).map(|_| (String::new(), Vec::new()));
+        }
+        if which("wpctl") {
+            let script = if delta > 0 {
+                format!(
+                    "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ {delta}%+"
+                )
+            } else {
+                format!("wpctl set-volume @DEFAULT_AUDIO_SINK@ {}%-", -delta)
+            };
+            return Some(("sh".into(), vec!["-c".into(), script]));
+        }
+        Self::step_command(delta)
+    }
+
+    /// Set the volume to `percent` and unmute.
+    pub fn set_command(percent: u32) -> Option<(String, Vec<String>)> {
+        if which("wpctl") {
+            return Some((
+                "sh".into(),
+                vec![
+                    "-c".into(),
+                    format!(
+                        "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; wpctl set-volume @DEFAULT_AUDIO_SINK@ {percent}%"
+                    ),
+                ],
+            ));
+        }
+        if which("amixer") {
+            return Some((
+                "amixer".into(),
+                vec![
+                    "-q".into(),
+                    "set".into(),
+                    "Master".into(),
+                    format!("{percent}%"),
+                    "unmute".into(),
+                ],
+            ));
+        }
+        None
+    }
+
     /// Read the default sink volume.
     ///
     /// `wpctl` is preferred because it is what PipeWire systems use; `amixer`

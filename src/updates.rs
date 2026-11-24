@@ -142,6 +142,19 @@ fn may_start(last: Option<std::time::Instant>, now: std::time::Instant, max_age:
     last.map_or(true, |at| now.saturating_duration_since(at) >= gap)
 }
 
+/// Ask the package manager now and write the answer (`nirubar --check-updates`).
+pub fn refresh_now() -> bool {
+    let Some(count) = query() else {
+        return false;
+    };
+    let path = cache_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&tmp, count.to_string()).is_ok() && std::fs::rename(&tmp, &path).is_ok()
+}
+
 fn refresh_in_background(path: PathBuf, max_age: Duration) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;

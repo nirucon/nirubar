@@ -96,6 +96,11 @@ impl HelperPool {
         }
     }
 
+    /// Whether a control with this key still runs.
+    pub(crate) fn running(&self, key: &str) -> bool {
+        self.running.contains_key(key)
+    }
+
     /// Reap finished helpers and return readable failures.
     pub(crate) fn reap(&mut self) -> Vec<String> {
         let mut failures = std::mem::take(&mut self.pending_failures);

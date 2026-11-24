@@ -75,13 +75,18 @@ configuration is preserved. On a NIRUX system use `nirux update` instead.
 NIRUWM starts one bar per monitor at login. Mouse conventions are the same in
 every module:
 
-- **Left click** opens information and never changes playback or mute.
-- **Right click** and **scroll** perform the explicit actions (play/pause,
-  mute, volume, next profile).
-- **Middle click** opens the keyboard-first detail view where one exists.
-- One panel is open at a time; Escape or a click elsewhere closes it. A panel
-  footer says whether it is informational or has controls; Return or a click
-  on that footer opens the control view.
+- **Left click** opens the module's panel: what it shows, and under it the
+  things you can do (mute, a volume level, an output, a power profile, a
+  Bluetooth device, clear notifications, check for updates…). Click a row, or
+  choose one with Up/Down and Return; the row under the pointer is marked.
+  Rows that change a state show the panel again with the new state.
+- **Right click** and **scroll** perform the quick actions (play/pause, mute,
+  volume, next profile). Scrolling the volume never goes past 100 % and
+  unmutes on the way up; fast wheel clicks are added up, never dropped.
+- **Scroll over the workspaces** moves to the next or previous one.
+- **Middle click** opens the keyboard-first detail view where one exists; on
+  a tray icon it is the icon's secondary action.
+- One panel is open at a time; Escape or a click elsewhere closes it.
 
 ### Modules
 
@@ -91,20 +96,20 @@ Add, remove or reorder modules in `[bar] modules`:
 |---|---|
 | `workspaces` | Ten workspace cells with active/occupied/urgent state; click to switch |
 | `media` | Playing title with a progress hairline; right-click play/pause, scroll previous/next |
-| `volume` | Output level or mute; scroll to change, right-click mute, middle-click microphone mute |
-| `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector |
+| `volume` | Output level or mute; scroll to change, right-click mute, middle-click microphone mute; the panel mutes, sets 25/50/75/100 %, switches the output and opens a mixer |
+| `microphone` | Input mute and gain; right-click mute, scroll gain, middle-click source selector; the panel mutes and switches the input |
 | `brightness` | Backlight percentage; hidden without a readable backlight |
 | `display` | This bar's screen position; Open controls for display profiles |
 | `tailscale` | Tailscale peers, only when Tailscale is installed |
 | `network` | Wired link (`!` = link up without a default route) |
-| `wifi` | Wi-Fi radio and connection; click opens the Wi-Fi selector |
-| `bluetooth` | Off, on or connected device; right-click power |
-| `powerprofile` | Active power profile; right-click next profile |
-| `battery` | Aggregated battery charge and state; the panel adds battery health, charge cycles and a 24 h charge graph |
-| `updates` | Available package upgrades (`apt`, `pacman` or `xbps`) |
+| `wifi` | Wi-Fi radio and connection; click opens the Wi-Fi selector, right-click the details |
+| `bluetooth` | Off, on or connected device; right-click power; the panel turns it on or off and connects or disconnects paired devices. Follows BlueZ's signals, no polling |
+| `powerprofile` | Active power profile; right-click next profile; the panel sets any profile or Automatic |
+| `battery` | Aggregated battery charge and state, red at 15 % or less while discharging, with one notice at 15 % and at 7 %; the panel adds battery health, charge cycles and a 24 h charge graph |
+| `updates` | Available package upgrades (`apt`, `pacman` or `xbps`); the panel checks now or upgrades in a terminal |
 | `niruxupdate` | A newer NIRUX release, or one that needs a new login |
 | `restart` | Programs still running from an older NIRUX version after an update; hidden when none. Left click runs `nirux stale restart`, right click lists which restart automatically and which to reopen |
-| `pulse` | CPU and memory; click for a one-minute graph |
+| `pulse` | CPU and memory, in the accent from 80 °C and red from 90 °C; click for the CPU temperature, a one-minute graph and a system monitor |
 | `uptime`, `sun`, `weather` | Uptime, sunrise/sunset, cached weather with an eight-hour rain timeline |
 | `mode`, `layout` | Active work mode and NIRUWM's studio mode; current NIRUWM layout |
 | `tasks`, `agent` | NIRU/OpenCode task status; OpenCode prompt entry |
@@ -113,7 +118,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `privacy` | A dot while an app uses the microphone, a camera or NIRUCLIP records the screen; click lists the apps |
 | `recording` | NIRUCLIP recording timer; right-click stop and save |
 | `share`, `nirusec` | NIRUSHARE inbox entry; NIRUSEC state mark |
-| `dnd`, `notifications` | Do Not Disturb toggle; notification history |
+| `dnd`, `notifications` | Do Not Disturb toggle; notification history, with Clear all and Do Not Disturb in the panel |
 | `disk` | Red disk mark and percentage, only while `/` or your home is at least `disk_warn` (90) percent full; click for used/free space and a clean-up with `nirux clean` |
 | `drives` | USB sticks, SD cards and external disks, only while one is attached; middle-click opens, right-click ejects all safely |
 | `timer` | Focus and egg timer; scroll sets minutes, right-click start/pause, middle-click reset, a notice and the `timer-done` sound at the end |

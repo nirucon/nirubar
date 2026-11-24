@@ -84,7 +84,7 @@ pub struct Popup {
     gc: Gcontext,
     /// Module index the panel belongs to, so a second click toggles it.
     pub module: usize,
-    opened: Instant,
+    opened: std::cell::Cell<Instant>,
     timeout: Duration,
     /// Where the panel is, so a click inside it does not close it.
     x: i16,
@@ -107,6 +107,11 @@ pub struct Popup {
     decor: Decor,
     /// Character advance of the panel font, known after the first paint.
     advance: std::cell::Cell<i16>,
+    /// The action row under the pointer or chosen with the arrow keys.
+    hovered: std::cell::Cell<Option<usize>>,
+    /// The accent colour of the hover bar, and the background to erase it.
+    accent: u32,
+    background: u32,
 }
 
 impl Popup {
@@ -135,11 +140,14 @@ impl Popup {
     ) -> Result<Self> {
         let line_height = (font_size * 1.5).ceil() as u16;
         let width: u16 = 340;
-        let content_rows = if actions.is_empty() {
+        // Information lines, then (after a gap) the actions, then the footer.
+        let gap = u16::from(!lines.is_empty() && !actions.is_empty());
+        let info_rows = if actions.is_empty() || !lines.is_empty() {
             lines.len() as u16
         } else {
-            actions.len() as u16
+            0
         };
+        let content_rows = info_rows + gap + actions.len() as u16;
         let extend = if actions.is_empty() {
             u16::from(controls)
         } else {
@@ -159,7 +167,7 @@ impl Popup {
         } as i16;
         let action_top = y
             .saturating_add(10)
-            .saturating_add(i16::try_from(line_height).unwrap_or(i16::MAX));
+            .saturating_add(i16::try_from(line_height * (1 + info_rows + gap)).unwrap_or(i16::MAX));
         let previous_focus = c.get_input_focus()?.reply()?;
 
         let screen_width = c.setup().roots[0].width_in_pixels;
@@ -208,7 +216,13 @@ impl Popup {
                 .override_redirect(1)
                 .background_pixel(bg)
                 .border_pixel(Theme::pixel(&theme.border)?)
-                .event_mask(EventMask::EXPOSURE | EventMask::BUTTON_PRESS | EventMask::KEY_PRESS),
+                .event_mask(
+                    EventMask::EXPOSURE
+                        | EventMask::BUTTON_PRESS
+                        | EventMask::KEY_PRESS
+                        | EventMask::POINTER_MOTION
+                        | EventMask::LEAVE_WINDOW,
+                ),
         )?;
         c.create_gc(gc, win, &CreateGCAux::new())?;
         // Grab the keyboard so Escape reaches the panel. The grab is released
@@ -248,8 +262,16 @@ impl Popup {
             catch,
             gc,
             module,
-            opened: Instant::now(),
-            timeout: Duration::from_secs(u64::from(timeout_seconds)),
+            opened: std::cell::Cell::new(Instant::now()),
+            // A panel with things to choose waits at least 10 s, counted
+            // from the last move or key in it.
+            timeout: Duration::from_secs(u64::from(
+                if actions.is_empty() || timeout_seconds == 0 {
+                    timeout_seconds
+                } else {
+                    timeout_seconds.max(10)
+                },
+            )),
             x,
             y,
             width,
@@ -265,6 +287,9 @@ impl Popup {
             previous_focus: (previous_focus.focus, previous_focus.revert_to),
             decor: decor.clone(),
             advance: std::cell::Cell::new(0),
+            hovered: std::cell::Cell::new(None),
+            accent: Theme::pixel(&theme.focus).unwrap_or(0x88_88_88),
+            background: bg,
         };
         popup.paint(c, root, theme, font_size, font_path, title, lines)?;
         Ok(popup)
@@ -299,7 +324,7 @@ impl Popup {
         let advance = renderer.width("M").max(1);
         self.advance.set(advance);
         renderer.line(c, self.gc, 14, row(0), &title.to_uppercase(), fg, bg)?;
-        if self.actions.is_empty() {
+        {
             for (i, line) in lines.iter().enumerate() {
                 if line.is_empty() {
                     continue;
@@ -347,39 +372,54 @@ impl Popup {
                     bullet.colour,
                 )?;
             }
-            let footer = if self.controls {
-                "Return: open controls    Esc: close"
-            } else if !self.decor.links.is_empty() {
-                "Click: open in browser    Esc: close"
-            } else {
-                "Informational panel    Esc: close"
-            };
-            renderer.line(
-                c,
-                self.gc,
-                14,
-                row(lines.len() as i16 + 1),
-                footer,
-                muted,
-                bg,
-            )?;
-        } else {
+            if self.actions.is_empty() {
+                let footer = if self.controls {
+                    "Return: open controls    Esc: close"
+                } else if !self.decor.links.is_empty() {
+                    "Click: open in browser    Esc: close"
+                } else {
+                    "Informational panel    Esc: close"
+                };
+                renderer.line(
+                    c,
+                    self.gc,
+                    14,
+                    row(lines.len() as i16 + 1),
+                    footer,
+                    muted,
+                    bg,
+                )?;
+            }
+        }
+        if !self.actions.is_empty() {
+            let first = self.first_action_row(lines.len());
             for (i, action) in self.actions.iter().enumerate() {
                 if action.separator || action.label.is_empty() {
                     continue;
                 }
                 let colour = if action.enabled { fg } else { muted };
-                renderer.line(c, self.gc, 14, row(i as i16 + 1), &action.label, colour, bg)?;
+                renderer.line(
+                    c,
+                    self.gc,
+                    14,
+                    row(first + i as i16),
+                    &action.label,
+                    colour,
+                    bg,
+                )?;
             }
             renderer.line(
                 c,
                 self.gc,
                 14,
-                row(self.actions.len() as i16 + 1),
-                "Esc: close",
+                row(first + self.actions.len() as i16),
+                "Click or Up/Down and Return    Esc: close",
                 muted,
                 bg,
             )?;
+            if let Some(h) = self.hovered.get() {
+                self.bar(c, h, self.accent)?;
+            }
         }
         c.flush()?;
         Ok(())
@@ -396,6 +436,91 @@ impl Popup {
             &self.title,
             &self.lines,
         )
+    }
+
+    /// The body row of the first action: after the information lines and a
+    /// gap row when there are both.
+    fn first_action_row(&self, lines: usize) -> i16 {
+        if lines == 0 {
+            1
+        } else {
+            lines as i16 + 2
+        }
+    }
+
+    /// The thin accent bar left of an action row (or the ground to erase it).
+    fn bar(&self, c: &RustConnection, index: usize, colour: u32) -> Result<()> {
+        let lh = self.line_height.max(1);
+        let top = self.action_top - self.y + lh * index as i16 + lh / 4;
+        c.change_gc(self.gc, &ChangeGCAux::new().foreground(colour))?;
+        c.poly_fill_rectangle(
+            self.win,
+            self.gc,
+            &[Rectangle {
+                x: 5,
+                y: top,
+                width: 4,
+                height: (lh * 3 / 4).max(2) as u16,
+            }],
+        )?;
+        Ok(())
+    }
+
+    /// Mark an action row as the chosen one (pointer or arrow keys).
+    pub fn hover(&self, c: &RustConnection, index: Option<usize>) -> Result<()> {
+        self.opened.set(Instant::now());
+        let index = index.filter(|i| {
+            self.actions
+                .get(*i)
+                .is_some_and(|a| a.enabled && !a.separator && !a.label.is_empty())
+        });
+        let old = self.hovered.get();
+        if old == index {
+            return Ok(());
+        }
+        if let Some(o) = old {
+            self.bar(c, o, self.background)?;
+        }
+        if let Some(n) = index {
+            self.bar(c, n, self.accent)?;
+        }
+        self.hovered.set(index);
+        c.flush()?;
+        Ok(())
+    }
+
+    /// The action row at a root y, if the pointer is over one.
+    fn action_at(&self, root_y: i16) -> Option<usize> {
+        if self.actions.is_empty() || root_y < self.action_top {
+            return None;
+        }
+        let i = ((root_y - self.action_top) / self.line_height.max(1)) as usize;
+        (i < self.actions.len()).then_some(i)
+    }
+
+    /// Move the chosen action up or down, skipping rows that do nothing.
+    pub fn step(&self, c: &RustConnection, delta: i32) -> Result<()> {
+        let n = self.actions.len() as i32;
+        if n == 0 {
+            return Ok(());
+        }
+        let usable = |i: i32| {
+            self.actions
+                .get(i as usize)
+                .is_some_and(|a| a.enabled && !a.separator && !a.label.is_empty())
+        };
+        let mut i = match self.hovered.get() {
+            Some(h) => h as i32,
+            None if delta > 0 => -1,
+            None => n,
+        };
+        for _ in 0..n {
+            i = (i + delta).rem_euclid(n);
+            if usable(i) {
+                return self.hover(c, Some(i as usize));
+            }
+        }
+        Ok(())
     }
 
     /// True when a pointer position is inside the panel.
@@ -425,7 +550,7 @@ impl Popup {
 
     /// Expire the panel after the configured time.
     pub fn expired(&self) -> bool {
-        !self.timeout.is_zero() && self.opened.elapsed() >= self.timeout
+        !self.timeout.is_zero() && self.opened.get().elapsed() >= self.timeout
     }
 
     pub fn window(&self) -> Window {
@@ -462,6 +587,10 @@ pub enum Outcome {
     Action(usize),
     /// Close the panel and open this URL in the browser.
     Open(String),
+    /// The pointer moved over this action row (or off all of them).
+    Hover(Option<usize>),
+    /// The arrow keys moved the chosen action.
+    Step(i32),
 }
 
 impl Popup {
@@ -498,8 +627,20 @@ impl Popup {
                 // stay responsive.
                 Outcome::Close
             }
-            // Return opens the explicit controls; any other key dismisses.
-            Event::KeyPress(e) if e.detail == 36 && self.controls => Outcome::Controls,
+            Event::MotionNotify(e) if !self.actions.is_empty() => {
+                Outcome::Hover(self.action_at(e.root_y))
+            }
+            Event::LeaveNotify(_) if !self.actions.is_empty() => Outcome::Hover(None),
+            // Up and Down choose an action.
+            Event::KeyPress(e) if !self.actions.is_empty() && e.detail == 111 => Outcome::Step(-1),
+            Event::KeyPress(e) if !self.actions.is_empty() && e.detail == 116 => Outcome::Step(1),
+            // Return runs the chosen action, or opens the explicit controls.
+            Event::KeyPress(e) if e.detail == 36 => match self.hovered.get() {
+                Some(i) => Outcome::Action(i),
+                None if self.controls => Outcome::Controls,
+                None if !self.actions.is_empty() => Outcome::Keep,
+                None => Outcome::Close,
+            },
             Event::KeyPress(_) => Outcome::Close,
             _ => Outcome::Keep,
         }

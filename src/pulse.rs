@@ -21,6 +21,8 @@ pub struct Sample {
     /// Percent used on the fullest filesystem, or 0 when nothing is mounted
     /// that should be reported.
     pub disk: u8,
+    /// CPU temperature in °C, or 0 when the machine does not report one.
+    pub temp: u8,
 }
 
 /// The raw counters behind `cpu`, kept between samples.
@@ -163,13 +165,72 @@ fn filesystem_percent(path: &Path) -> Option<u8> {
     Some(((used.saturating_mul(100)) / buf.f_blocks).min(100) as u8)
 }
 
-/// Take one sample, given the counters read at the same moment.
-pub fn sample(now: &CpuCounters, previous: &CpuCounters) -> Sample {
+/// Take one sample, given the counters read at the same moment. `disk` is
+/// passed in: filesystems change slowly and are looked at once a minute.
+pub fn sample(now: &CpuCounters, previous: &CpuCounters, disk: u8) -> Sample {
     Sample {
         cpu: now.percentage_since(previous),
         memory: memory_percent().unwrap_or(0),
-        disk: disk_percent().unwrap_or(0),
+        disk,
+        temp: cpu_temperature().unwrap_or(0),
     }
+}
+
+/// The sensor that reports the CPU's temperature, found once: the AMD and
+/// Intel drivers first, then the ARM and ACPI ones, then a thermal zone.
+fn temperature_file() -> Option<&'static std::path::PathBuf> {
+    static FILE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    FILE.get_or_init(|| {
+        let hwmon: Vec<std::path::PathBuf> = fs::read_dir("/sys/class/hwmon")
+            .map(|rd| rd.filter_map(Result::ok).map(|e| e.path()).collect())
+            .unwrap_or_default();
+        for want in [
+            "k10temp",
+            "zenpower",
+            "coretemp",
+            "cpu_thermal",
+            "soc_thermal",
+            "acpitz",
+        ] {
+            for dir in &hwmon {
+                let name = fs::read_to_string(dir.join("name")).unwrap_or_default();
+                if name.trim() != want {
+                    continue;
+                }
+                // The package or die reading when the sensor labels its inputs.
+                for i in 1..=16 {
+                    let label =
+                        fs::read_to_string(dir.join(format!("temp{i}_label"))).unwrap_or_default();
+                    if matches!(label.trim(), "Tctl" | "Tdie" | "Package id 0") {
+                        return Some(dir.join(format!("temp{i}_input")));
+                    }
+                }
+                let first = dir.join("temp1_input");
+                if first.exists() {
+                    return Some(first);
+                }
+            }
+        }
+        let zones = fs::read_dir("/sys/class/thermal").ok()?;
+        for zone in zones.filter_map(Result::ok) {
+            let kind = fs::read_to_string(zone.path().join("type")).unwrap_or_default();
+            if matches!(kind.trim(), "x86_pkg_temp" | "cpu-thermal" | "cpu_thermal") {
+                return Some(zone.path().join("temp"));
+            }
+        }
+        None
+    })
+    .as_ref()
+}
+
+/// The CPU temperature in whole °C.
+pub fn cpu_temperature() -> Option<u8> {
+    let milli: i64 = fs::read_to_string(temperature_file()?)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    (milli > 0).then(|| (milli / 1000).clamp(0, 255) as u8)
 }
 
 /// The last `width` samples as a compact line of block characters, one row per
@@ -267,6 +328,7 @@ mod tests {
                 cpu: i as u8,
                 memory: 50,
                 disk: 90,
+                temp: 0,
             })
             .collect();
         let rows = graph_rows(&samples, 10);

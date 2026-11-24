@@ -6,7 +6,7 @@ T=$(mktemp -d)
 BAR=""
 cleanup() { [ -z "$BAR" ] || kill "$BAR" 2>/dev/null || :; [ -z "$BAR" ] || wait "$BAR" 2>/dev/null || :; rm -rf "$T"; }
 trap cleanup EXIT INT TERM
-export HOME=$T/home XDG_CONFIG_HOME=$T/home/.config BT_FIXTURE=$T
+export HOME=$T/home XDG_CONFIG_HOME=$T/home/.config BT_FIXTURE=$T NIRUBAR_BLUETOOTH_CLI=1
 export PATH=$T/bin:$PATH
 mkdir -p "$XDG_CONFIG_HOME/niruwm" "$T/bin"
 printf '[bar]\nmodules = ["bluetooth"]\nicons = false\ntray = false\npopup_timeout_seconds = 0\n' > "$XDG_CONFIG_HOME/niruwm/config.toml"

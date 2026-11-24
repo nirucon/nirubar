@@ -20,6 +20,8 @@ cat > "$T/bin/niructl" <<'EOF'
 #!/bin/sh
 case "$*" in
   'audio mic-status') cat "$MIC_FIXTURE/status" ;;
+  # Read-only: the panel lists the inputs to switch to.
+  'audio sources') printf '*37\tUSB microphone\n' ;;
   *) printf '%s\n' "$*" >> "$MIC_FIXTURE/actions" ;;
 esac
 EOF

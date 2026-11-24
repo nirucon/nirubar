@@ -186,6 +186,11 @@ pub fn detail(usages: &[Usage], warn: u8, can_clean: bool) -> Vec<String> {
 /// The terminal command line that runs `nirux clean` and keeps the window
 /// open until Enter, so the result can be read.
 pub fn clean_command(terminal: &[String]) -> Option<(String, Vec<String>)> {
+    terminal_command(terminal, "nirux clean")
+}
+
+/// `script` in the suite's terminal, which stays open afterwards.
+pub fn terminal_command(terminal: &[String], script: &str) -> Option<(String, Vec<String>)> {
     let (program, rest) = terminal.split_first()?;
     let mut args: Vec<String> = rest.to_vec();
     let name = Path::new(program)
@@ -200,7 +205,7 @@ pub fn clean_command(terminal: &[String]) -> Option<(String, Vec<String>)> {
     args.extend([
         "sh".into(),
         "-c".into(),
-        "nirux clean; printf '\\nPress Enter to close. '; read _".into(),
+        format!("{script}; printf '\\nPress Enter to close. '; read _"),
     ]);
     Some((program.clone(), args))
 }

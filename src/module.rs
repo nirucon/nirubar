@@ -65,6 +65,69 @@ impl Control {
     }
 }
 
+/// One row in a module's panel that does something when clicked (or chosen
+/// with the arrow keys and Return).
+pub struct Action {
+    pub label: String,
+    /// None: a row that cannot be used now (shown dimmed).
+    pub control: Option<Control>,
+    /// Keep the panel open and show it again once the change has landed
+    /// (mute, a level, a device): the panel shows the new state.
+    pub stay: bool,
+}
+
+impl Action {
+    pub(crate) fn run(label: impl Into<String>, key: &str, program: &str, args: &[&str]) -> Self {
+        Self {
+            label: label.into(),
+            control: Some(Control::run(key, Some(command(program, args)))),
+            stay: false,
+        }
+    }
+
+    pub(crate) fn ui(label: impl Into<String>, key: &str, program: &str, args: &[&str]) -> Self {
+        Self {
+            label: label.into(),
+            control: Some(Control::ui(key, Some(command(program, args)))),
+            stay: false,
+        }
+    }
+
+    /// Run, then show the panel again with the new state.
+    pub(crate) fn toggle(
+        label: impl Into<String>,
+        key: &str,
+        program: &str,
+        args: &[&str],
+    ) -> Self {
+        Self {
+            stay: true,
+            ..Self::run(label, key, program, args)
+        }
+    }
+
+    pub(crate) fn from_control(label: impl Into<String>, control: Option<Control>) -> Self {
+        let control = control.filter(|c| c.command.is_some());
+        Self {
+            label: label.into(),
+            control,
+            stay: false,
+        }
+    }
+}
+
+fn command(program: &str, args: &[&str]) -> (String, Vec<String>) {
+    (
+        program.to_string(),
+        args.iter().map(|a| (*a).to_string()).collect(),
+    )
+}
+
+/// A chosen item in a list of actions: a filled mark for the current one.
+pub(crate) fn chosen(on: bool, label: &str) -> String {
+    format!("{} {label}", if on { "●" } else { "○" })
+}
+
 /// One piece of the bar.
 pub trait Module {
     /// Stable name used in the config.
@@ -138,6 +201,16 @@ pub trait Module {
     /// panel instead.
     fn panel_on_right(&self) -> bool {
         false
+    }
+    /// What the panel offers to do, shown under its information. The bar
+    /// adds the module's `controls` view as a last row by itself.
+    fn actions(&mut self) -> Vec<Action> {
+        Vec::new()
+    }
+    /// A scroll step of `delta` units (several wheel clicks while the last
+    /// command still ran, added up instead of dropped).
+    fn step(&mut self, _delta: i32) -> Option<Control> {
+        None
     }
 }
 
@@ -358,6 +431,61 @@ impl Module for Clock {
 
 pub struct Battery {
     pub icons: status::Icons,
+    pub low: bool,
+}
+
+/// At or below this, discharging, the battery turns red and says so once.
+const BATTERY_LOW: u8 = 15;
+const BATTERY_CRITICAL: u8 = 7;
+
+/// One notice per discharge, whichever bar sees it first: a marker file in
+/// the runtime folder, removed when the battery charges again.
+fn battery_notice(percent: u8, charging: bool) {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let uid = unsafe { libc::getuid() };
+    for (level, urgency, text) in [
+        (
+            BATTERY_LOW,
+            "normal",
+            "Battery low: plug in the charger soon.",
+        ),
+        (
+            BATTERY_CRITICAL,
+            "critical",
+            "Battery almost empty: plug in the charger now.",
+        ),
+    ] {
+        let marker = dir.join(format!("nirubar-battery-{level}-{uid}"));
+        if charging || percent > level + 5 {
+            let _ = std::fs::remove_file(&marker);
+        } else if percent <= level
+            && !cfg!(test)
+            && std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&marker)
+                .is_ok()
+        {
+            if let Ok(mut child) = std::process::Command::new("notify-send")
+                .args([
+                    "-a",
+                    "NIRUX",
+                    "-u",
+                    urgency,
+                    &format!("Battery {percent}%"),
+                    text,
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                std::thread::spawn(move || child.wait());
+            }
+        }
+    }
 }
 
 impl Module for Battery {
@@ -369,9 +497,34 @@ impl Module for Battery {
     }
     fn render(&mut self) -> String {
         match status::battery() {
-            Some(b) => status::battery_text(&b, &self.icons),
-            None => String::new(),
+            Some(b) => {
+                self.low = !b.charging && b.percent <= BATTERY_LOW;
+                battery_notice(b.percent, b.charging);
+                status::battery_text(&b, &self.icons)
+            }
+            None => {
+                self.low = false;
+                String::new()
+            }
         }
+    }
+    fn tint(&self) -> Tint {
+        if self.low {
+            Tint::Alert
+        } else {
+            Tint::Normal
+        }
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        if status::battery().is_none() {
+            return Vec::new();
+        }
+        vec![Action::ui(
+            "Power profile…",
+            "powerprofile-selector",
+            "nirulauncher",
+            &["--power"],
+        )]
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         // Always open. A machine without a battery explains that instead of
@@ -599,6 +752,18 @@ impl Module for Network {
             status::network()
         };
         status::network_text(state, &self.icons, self.use_icons)
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        if status::wifi_present() {
+            vec![Action::ui(
+                "Choose a Wi-Fi network…",
+                "wifi-selector",
+                "nirulauncher",
+                &["--wifi"],
+            )]
+        } else {
+            Vec::new()
+        }
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         // Always open, even when offline: a click that does nothing looks
@@ -880,6 +1045,9 @@ impl Module for Wifi {
     fn side(&self) -> Side {
         Side::Right
     }
+    fn panel_on_right(&self) -> bool {
+        true
+    }
     fn render(&mut self) -> String {
         self.sample
             .get()
@@ -907,7 +1075,8 @@ impl Module for Wifi {
 /// one thread per frame.
 pub(crate) struct Cached<T> {
     value: std::sync::Arc<std::sync::Mutex<Option<T>>>,
-    stop: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    /// (stopped, look again now), and the condition that wakes the worker.
+    stop: std::sync::Arc<(std::sync::Mutex<(bool, bool)>, std::sync::Condvar)>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -920,7 +1089,10 @@ where
         probe: impl Fn() -> Option<T> + Send + 'static,
     ) -> Self {
         let value = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let stop = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let stop = std::sync::Arc::new((
+            std::sync::Mutex::new((false, false)),
+            std::sync::Condvar::new(),
+        ));
         let shared = value.clone();
         let stopping = stop.clone();
         let worker = std::thread::Builder::new()
@@ -931,15 +1103,18 @@ where
                     *latest = sample;
                 }
                 let (lock, wake) = &*stopping;
-                let Ok(stopped) = lock.lock() else {
+                let Ok(state) = lock.lock() else {
                     return;
                 };
-                let Ok((stopped, _)) = wake.wait_timeout_while(stopped, interval, |v| !*v) else {
+                let Ok((mut state, _)) =
+                    wake.wait_timeout_while(state, interval, |(stop, kick)| !*stop && !*kick)
+                else {
                     return;
                 };
-                if *stopped {
+                if state.0 {
                     return;
                 }
+                state.1 = false;
             })
             .ok();
         Self {
@@ -952,13 +1127,22 @@ where
     pub(crate) fn get(&self) -> Option<T> {
         self.value.lock().ok().and_then(|value| value.clone())
     }
+
+    /// Look again now (after an action changed what it shows).
+    pub(crate) fn kick(&self) {
+        let (lock, wake) = &*self.stop;
+        if let Ok(mut state) = lock.lock() {
+            state.1 = true;
+            wake.notify_one();
+        }
+    }
 }
 
 impl<T> Drop for Cached<T> {
     fn drop(&mut self) {
         let (lock, wake) = &*self.stop;
-        if let Ok(mut stopped) = lock.lock() {
-            *stopped = true;
+        if let Ok(mut state) = lock.lock() {
+            state.0 = true;
             wake.notify_one();
         }
         if let Some(worker) = self.worker.take() {
@@ -970,6 +1154,7 @@ impl<T> Drop for Cached<T> {
 pub struct Volume {
     pub icons: av::VolumeIcons,
     sample: crate::audio_monitor::Monitor,
+    outputs: DeviceList,
 }
 
 impl Volume {
@@ -977,6 +1162,7 @@ impl Volume {
         Self {
             icons,
             sample: crate::audio_monitor::Monitor::new(),
+            outputs: device_list("outputs"),
         }
     }
 }
@@ -1020,6 +1206,34 @@ impl Module for PowerProfile {
             "powerprofile-controls",
             Some(("nirulauncher".into(), vec!["--power".into()])),
         ))
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        let snap = self.monitor.snapshot();
+        if snap.error.is_some() {
+            return Vec::new();
+        }
+        let mut rows: Vec<Action> = snap
+            .profiles
+            .iter()
+            .map(|p| {
+                Action::toggle(
+                    chosen(snap.active.as_deref() == Some(p.as_str()), p),
+                    "powerprofile-set",
+                    "niructl",
+                    &["powerprofile", "set", p],
+                )
+            })
+            .collect();
+        rows.push(Action::toggle(
+            "Automatic (follow the charger)",
+            "powerprofile-auto",
+            "niructl",
+            &["powerprofile", "auto"],
+        ));
+        rows
+    }
+    fn controlled(&mut self) {
+        self.monitor.kick();
     }
 }
 
@@ -1065,6 +1279,42 @@ impl Module for Bluetooth {
             "bluetooth-controls",
             Some(("nirulauncher".into(), vec!["--bluetooth".into()])),
         ))
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        let snap = self.monitor.snapshot();
+        if snap.adapter.is_none() || snap.error.is_some() {
+            return Vec::new();
+        }
+        let mut rows = vec![Action::toggle(
+            if snap.powered {
+                "Turn Bluetooth off"
+            } else {
+                "Turn Bluetooth on"
+            },
+            "bluetooth-power",
+            "niructl",
+            &[
+                "bluetooth",
+                "power",
+                if snap.powered { "off" } else { "on" },
+            ],
+        )];
+        if snap.powered {
+            for d in snap.devices.iter().take(8) {
+                let (verb, cmd) = if d.connected {
+                    ("Disconnect", "disconnect")
+                } else {
+                    ("Connect", "connect")
+                };
+                rows.push(Action::toggle(
+                    format!("{verb} {}", d.name),
+                    "bluetooth-device",
+                    "niructl",
+                    &["bluetooth", cmd, &d.mac],
+                ));
+            }
+        }
+        rows
     }
 }
 
@@ -1278,6 +1528,7 @@ pub struct Microphone {
     pub icons: status::Icons,
     monitor: crate::microphone::Monitor,
     visibility: String,
+    sources: DeviceList,
 }
 
 impl Module for Microphone {
@@ -1323,6 +1574,144 @@ impl Module for Microphone {
             Some(("nirulauncher".into(), vec!["--microphone".into()])),
         ))
     }
+    fn actions(&mut self) -> Vec<Action> {
+        let muted = match self.monitor.snapshot() {
+            crate::microphone::Snapshot::Ready { muted, .. } => muted,
+            _ => return Vec::new(),
+        };
+        let mut rows = vec![Action::toggle(
+            if muted {
+                "Unmute the microphone"
+            } else {
+                "Mute the microphone"
+            },
+            "mic-mute",
+            "niructl",
+            &["audio", "mic-mute", if muted { "off" } else { "on" }],
+        )];
+        rows.extend(device_rows(&self.sources.get(), "source"));
+        rows
+    }
+    fn controlled(&mut self) {
+        self.sources.kick();
+    }
+}
+
+/// One audio device as `niructl audio outputs` lists it: `*38<TAB>Name`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Device {
+    id: String,
+    name: String,
+    default: bool,
+}
+
+pub(crate) fn parse_devices(text: &str) -> Vec<Device> {
+    text.lines()
+        .filter_map(|line| {
+            let (id, name) = line.split_once('\t')?;
+            let default = id.starts_with('*');
+            let id = id.trim_start_matches('*').trim();
+            (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then(|| Device {
+                id: id.to_string(),
+                name: name.trim().to_string(),
+                default,
+            })
+        })
+        .collect()
+}
+
+/// The devices of one kind (`outputs` or `sources`), fetched only when a
+/// panel asks for them: on a worker, never while idle, and the first panel
+/// waits at most a moment for the answer.
+/// When the list was read, the list, and whether a read is under way.
+type DeviceState = (Option<Instant>, Vec<Device>, bool);
+
+pub(crate) struct DeviceList {
+    kind: &'static str,
+    state: Arc<(Mutex<DeviceState>, std::sync::Condvar)>,
+}
+
+pub(crate) fn device_list(kind: &'static str) -> DeviceList {
+    DeviceList {
+        kind,
+        state: Arc::new((
+            Mutex::new((None, Vec::new(), false)),
+            std::sync::Condvar::new(),
+        )),
+    }
+}
+
+impl DeviceList {
+    /// The list, refreshed in the background when it is older than a few
+    /// seconds (or was never read: then wait up to 400 ms for it).
+    pub(crate) fn get(&self) -> Vec<Device> {
+        let (lock, done) = &*self.state;
+        let Ok(mut st) = lock.lock() else {
+            return Vec::new();
+        };
+        let stale = st.0.map_or(true, |t| t.elapsed() > Duration::from_secs(5));
+        if stale && !st.2 {
+            st.2 = true;
+            let shared = self.state.clone();
+            let kind = self.kind;
+            let _ = std::thread::Builder::new()
+                .name("nirubar-devices".into())
+                .spawn(move || {
+                    let list = crate::probe::run(
+                        "niructl",
+                        &["audio", kind],
+                        &[],
+                        Duration::from_secs(3),
+                        16 * 1024,
+                    )
+                    .filter(|out| out.status.success())
+                    .map(|out| parse_devices(&String::from_utf8_lossy(&out.stdout)))
+                    .unwrap_or_default();
+                    let (lock, done) = &*shared;
+                    if let Ok(mut st) = lock.lock() {
+                        *st = (Some(Instant::now()), list, false);
+                    }
+                    done.notify_all();
+                });
+        }
+        if st.0.is_none() {
+            if let Ok((woken, _)) =
+                done.wait_timeout_while(st, Duration::from_millis(400), |s| s.0.is_none())
+            {
+                st = woken;
+            } else {
+                return Vec::new();
+            }
+        }
+        st.1.clone()
+    }
+
+    /// Read again on the next look (after a device was chosen).
+    pub(crate) fn kick(&self) {
+        if let Ok(mut st) = self.state.0.lock() {
+            st.0 = st.0.map(|_| Instant::now() - Duration::from_secs(60));
+        }
+    }
+}
+
+/// A row per device to switch to, when there is more than one.
+fn device_rows(devices: &[Device], verb: &str) -> Vec<Action> {
+    if devices.len() < 2 {
+        return Vec::new();
+    }
+    devices
+        .iter()
+        .take(8)
+        .map(|d| {
+            let label: String = d.name.chars().take(34).collect();
+            Action::toggle(
+                chosen(d.default, &label),
+                "audio-device",
+                "niructl",
+                &["audio", verb, &d.id],
+            )
+        })
+        .collect()
 }
 
 impl Module for Volume {
@@ -1357,10 +1746,8 @@ impl Module for Volume {
                         None => "unknown",
                     }
                 ),
-                String::new(),
-                "scroll: volume up/down".to_string(),
-                "right-click: mute output".to_string(),
-                "middle-click: mute microphone".to_string(),
+                "scroll: louder or softer (up to 100%)".to_string(),
+                "right-click: mute · middle-click: microphone".to_string(),
             ],
             None => vec![
                 "no audio server answers".to_string(),
@@ -1378,6 +1765,39 @@ impl Module for Volume {
             Input::ScrollUp => Some(Control::run("volume-up", av::Volume::step_command(5))),
             Input::ScrollDown => Some(Control::run("volume-down", av::Volume::step_command(-5))),
         }
+    }
+    fn step(&mut self, delta: i32) -> Option<Control> {
+        let command = av::Volume::step_capped(delta.clamp(-20, 20) * 5)?;
+        Some(Control::run("volume-step", Some(command)))
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        let Some(v) = self.sample.snapshot() else {
+            return Vec::new();
+        };
+        let mut mute = Action::from_control(
+            if v.muted { "Unmute" } else { "Mute" },
+            Some(Control::run("volume-mute", av::Volume::mute_command())),
+        );
+        mute.stay = true;
+        let mut rows = vec![mute];
+        for level in [25u32, 50, 75, 100] {
+            if let Some(cmd) = av::Volume::set_command(level) {
+                let mut a = Action::from_control(
+                    chosen(!v.muted && v.percent == level, &format!("{level}%")),
+                    Some(Control::run("volume-set", Some(cmd))),
+                );
+                a.stay = true;
+                rows.push(a);
+            }
+        }
+        rows.extend(device_rows(&self.outputs.get(), "output"));
+        if command_present("pavucontrol") {
+            rows.push(Action::ui("Mixer…", "mixer", "pavucontrol", &[]));
+        }
+        rows
+    }
+    fn controlled(&mut self) {
+        self.outputs.kick();
     }
 }
 
@@ -1529,10 +1949,33 @@ impl Module for Media {
             }
         }
     }
+    fn actions(&mut self) -> Vec<Action> {
+        if self.sample.snapshot().is_none() {
+            return Vec::new();
+        }
+        let player = self.player.clone();
+        let row = |label: &str, verb: &str| {
+            let mut a = Action::from_control(
+                label,
+                Some(Control::run(
+                    "media-action",
+                    Some(av::player_command(player.as_deref(), verb)),
+                )),
+            );
+            a.stay = true;
+            a
+        };
+        vec![
+            row("Play or pause", "play-pause"),
+            row("Next", "next"),
+            row("Previous", "previous"),
+        ]
+    }
 }
 
 pub struct Updates {
     pub icons: status::Icons,
+    pub terminal: Vec<String>,
     pub every: std::time::Duration,
     /// Also show NIRUX releases. Off when the bar has `niruxupdate` too, so the
     /// same notice (and its sound) is not shown twice.
@@ -1598,16 +2041,49 @@ impl Module for Updates {
             return Some(("Updates".into(), lines));
         }
         if let Some(version) = crate::nirux_update::activation_pending() {
-            lines.push(String::new());
             lines.push(format!("NIRUX {version} is installed"));
             lines.push("log out and back in to activate it".into());
         } else if let Some(latest) = crate::nirux_update::available() {
-            lines.push(String::new());
             lines.push(format!("NIRUX {latest} is available"));
-            lines.push("run nirux update".into());
-            lines.push("then log out and back in".into());
         }
         Some(("Updates".into(), lines))
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        let mut rows = Vec::new();
+        if let Some(cmd) = self_command(&["--check-updates"]) {
+            let mut a =
+                Action::from_control("Check now", Some(Control::run("updates-check", Some(cmd))));
+            a.stay = true;
+            rows.push(a);
+        }
+        let upgrade = match updates::Manager::detect() {
+            updates::Manager::Xbps => Some("sudo xbps-install -Su"),
+            updates::Manager::Pacman => Some("sudo pacman -Syu"),
+            updates::Manager::Apt => Some("sudo apt update && sudo apt upgrade"),
+            updates::Manager::Unknown => None,
+        };
+        if let Some(how) = upgrade {
+            rows.push(Action::from_control(
+                "Upgrade the system in a terminal…",
+                Some(Control::ui(
+                    "updates-upgrade",
+                    crate::disk::terminal_command(
+                        &self.terminal,
+                        &format!("{how}; nirubar --check-updates"),
+                    ),
+                )),
+            ));
+        }
+        if self.nirux && crate::nirux_update::available().is_some() && command_present("nirux") {
+            rows.push(Action::from_control(
+                "Update NIRUX in a terminal…",
+                Some(Control::ui(
+                    "nirux-update",
+                    crate::disk::terminal_command(&self.terminal, "nirux update"),
+                )),
+            ));
+        }
+        rows
     }
 }
 
@@ -1955,6 +2431,7 @@ pub struct Pulse {
     worker: Option<std::thread::JoinHandle<()>>,
     width: usize,
     pub icons: status::Icons,
+    pub terminal: Vec<String>,
 }
 
 impl Pulse {
@@ -1967,9 +2444,16 @@ impl Pulse {
             .name("nirubar-load".into())
             .spawn(move || {
                 let mut previous = crate::pulse::CpuCounters::read().unwrap_or_default();
+                let mut disk = 0u8;
+                let mut disk_at: Option<Instant> = None;
                 while !worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
                     let now = crate::pulse::CpuCounters::read().unwrap_or_default();
-                    let sample = crate::pulse::sample(&now, &previous);
+                    // Filesystems fill slowly: a look once a minute.
+                    if disk_at.map_or(true, |t| t.elapsed() >= Duration::from_secs(60)) {
+                        disk = crate::pulse::disk_percent().unwrap_or(0);
+                        disk_at = Some(Instant::now());
+                    }
+                    let sample = crate::pulse::sample(&now, &previous, disk);
                     previous = now;
                     if let Ok(mut state) = worker_state.lock() {
                         state.latest = sample;
@@ -1978,13 +2462,8 @@ impl Pulse {
                             state.samples.remove(0);
                         }
                     }
-                    // Sleep in small steps so Drop does not wait a full second.
-                    for _ in 0..20 {
-                        if worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
-                            return;
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
+                    // One wake-up a second; Drop unparks the thread to end it.
+                    std::thread::park_timeout(std::time::Duration::from_secs(1));
                 }
             })
             .ok();
@@ -1994,6 +2473,7 @@ impl Pulse {
             worker,
             width: width.clamp(6, 60),
             icons,
+            terminal: Vec::new(),
         }
     }
 
@@ -2011,6 +2491,7 @@ impl Drop for Pulse {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
+            worker.thread().unpark();
             let _ = worker.join();
         }
     }
@@ -2038,11 +2519,16 @@ impl Module for Pulse {
             .map(|s| s.samples.clone())
             .unwrap_or_default();
         let rows = crate::pulse::graph_rows(&samples, self.width.min(40));
+        let temp = if sample.temp > 0 {
+            format!("   {}°C", sample.temp)
+        } else {
+            String::new()
+        };
         Some((
             "Load".into(),
             vec![
                 format!(
-                    "cpu {}%   memory {}%   disk {}%",
+                    "cpu {}%{temp}   memory {}%   disk {}%",
                     sample.cpu, sample.memory, sample.disk
                 ),
                 String::new(),
@@ -2054,6 +2540,29 @@ impl Module for Pulse {
                 "each block covers one second".to_string(),
             ],
         ))
+    }
+    fn tint(&self) -> Tint {
+        // Hot: red from 90 °C, the accent from 80 °C.
+        match self.latest().temp {
+            t if t >= 90 => Tint::Alert,
+            t if t >= 80 => Tint::Accent,
+            _ => Tint::Normal,
+        }
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        let Some(tool) = ["btop", "htop", "top"]
+            .into_iter()
+            .find(|t| command_present(t))
+        else {
+            return Vec::new();
+        };
+        vec![Action::from_control(
+            "System monitor…",
+            Some(Control::ui(
+                "system-monitor",
+                crate::disk::terminal_command(&self.terminal, tool),
+            )),
+        )]
     }
 }
 
@@ -2126,6 +2635,28 @@ fn nirunotify_request(command: &str, cap: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&reply).into_owned())
 }
 
+/// A helper program as the fallback when NIRUNOTIFY's socket does not answer
+/// (the daemon is not running): at most every 15 seconds, the last answer
+/// kept in between, so a session without it does not start a process a
+/// second.
+fn throttled<T: Clone>(
+    slot: &std::sync::Mutex<(Option<Instant>, Option<T>)>,
+    run: impl FnOnce() -> Option<T>,
+) -> Option<T> {
+    let mut s = slot.lock().ok()?;
+    if s.0.is_some_and(|t| t.elapsed() < Duration::from_secs(15)) {
+        return s.1.clone();
+    }
+    s.0 = Some(Instant::now());
+    s.1 = run();
+    s.1.clone()
+}
+
+static COUNT_FALLBACK: std::sync::Mutex<(Option<Instant>, Option<usize>)> =
+    std::sync::Mutex::new((None, None));
+static DND_FALLBACK: std::sync::Mutex<(Option<Instant>, Option<bool>)> =
+    std::sync::Mutex::new((None, None));
+
 fn notification_count() -> Option<usize> {
     // The socket first, like the DND module: no process every second.
     if let Some(reply) = nirunotify_request("visible", 64) {
@@ -2133,6 +2664,10 @@ fn notification_count() -> Option<usize> {
             return Some(count);
         }
     }
+    throttled(&COUNT_FALLBACK, notification_count_cli)
+}
+
+fn notification_count_cli() -> Option<usize> {
     let out = crate::probe::run(
         "nirunotify",
         &["--count"],
@@ -2208,14 +2743,34 @@ impl Module for Notifications {
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         let history = notification_history();
-        let mut lines = if history.is_empty() {
+        let lines = if history.is_empty() {
             vec!["no notifications".to_string()]
         } else {
             history
         };
-        lines.push(String::new());
-        lines.push("niructl dnd toggle".to_string());
         Some(("Notifications".into(), lines))
+    }
+    fn actions(&mut self) -> Vec<Action> {
+        if !command_present("nirunotify") {
+            return Vec::new();
+        }
+        let dnd = notification_dnd();
+        vec![
+            Action::toggle("Clear all", "notify-clear", "nirunotify", &["--clear"]),
+            Action::toggle(
+                if dnd == Some(true) {
+                    "Turn Do Not Disturb off"
+                } else {
+                    "Turn Do Not Disturb on"
+                },
+                "dnd-toggle",
+                "niructl",
+                &["dnd", "toggle"],
+            ),
+        ]
+    }
+    fn controlled(&mut self) {
+        self.count.kick();
     }
 }
 
@@ -2252,10 +2807,14 @@ pub(crate) fn notification_dnd() -> Option<bool> {
     // This is the same native provider selected first by niructl dnd, but a
     // direct bounded socket query avoids launching two processes every second.
     // If it is absent, stalled or returns an invalid response, retain niructl's
-    // provider-aware Dunst/unavailable fallback.
+    // provider-aware Dunst/unavailable fallback (throttled).
     if let Some(state) = read_dnd_socket(&nirunotify_socket()) {
         return Some(state);
     }
+    throttled(&DND_FALLBACK, dnd_cli)
+}
+
+fn dnd_cli() -> Option<bool> {
     let out = crate::probe::run(
         "niructl",
         &["dnd", "status"],
@@ -2556,7 +3115,7 @@ pub fn build(
             "clock" => out.push(Box::new(Clock::new(cfg).with_browser(&full.browser))),
             "battery" => {
                 crate::battery_history::start();
-                out.push(Box::new(Battery { icons }));
+                out.push(Box::new(Battery { icons, low: false }));
             }
             "display" => out.push(Box::new(Display {
                 icons,
@@ -2598,6 +3157,7 @@ pub fn build(
             }
             "updates" => out.push(Box::new(Updates {
                 icons,
+                terminal: full.terminal.clone(),
                 every: std::time::Duration::from_secs(u64::from(cfg.update_check_minutes) * 60),
                 nirux: !cfg.modules.iter().any(|m| m == "niruxupdate"),
             })),
@@ -2637,6 +3197,7 @@ pub fn build(
                 icons,
                 monitor: crate::microphone::Monitor::new(),
                 visibility: cfg.microphone_visibility.clone(),
+                sources: device_list("sources"),
             })),
             "media" => out.push(Box::new(Media::new(
                 None,
@@ -2644,7 +3205,11 @@ pub fn build(
                 icons.music,
                 cfg.media_width,
             ))),
-            "pulse" => out.push(Box::new(Pulse::new(cfg.graph_width, icons))),
+            "pulse" => {
+                let mut pulse = Pulse::new(cfg.graph_width, icons);
+                pulse.terminal = full.terminal.clone();
+                out.push(Box::new(pulse))
+            }
             "uptime" => out.push(Box::new(Uptime { icons })),
             "brightness" => out.push(Box::new(Brightness { icons })),
             "weather" => out.push(Box::new(WeatherModule::new(full))),
@@ -2715,6 +3280,20 @@ pub fn month_grid(year: i32, month: u32) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn audio_devices_are_read_and_offered_only_when_there_is_a_choice() {
+        let d = parse_devices("*38\tRyzen Analog\n41\tHDMI 1\nnoise\nx\ty\n");
+        assert_eq!(d.len(), 2);
+        assert!(d[0].default && d[0].id == "38" && d[0].name == "Ryzen Analog");
+        assert!(!d[1].default && d[1].id == "41");
+        let rows = device_rows(&d, "output");
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].label.starts_with('●') && rows[1].label.starts_with('○'));
+        assert!(rows.iter().all(|r| r.stay));
+        assert!(device_rows(&d[..1], "output").is_empty());
+    }
+
     #[test]
     fn urgent_windows_mark_only_this_screens_cells() {
         let mut ws = super::Workspaces::new(&config::Bar::default());

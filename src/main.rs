@@ -349,6 +349,8 @@ fn event_is_from(event: &Event, window: Window) -> bool {
         Event::ButtonPress(e) => e.event == window,
         Event::KeyPress(e) => e.event == window,
         Event::Expose(e) => e.window == window,
+        Event::MotionNotify(e) => e.event == window,
+        Event::LeaveNotify(e) => e.event == window,
         _ => false,
     }
 }
@@ -530,6 +532,17 @@ struct Bar {
     title_since: std::time::Instant,
     /// The PipeWire reader election between the bars on this display.
     share: Option<share::Share>,
+    /// The actions of the open module panel, row by row.
+    panel_actions: Vec<module::Action>,
+    /// A module panel to show again (its state changed by an action).
+    reopen: Option<(usize, std::time::Instant)>,
+    /// Scroll steps that arrived while the last one still ran, per module.
+    pending_steps: HashMap<usize, i32>,
+    /// When every module was last rendered. Between those renders a frame
+    /// for a moving title renders only the modules that move.
+    full_render_at: std::time::Instant,
+    /// The title as last read, reused by those in-between frames.
+    title_cache: String,
 }
 
 /// Keep a title compact. The limit includes the ellipsis.
@@ -844,6 +857,11 @@ impl Bar {
             title_shown: None,
             title_since: std::time::Instant::now(),
             share,
+            panel_actions: Vec::new(),
+            reopen: None,
+            pending_steps: HashMap::new(),
+            full_render_at: std::time::Instant::now(),
+            title_cache: String::new(),
         })
     }
 
@@ -1580,19 +1598,33 @@ impl Bar {
         );
         let presenting = self.presenting;
         let bar = &self.cfg.bar;
+        // A frame asked for by a moving title (no event, less than a second
+        // since everything was rendered) renders only the moving modules and
+        // reuses the rest: 30 frames a second must not read every module's
+        // files 30 times a second.
+        let full = self.last_frame.is_empty()
+            || self.rendered.len() != self.modules.len()
+            || self.full_render_at.elapsed() >= std::time::Duration::from_millis(1000);
+        let previous = std::mem::take(&mut self.rendered);
         let modules: Vec<String> = self
             .modules
             .iter_mut()
-            .map(|m| {
+            .enumerate()
+            .map(|(i, m)| {
                 // A hidden module is not asked to render at all, so its
                 // probes stay idle while presenting.
                 if bar.hidden_while_presenting(m.name(), presenting) {
                     String::new()
-                } else {
+                } else if full || m.scrolling() {
                     m.render()
+                } else {
+                    previous.get(i).cloned().unwrap_or_default()
                 }
             })
             .collect();
+        if full {
+            self.full_render_at = std::time::Instant::now();
+        }
         self.rendered = modules.clone();
         let progress: Vec<Option<u16>> = self
             .modules
@@ -1602,7 +1634,13 @@ impl Bar {
                     .map(|p| (p.clamp(0.0, 1.0) * 1000.0).round() as u16)
             })
             .collect();
-        let title = self.title();
+        let title = if full {
+            let t = self.title();
+            self.title_cache = t.clone();
+            t
+        } else {
+            self.title_cache.clone()
+        };
         let tray_width = self.tray.as_ref().map(|t| t.width()).unwrap_or(0);
         let sni_key = self
             .sni
@@ -1671,6 +1709,31 @@ impl Bar {
         let Some(index) = self.placed.iter().find(|p| p.contains(x)).map(|p| p.index) else {
             return Ok(());
         };
+        // A module that steps (volume): wheel clicks that arrive while its
+        // last command still runs are added up and sent as one, not lost.
+        let delta = match input {
+            module::Input::ScrollUp => 1,
+            module::Input::ScrollDown => -1,
+            _ => 0,
+        };
+        if delta != 0
+            && self
+                .modules
+                .get_mut(index)
+                .and_then(|m| m.step(0))
+                .is_some()
+        {
+            for failure in self.helpers.reap() {
+                helpers::notify_failure(&failure);
+            }
+            if self.helpers.running(&format!("step-{index}")) {
+                *self.pending_steps.entry(index).or_insert(0) += delta;
+            } else {
+                self.start_step(index, delta);
+            }
+            self.last_frame.clear();
+            return self.draw();
+        }
         let Some(control) = self.modules.get_mut(index).and_then(|m| m.control(input)) else {
             return Ok(());
         };
@@ -2033,7 +2096,7 @@ impl Bar {
             if self.modules.get(index).is_some_and(|module| {
                 matches!(
                     module.name(),
-                    "wifi" | "agent" | "share" | "nirusec" | "dnd"
+                    "wifi" | "agent" | "share" | "nirusec" | "dnd" | "quicksettings"
                 ) || module.panel_on_right()
             }) {
                 self.close_popup()?;
@@ -2087,6 +2150,31 @@ impl Bar {
             .modules
             .get_mut(index)
             .and_then(|m| m.popup_decorated(&palette));
+        // What the panel can do: the module's own rows, then its settings
+        // view (which otherwise is the footer's Return).
+        let mut actions = self
+            .modules
+            .get_mut(index)
+            .map(|m| m.actions())
+            .unwrap_or_default();
+        if !actions.is_empty() {
+            if let Some(control) = self.modules.get(index).and_then(|m| m.controls()) {
+                actions.push(module::Action::from_control(
+                    "Open settings…",
+                    Some(control),
+                ));
+            }
+        }
+        let rows: Vec<popup::ActionRow> = actions
+            .iter()
+            .map(|a| popup::ActionRow {
+                label: a.label.clone(),
+                enabled: a.control.is_some(),
+                separator: false,
+            })
+            .collect();
+        let controls = controls && actions.is_empty();
+        self.panel_actions = actions;
         if let Some((title, lines, decor)) = content {
             self.popup = Some(popup::Popup::open(
                 &self.c,
@@ -2104,13 +2192,104 @@ impl Bar {
                 left,
                 &title,
                 &lines,
-                &[],
+                &rows,
                 controls,
                 self.cfg.popup_timeout(module_name),
                 &decor,
             )?);
         }
         Ok(())
+    }
+
+    /// Run the chosen row of a module panel.
+    fn module_action(&mut self, module: usize, index: usize) -> Result<()> {
+        let mut actions = std::mem::take(&mut self.panel_actions);
+        self.close_popup()?;
+        if index >= actions.len() {
+            return Ok(());
+        }
+        let action = actions.swap_remove(index);
+        if let Some(control) = action.control {
+            if let Some((program, args)) = control.command {
+                let result = if control.long_lived {
+                    self.helpers.spawn_ui(&control.key, &program, &args)
+                } else {
+                    self.helpers.spawn(&control.key, &program, &args)
+                };
+                if let Err(error) = result {
+                    helpers::notify_failure(&error);
+                }
+            }
+            if let Some(m) = self.modules.get_mut(module) {
+                m.controlled();
+            }
+        }
+        if action.stay {
+            // Long enough for the change to land and the module to see it.
+            self.reopen = Some((
+                module,
+                std::time::Instant::now() + std::time::Duration::from_millis(600),
+            ));
+        }
+        self.last_frame.clear();
+        self.draw()
+    }
+
+    /// Show a module panel again after an action changed its state.
+    fn reopen_due(&mut self) -> Result<()> {
+        let Some((module, at)) = self.reopen else {
+            return Ok(());
+        };
+        if std::time::Instant::now() < at {
+            return Ok(());
+        }
+        self.reopen = None;
+        if self.popup.is_some() {
+            return Ok(());
+        }
+        self.last_frame.clear();
+        self.draw()?;
+        if let Some(left) = self.placed.iter().find(|p| p.index == module).map(|p| p.x) {
+            self.open_panel(left + 1)?;
+        }
+        Ok(())
+    }
+
+    /// Scroll steps that waited for the previous command: one command for
+    /// all of them, as soon as that one has finished.
+    fn flush_steps(&mut self) -> Result<()> {
+        if self.pending_steps.is_empty() {
+            return Ok(());
+        }
+        for failure in self.helpers.reap() {
+            helpers::notify_failure(&failure);
+        }
+        let ready: Vec<(usize, i32)> = self
+            .pending_steps
+            .iter()
+            .filter(|(i, _)| !self.helpers.running(&format!("step-{i}")))
+            .map(|(i, d)| (*i, *d))
+            .collect();
+        for (index, delta) in ready {
+            self.pending_steps.remove(&index);
+            self.start_step(index, delta);
+        }
+        self.last_frame.clear();
+        self.draw()
+    }
+
+    fn start_step(&mut self, index: usize, delta: i32) {
+        let Some(control) = self.modules.get_mut(index).and_then(|m| m.step(delta)) else {
+            return;
+        };
+        if let Some((program, args)) = control.command {
+            if let Err(error) = self
+                .helpers
+                .spawn(&format!("step-{index}"), &program, &args)
+            {
+                helpers::notify_failure(&error);
+            }
+        }
     }
 
     fn select_workspace(&mut self, tag: u32) -> Result<()> {
@@ -2158,6 +2337,7 @@ impl Bar {
     fn close_popup(&mut self) -> Result<()> {
         self.sni_menu = None;
         self.scratch_menu = None;
+        self.panel_actions.clear();
         if let Some(p) = self.popup.take() {
             p.destroy(&self.c, self.root)?;
         }
@@ -2262,7 +2442,13 @@ impl Bar {
                     // A moving title needs the frame rate; everything else
                     // can wait for an event or the next second. A bar that
                     // repaints all the time burns a core for nothing.
-                    let timeout = if self.popup.is_some() {
+                    self.reopen_due()?;
+                    self.flush_steps()?;
+                    let timeout = if !self.pending_steps.is_empty() {
+                        40
+                    } else if self.reopen.is_some() {
+                        100
+                    } else if self.popup.is_some() {
                         250
                     } else if self.modules.iter().any(|m| m.scrolling()) {
                         33
@@ -2343,8 +2529,21 @@ impl Bar {
                             self.close_popup()?;
                             self.controls(module)?;
                         }
+                        popup::Outcome::Hover(row) => {
+                            if let Some(p) = &self.popup {
+                                p.hover(&self.c, row)?;
+                            }
+                        }
+                        popup::Outcome::Step(delta) => {
+                            if let Some(p) = &self.popup {
+                                p.step(&self.c, delta)?;
+                            }
+                        }
                         popup::Outcome::Action(index) if self.scratch_menu.is_some() => {
                             self.scratch_action(index)?
+                        }
+                        popup::Outcome::Action(index) if !self.panel_actions.is_empty() => {
+                            self.module_action(module, index)?
                         }
                         popup::Outcome::Action(index) => self.sni_action(index)?,
                         popup::Outcome::Open(url) => {
@@ -2372,10 +2571,36 @@ impl Bar {
                             match e.detail {
                                 1 => self.sni_left(index, item, e.event_x, e.root_x, e.root_y)?,
                                 3 => self.sni_right(index, item, e.event_x, e.root_x, e.root_y)?,
+                                // Middle: the item's secondary activation
+                                // (mute a player, a quick toggle).
+                                2 => {
+                                    self.close_popup()?;
+                                    self.mark_tray_activation();
+                                    if let Some(host) = &self.sni {
+                                        host.activate(index, true, e.root_x, e.root_y);
+                                    }
+                                }
                                 _ => {}
                             }
                             continue;
                         }
+                    }
+                    // The wheel over the workspaces moves to the next or the
+                    // previous one, round the end.
+                    if matches!(e.detail, 4 | 5)
+                        && e.event_x >= 0
+                        && self.cfg.bar.modules.iter().any(|m| m == "workspaces")
+                        && e.event_x < self.cells * self.workspaces.names.len() as i16
+                    {
+                        self.close_popup()?;
+                        let n = self.workspaces.names.len().max(1) as u32;
+                        let next = if e.detail == 4 {
+                            (self.workspaces.active + n - 1) % n
+                        } else {
+                            (self.workspaces.active + 1) % n
+                        };
+                        self.select_workspace(next)?;
+                        continue;
                     }
                     // A module whose left click is an action shows its
                     // panel on a right click, toggled like a left-click panel.
@@ -2983,6 +3208,11 @@ fn main() {
     }
     if arg == "--drives" {
         std::process::exit(drives::cli(&args[1..]));
+    }
+    // "Check now" in the updates panel: ask the package manager and write
+    // the answer every bar reads.
+    if arg == "--check-updates" {
+        std::process::exit(if updates::refresh_now() { 0 } else { 1 });
     }
     if arg == "--timer" {
         std::process::exit(timer::cli(&args[1..]));

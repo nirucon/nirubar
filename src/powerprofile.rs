@@ -78,12 +78,18 @@ pub struct Monitor {
 impl Monitor {
     pub fn new() -> Self {
         Self {
-            sample: crate::module::Cached::new(Duration::from_secs(2), || Some(query())),
+            // A look every 20 seconds, and at once after a change from the
+            // bar (`kick`): the profile rarely changes by itself.
+            sample: crate::module::Cached::new(Duration::from_secs(20), || Some(query())),
         }
     }
 
     pub fn snapshot(&self) -> Snapshot {
         self.sample.get().unwrap_or_default()
+    }
+
+    pub fn kick(&self) {
+        self.sample.kick();
     }
 }
 

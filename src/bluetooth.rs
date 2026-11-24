@@ -87,19 +87,83 @@ fn query() -> Snapshot {
     }
 }
 
-pub struct Monitor {
-    sample: crate::module::Cached<Snapshot>,
+/// BlueZ's adapter and paired devices from its object manager: one call
+/// when BlueZ signals a change (power, a connection, a battery level), no
+/// helper process and no polling.
+fn from_objects(objects: &crate::objects::Objects) -> Snapshot {
+    use crate::objects::{flag, number, text};
+    const ADAPTER: &str = "org.bluez.Adapter1";
+    const DEVICE: &str = "org.bluez.Device1";
+    let adapter = objects.values().find(|o| o.contains_key(ADAPTER));
+    let Some(adapter) = adapter else {
+        return Snapshot {
+            adapter: None,
+            error: None,
+            ..Snapshot::default()
+        };
+    };
+    let mut devices: Vec<Device> = objects
+        .values()
+        .filter(|o| flag(o, DEVICE, "Paired"))
+        .map(|o| {
+            let name = [text(o, DEVICE, "Alias"), text(o, DEVICE, "Name")]
+                .into_iter()
+                .find(|n| !n.trim().is_empty())
+                .unwrap_or("Unknown device")
+                .to_string();
+            Device {
+                mac: text(o, DEVICE, "Address").to_string(),
+                name,
+                connected: flag(o, DEVICE, "Connected"),
+                battery: number(o, "org.bluez.Battery1", "Percentage").map(|n| n.min(100) as u32),
+            }
+        })
+        .collect();
+    devices.sort_by(|a, b| b.connected.cmp(&a.connected).then(a.name.cmp(&b.name)));
+    Snapshot {
+        adapter: Some(text(adapter, ADAPTER, "Address").to_string()).filter(|a| !a.is_empty()),
+        powered: flag(adapter, ADAPTER, "Powered"),
+        devices,
+        error: None,
+    }
+}
+
+pub enum Monitor {
+    Watched(crate::objects::Watched<Snapshot>),
+    /// The suite's CLI, for the tests (NIRUBAR_BLUETOOTH_CLI=1).
+    Cli(crate::module::Cached<Snapshot>),
 }
 
 impl Monitor {
     pub fn new() -> Self {
-        Self {
-            sample: crate::module::Cached::new(Duration::from_secs(2), || Some(query())),
+        if std::env::var_os("NIRUBAR_BLUETOOTH_CLI").is_some() {
+            return Self::Cli(crate::module::Cached::new(Duration::from_secs(2), || {
+                Some(query())
+            }));
         }
+        Self::Watched(crate::objects::Watched::new(
+            "org.bluez",
+            "/",
+            Duration::from_secs(120),
+            |reader| {
+                Some(match reader.objects("org.bluez", "/") {
+                    Some(objects) => from_objects(&objects),
+                    None => Snapshot {
+                        adapter: None,
+                        error: None,
+                        ..Snapshot::default()
+                    },
+                })
+            },
+        ))
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        self.sample.get().unwrap_or_default()
+        match self {
+            Self::Watched(w) => w.get(),
+            Self::Cli(c) => c.get(),
+        }
+        .unwrap_or_default()
     }
 }
 
@@ -164,6 +228,37 @@ pub fn detail(snapshot: &Snapshot) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn bluez_objects_become_a_snapshot() {
+        let o = crate::objects::parse_fixture(
+            "/org/bluez/hci0\torg.bluez.Adapter1\tAddress\ts:AA:BB\n\
+             /org/bluez/hci0\torg.bluez.Adapter1\tPowered\tb:true\n\
+             /org/bluez/hci0/dev_1\torg.bluez.Device1\tPaired\tb:true\n\
+             /org/bluez/hci0/dev_1\torg.bluez.Device1\tAlias\ts:Mouse\n\
+             /org/bluez/hci0/dev_1\torg.bluez.Device1\tAddress\ts:11:22\n\
+             /org/bluez/hci0/dev_2\torg.bluez.Device1\tPaired\tb:true\n\
+             /org/bluez/hci0/dev_2\torg.bluez.Device1\tName\ts:Headphones\n\
+             /org/bluez/hci0/dev_2\torg.bluez.Device1\tAddress\ts:33:44\n\
+             /org/bluez/hci0/dev_2\torg.bluez.Device1\tConnected\tb:true\n\
+             /org/bluez/hci0/dev_2\torg.bluez.Battery1\tPercentage\tn:80\n\
+             /org/bluez/hci0/dev_3\torg.bluez.Device1\tAlias\ts:Not paired\n",
+        );
+        let s = from_objects(&o);
+        assert_eq!(s.adapter.as_deref(), Some("AA:BB"));
+        assert!(s.powered);
+        assert_eq!(s.devices.len(), 2);
+        // Connected first.
+        assert_eq!(s.devices[0].name, "Headphones");
+        assert!(s.devices[0].connected);
+        assert_eq!(s.devices[0].battery, Some(80));
+        assert_eq!(s.devices[1].mac, "11:22");
+        // No adapter: hidden, not an error.
+        let none = from_objects(&crate::objects::Objects::new());
+        assert!(none.adapter.is_none() && none.error.is_none());
+        assert_eq!(text(&none, "B"), "");
+    }
+
     use super::*;
 
     #[test]
