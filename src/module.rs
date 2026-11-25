@@ -2678,6 +2678,15 @@ impl Module for Pulse {
         }
     }
     fn actions(&mut self) -> Vec<Action> {
+        // NIRUSYS (the NIRUX system monitor extra) is a window of its own.
+        if command_present("nirusys") {
+            return vec![Action::ui(
+                "System monitor…",
+                "system-monitor",
+                "nirusys",
+                &[],
+            )];
+        }
         let Some(tool) = ["btop", "htop", "top"]
             .into_iter()
             .find(|t| command_present(t))

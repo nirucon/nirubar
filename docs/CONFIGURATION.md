@@ -243,7 +243,7 @@ window, where it has one, is the last row, Open settings.
 | `network` | choose a Wi-Fi network |
 | `updates` | check now, upgrade the system in a terminal, update NIRUX in a terminal |
 | `notifications` | clear all, Do Not Disturb on or off |
-| `pulse` | a system monitor (`btop`, `htop` or `top`) in a terminal |
+| `pulse` | NIRUSYS when installed, otherwise a system monitor (`btop`, `htop` or `top`) in a terminal |
 | `timer` | start 5, 15, 25, 45 or 60 minutes; pause or resume, a minute or five more or less, reset. Typed digits and Return start that many minutes, Space pauses |
 
 Panels close on a click on the same module, a click elsewhere or Escape.
