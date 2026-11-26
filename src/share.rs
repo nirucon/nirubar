@@ -9,9 +9,9 @@
 //!
 //! XFixes tells the followers when the leader's window goes away (a crash, a
 //! restart, a monitor unplugged), and the first follower to take the
-//! selection leads from then on. Two bars that start at the same time both
-//! try; the X server orders the requests, and the one that loses the
-//! selection gets SelectionClear and follows.
+//! selection leads from then on. Two bars that start at the same time cannot
+//! both lead: each looks at the owner and takes the selection while holding
+//! the server, so only the first finds it free.
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xfixes::{self, ConnectionExt as _, SelectionEventMask};
@@ -79,6 +79,11 @@ impl Share {
 
     /// Lead when nobody does, otherwise follow the current leader.
     fn claim(&mut self, c: &impl Connection) {
+        // X has no compare-and-set for a selection: two bars that both see
+        // no owner would both take it, and both start a reader before one of
+        // them hears SelectionClear. Holding the server for the look and the
+        // take makes the election atomic; it is two round trips, once.
+        let _ = c.grab_server();
         let current = c
             .get_selection_owner(self.selection)
             .ok()
@@ -93,6 +98,8 @@ impl Share {
                 .and_then(|cookie| cookie.reply().ok())
                 .is_some_and(|reply| reply.owner == self.win);
         }
+        let _ = c.ungrab_server();
+        let _ = c.flush();
         if leads {
             if !self.leader {
                 eprintln!("nirubar: reading PipeWire for the bars on this display");
