@@ -2,7 +2,9 @@
 //!
 //! A small background thread owns a Tokio runtime and a `system_tray::Client`.
 //! The bar only reads a thread-safe snapshot, so a slow or absent bus never
-//! blocks drawing or input. XEmbed lives beside this in `tray.rs`; the two
+//! blocks drawing or input. The `StatusNotifierWatcher` registry runs apart
+//! from this host, in `sni_watcher.rs`. Every call the host makes to an item
+//! is bounded by `system_tray::client::CALL_TIMEOUT`. XEmbed lives beside this in `tray.rs`; the two
 //! protocols share the same visual strip.
 
 use crate::config::Result;
@@ -188,6 +190,15 @@ fn run(
     mut shutdown_rx: watch::Receiver<bool>,
     ready_tx: std_mpsc::Sender<std::result::Result<(), String>>,
 ) {
+    // The watcher answers on its own connection and thread, so this host
+    // waiting on a slow item can never stall it. Start it first so the host
+    // registers with it.
+    match crate::sni_watcher::ensure_running() {
+        Ok(true) => {}
+        Ok(false) => eprintln!("nirubar: sni: another StatusNotifierWatcher is running; using it"),
+        Err(error) => eprintln!("nirubar: sni watcher: {error}"),
+    }
+
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

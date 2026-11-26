@@ -42,6 +42,7 @@ mod scratchpad;
 mod scroll;
 mod share;
 mod sni;
+mod sni_watcher;
 mod status;
 mod tailscale;
 mod timer;

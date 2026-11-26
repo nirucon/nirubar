@@ -27,7 +27,9 @@ where a real control view exists, the panel hands over to NIRU Launcher.
 - Panels with measured hitboxes (a module is clickable across its whole cell),
   Escape/click-outside dismissal and a timeout.
 - XEmbed and D-Bus StatusNotifierItem trays with real icons and menus, on the
-  primary monitor.
+  primary monitor. The bar is its own `org.kde.StatusNotifierWatcher`, served
+  on a separate connection and thread, so an application that hangs or is
+  killed delays only its own icon.
 - Narrow-width overflow: low-priority modules collapse into a clickable `+N`.
 - Event-driven media (MPRIS via `playerctl --follow`), volume, microphone and
   privacy dot (one shared `pw-dump --monitor` for all bars), drives and
@@ -252,6 +254,13 @@ After editing, press `Super+R` or run `niructl reload`.
 - **A setting has no effect.** Run `nirubar --check-config`.
 - **The bar runs an old version after an update.** `niructl restart-bar`
   restarts it; a new NIRUWM still needs a new login.
+- **A tray icon is missing or stale.** Since 0.34.3 a tray item that stops
+  answering can no longer freeze the tray: every call to an item gives up
+  after two seconds, and an item is dropped as soon as its program leaves the
+  bus. `busctl --user get-property org.kde.StatusNotifierWatcher
+  /StatusNotifierWatcher org.kde.StatusNotifierWatcher
+  RegisteredStatusNotifierItems` lists what the bar knows; it should answer at
+  once.
 
 ## Uninstall
 

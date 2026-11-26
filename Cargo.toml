@@ -1,6 +1,6 @@
 [package]
 name = "nirubar"
-version = "0.34.2"
+version = "0.34.3"
 edition = "2021"
 rust-version = "1.77"
 license = "MIT"
@@ -29,3 +29,8 @@ futures-lite = "2"
 lto = true
 codegen-units = 1
 strip = true
+
+# system-tray 0.8.9 with NIRUBAR fixes: call timeouts, per-item tasks and no
+# built-in watcher (see vendor/system-tray/PATCHES.md).
+[patch.crates-io]
+system-tray = { path = "vendor/system-tray" }

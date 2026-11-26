@@ -151,6 +151,11 @@ microphone_visibility = "always"
 primary monitor. SNI menus open in a selectable bar panel; left click activates
 an item, right click opens its menu when it has one, and items without a menu
 receive the secondary action. The strip scales with the normal bar geometry.
+The bar runs the `org.kde.StatusNotifierWatcher` registry itself, apart from
+the code that reads the items. Each item is read in its own task with a two
+second limit per call, so an application that hangs, or is killed while a
+second instance starts, delays only its own icon; its entry disappears when it
+leaves the bus, and a restarted instance replaces it.
 
 On high-DPI displays the bar reads `Xft.dpi` at startup and scales `font_size`,
 `bar_height` and `bar.cell_width`. Set `NIRU_UI_SCALE` (for example `1.25`) to
