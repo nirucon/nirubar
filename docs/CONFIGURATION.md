@@ -254,7 +254,7 @@ window, where it has one, is the last row, Open settings.
 Panels close on a click on the same module, a click elsewhere or Escape.
 A panel with actions waits at least 10 seconds, counted from the last move
 of the pointer in it.
-Quick-glance panels also close after `popup_timeout_seconds` (default 4;
+Quick-glance panels also close after `popup_timeout_seconds` (default 6;
 0 keeps them open until dismissed). Reading panels ignore that timeout and
 stay open until dismissed:
 

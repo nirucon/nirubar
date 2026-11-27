@@ -237,7 +237,7 @@ position = "top"
 # "wifi" is added automatically after "network" when an adapter exists; set
 # `wifi = false` to hide it. Weather settings live in
 # ~/.config/nirubar/config.toml; see weather.example.toml.
-modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "bluetooth", "mode", "battery", "updates", "niruxupdate", "restart", "agent", "nirusec", "dnd", "disk", "quicksettings", "share", "clock"]
+modules = ["workspaces", "dictation", "privacy", "recording", "scratchpad", "layout", "media", "volume", "microphone", "brightness", "display", "tailscale", "network", "wifi", "bluetooth", "mode", "battery", "updates", "niruxupdate", "restart", "nirusec", "disk", "share", "weather", "clock"]
 # `nirux update` keeps `modules` on the NIRUX default list and order, so every
 # machine looks the same. Set this to false to keep your own list.
 follow_default_modules = true
@@ -265,7 +265,7 @@ tags = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 # Width of one workspace cell, in pixels.
 cell_width = 30
 # Show the focused window title between the workspaces and the status.
-title = false
+title = true
 title_max = 20
 # Seconds before the title appears. With 2, switching through windows shows no
 # titles at all and the one you settle on appears. 0 shows it at once. Only
@@ -287,7 +287,7 @@ popups = true
 # weather, tasks, pulse, notifications) always wait for a click or Escape.
 # Per-panel overrides go in NIRUBAR's own ~/.config/nirubar/config.toml,
 # never here:  [popup_timeout]  calendar = 0  volume = 2
-popup_timeout_seconds = 4
+popup_timeout_seconds = 6
 # Characters kept from the media title before an ellipsis.
 media_width = 32
 # Width of the graph in the pulse panel, in characters.

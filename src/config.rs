@@ -322,7 +322,7 @@ impl Default for Bar {
         Self {
             enabled: true,
             position: "top".into(),
-            show_title: false,
+            show_title: true,
             title_max: 20,
             cell_width: 30,
             transparent: true,
@@ -351,12 +351,10 @@ impl Default for Bar {
                 "updates".into(),
                 "niruxupdate".into(),
                 "restart".into(),
-                "agent".into(),
                 "nirusec".into(),
-                "dnd".into(),
                 "disk".into(),
-                "quicksettings".into(),
                 "share".into(),
+                "weather".into(),
                 "clock".into(),
             ],
             tags: (1..=10).map(|n| n.to_string()).collect(),
@@ -367,7 +365,7 @@ impl Default for Bar {
             date_format: "%Y-%m-%d".into(),
             time_format: "%H:%M".into(),
             popups: true,
-            popup_timeout_seconds: 4,
+            popup_timeout_seconds: 6,
             battery: true,
             network: true,
             wifi: true,
@@ -1437,7 +1435,7 @@ mod tests {
     fn defaults_are_minimal() {
         let c = Config::default();
         assert!(c.bar.enabled);
-        assert!(!c.bar.show_title, "the bar defaults to tags and clock only");
+        assert!(c.bar.show_title, "the bar shows the focused window title");
         assert_eq!(c.bar.cell_width, 30);
     }
 
@@ -1788,7 +1786,7 @@ action = "terminal"
         let m = &c.bar.modules;
         let at = |n: &str| m.iter().position(|x| x == n);
         assert!(at("updates").unwrap() + 1 == at("niruxupdate").unwrap());
-        assert!(at("disk").unwrap() + 1 == at("quicksettings").unwrap());
+        assert!(at("disk").unwrap() + 1 == at("share").unwrap());
         assert_eq!(c.bar.disk_warn, 90);
         assert!(c.bar.follow_default_modules);
         let off: Config = toml::from_str("[bar]\nfollow_default_modules = false\n").unwrap();
@@ -1818,12 +1816,10 @@ action = "terminal"
             "updates",
             "niruxupdate",
             "restart",
-            "agent",
             "nirusec",
-            "dnd",
             "disk",
-            "quicksettings",
             "share",
+            "weather",
             "clock",
         ];
         assert_eq!(Config::default().bar.modules, want);
