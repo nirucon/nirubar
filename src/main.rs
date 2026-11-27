@@ -2877,7 +2877,26 @@ fn choose_icons(renderer: &render::Renderer, want_icons: bool) -> status::Icons 
     let nerd = status::Icons::nerd();
     let plain = status::Icons::plain();
     let ok = |g: &str| g.chars().all(|ch| renderer.has_glyph(ch));
+    // The weather glyphs go as one set: a sun beside a written-out "rain"
+    // would read as two different styles.
+    let weather = [
+        nerd.weather_clear,
+        nerd.weather_night,
+        nerd.weather_cloud,
+        nerd.weather_rain,
+        nerd.weather_snow,
+        nerd.weather_storm,
+    ]
+    .iter()
+    .all(|g| ok(g));
+    let w = if weather { nerd } else { plain };
     status::Icons {
+        weather_clear: w.weather_clear,
+        weather_night: w.weather_night,
+        weather_cloud: w.weather_cloud,
+        weather_rain: w.weather_rain,
+        weather_snow: w.weather_snow,
+        weather_storm: w.weather_storm,
         battery_full: if ok(nerd.battery_full) {
             nerd.battery_full
         } else {

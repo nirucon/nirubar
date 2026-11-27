@@ -112,7 +112,7 @@ Add, remove or reorder modules in `[bar] modules`:
 | `niruxupdate` | A newer NIRUX release, or one that needs a new login |
 | `restart` | Programs still running from an older NIRUX version after an update; hidden when none. Left click runs `nirux stale restart`, right click lists which restart automatically and which to reopen |
 | `pulse` | CPU and memory, in the accent from 80 °C and red from 90 °C; click for the CPU temperature, a one-minute graph and a system monitor |
-| `uptime`, `sun`, `weather` | Uptime, sunrise/sunset, cached weather with an eight-hour rain timeline |
+| `uptime`, `sun`, `weather` | Uptime, sunrise/sunset, cached weather (icon and temperature) with an eight-hour rain timeline |
 | `mode`, `layout` | Active work mode and NIRUWM's studio mode; current NIRUWM layout |
 | `tasks`, `agent` | NIRU/OpenCode task status; OpenCode prompt entry |
 | `scratchpad` | NIRUWM scratchpads; click a row to show or hide one |

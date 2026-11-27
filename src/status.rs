@@ -86,6 +86,14 @@ pub struct Icons {
     pub headset: &'static str,
     /// Programs that need a restart after an update: a circular arrow.
     pub restart: &'static str,
+    /// The `weather` module. An empty plain fallback means the condition is
+    /// written out in words instead.
+    pub weather_clear: &'static str,
+    pub weather_night: &'static str,
+    pub weather_cloud: &'static str,
+    pub weather_rain: &'static str,
+    pub weather_snow: &'static str,
+    pub weather_storm: &'static str,
 }
 
 impl Icons {
@@ -138,6 +146,12 @@ impl Icons {
             pause: "\u{f04c}",   // nf-fa-pause
             headset: "\u{f025}", // nf-fa-headphones
             restart: "\u{f021}", // nf-fa-refresh
+            weather_clear: "\u{f185}", // nf-fa-sun_o
+            weather_night: "\u{f186}", // nf-fa-moon_o
+            weather_cloud: "\u{f0c2}", // nf-fa-cloud
+            weather_rain: "\u{f0e9}", // nf-fa-umbrella
+            weather_snow: "\u{f2dc}", // nf-fa-snowflake_o
+            weather_storm: "\u{f0e7}", // nf-fa-bolt
         }
     }
 
@@ -185,6 +199,12 @@ impl Icons {
             pause: "||",
             headset: "hs",
             restart: "restart",
+            weather_clear: "",
+            weather_night: "",
+            weather_cloud: "",
+            weather_rain: "",
+            weather_snow: "",
+            weather_storm: "",
         }
     }
 }

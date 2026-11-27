@@ -28,7 +28,7 @@ options have their own optional file: `~/.config/nirubar/config.toml`. Calendar 
 | `pulse` | CPU and memory; click for a graph of the last minute |
 | `uptime` | Uptime; panel also shows memory use and fullest filesystem |
 | `sun` | Sunrise and sunset for the configured coordinates |
-| `weather` | Cached temperature, condition and rain; panel shows an eight-hour timeline |
+| `weather` | An icon for the sky (sun, moon, cloud, rain, snow, storm) and the temperature; the panel shows the place, conditions and an eight-hour rain timeline |
 | `clock` | Date and time |
 | `display` | This bar's screen position (from RandR events, no `xrandr` polling) (`Left`, `Center`, `Right`, `Top`, `Bottom`, diagonals or `Mirror`); click for outputs, Return/Open controls for display profiles |
 | `tailscale` | Tailscale peers from tailscaled's LocalAPI socket every 5 seconds (no process; the `tailscale` CLI only without the socket); shown only when Tailscale is installed. Click for peer state, Open controls opens `nirulauncher --tailscale` |
@@ -293,7 +293,11 @@ names and bad values are ignored and listed by `nirubar --check-config`.
 Media titles longer than `media_width` scroll and rest
 at the beginning. At narrow widths, low-priority modules collapse into `+N`.
 Battery packs are aggregated by energy when available. Weather is opt-in and
-keeps its last successful result.
+keeps its last successful result. The bar shows an icon and the temperature
+(`icons = false`, or a font without the glyphs, writes the condition out
+instead). The panel names the place from `[weather] location` in
+`~/.config/nirubar/config.toml` (NIRUSETTINGS: Bar, Weather place name) and
+otherwise shows the coordinates.
 
 Reload after editing with `niructl reload` or Super+R. Validate with
 `nirubar --check-config`.

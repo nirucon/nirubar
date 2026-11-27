@@ -47,6 +47,9 @@ pub struct Current {
     pub wind_speed_10m: Option<f64>,
     #[serde(default)]
     pub wind_gusts_10m: Option<f64>,
+    /// 1 by day, 0 at night. Older caches lack it and count as day.
+    #[serde(default)]
+    pub is_day: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -260,7 +263,9 @@ impl Weather {
         self.start_fetch();
     }
 
-    pub fn summary(&mut self) -> String {
+    /// The bar text: an icon and the temperature, like the other modules.
+    /// Without weather glyphs the condition is written out instead.
+    pub fn summary(&mut self, icons: &crate::status::Icons) -> String {
         if !self.enabled() {
             return String::new();
         }
@@ -271,12 +276,13 @@ impl Weather {
         let Some(temp) = api.current.temperature_2m else {
             return "weather --".into();
         };
-        let condition = condition(api.current.weather_code.unwrap_or(0), true);
-        let rain = next_precipitation_probability(api);
-        if rain >= 20.0 {
-            format!("{condition} {:.0}° {rain:.0}%", temp)
+        let code = api.current.weather_code.unwrap_or(0);
+        let day = api.current.is_day != Some(0);
+        let icon = icon(code, day, icons);
+        if icon.is_empty() {
+            format!("{} {:.0}°", condition(code, true), temp)
         } else {
-            format!("{condition} {:.0}°", temp)
+            format!("{icon} {:.0}°", temp)
         }
     }
 
@@ -295,15 +301,14 @@ impl Weather {
         let mut lines = Vec::new();
         if let Some((fetched, api)) = &self.cache {
             let c = &api.current;
-            let name = if self.settings.location.is_empty() {
-                format!(
-                    "{:.2}, {:.2}",
+            if self.settings.location.is_empty() {
+                lines.push(format!(
+                    "{:.2}, {:.2}  (name it: NIRUSETTINGS, Bar, Weather place name)",
                     self.settings.latitude, self.settings.longitude
-                )
+                ));
             } else {
-                self.settings.location.clone()
-            };
-            lines.push(name);
+                lines.push(self.settings.location.clone());
+            }
             if let Some(t) = c.temperature_2m {
                 lines.push(format!(
                     "{}  {:.0}°C{}",
@@ -413,26 +418,6 @@ fn local_now_minutes() -> u32 {
     now.hour() * 60 + now.minute()
 }
 
-fn next_precipitation_probability(api: &Api) -> f64 {
-    let now = chrono::Local::now().naive_local();
-    api.hourly
-        .time
-        .iter()
-        .enumerate()
-        .find_map(|(index, time)| {
-            let parsed = chrono::NaiveDateTime::parse_from_str(time, "%Y-%m-%dT%H:%M").ok()?;
-            (parsed >= now).then(|| {
-                api.hourly
-                    .precipitation_probability
-                    .get(index)
-                    .copied()
-                    .flatten()
-                    .unwrap_or(0.0)
-            })
-        })
-        .unwrap_or(0.0)
-}
-
 fn precipitation_timeline(api: &Api, hours: usize, now: chrono::NaiveDateTime) -> String {
     let mut values = Vec::new();
     for (index, time) in api.hourly.time.iter().enumerate() {
@@ -479,7 +464,7 @@ pub(crate) fn daylight_line(sunrise: &str, sunset: &str, now: u32) -> String {
 fn fetch(latitude: f64, longitude: f64) -> Result<Api, String> {
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}\
-         &current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_gusts_10m\
+         &current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,is_day\
          &hourly=temperature_2m,precipitation_probability,precipitation,weather_code\
          &daily=sunrise,sunset&timezone=auto&forecast_days=2"
     );
@@ -505,6 +490,18 @@ fn fetch(latitude: f64, longitude: f64) -> Result<Api, String> {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
     serde_json::from_slice::<Api>(&out.stdout).map_err(|e| format!("invalid weather response: {e}"))
+}
+
+/// The glyph for a WMO weather code. Empty when the font has no weather set.
+fn icon(code: u32, day: bool, icons: &crate::status::Icons) -> &'static str {
+    match code {
+        0 | 1 if day => icons.weather_clear,
+        0 | 1 => icons.weather_night,
+        51..=67 | 80..=82 => icons.weather_rain,
+        71..=77 | 85 | 86 => icons.weather_snow,
+        95..=99 => icons.weather_storm,
+        _ => icons.weather_cloud,
+    }
 }
 
 fn condition(code: u32, short: bool) -> &'static str {
@@ -543,6 +540,20 @@ fn condition(code: u32, short: bool) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn icons_follow_the_weather_code_and_night() {
+        let n = crate::status::Icons::nerd();
+        assert_eq!(icon(0, true, &n), n.weather_clear);
+        assert_eq!(icon(1, false, &n), n.weather_night);
+        assert_eq!(icon(3, true, &n), n.weather_cloud);
+        assert_eq!(icon(45, true, &n), n.weather_cloud);
+        assert_eq!(icon(61, true, &n), n.weather_rain);
+        assert_eq!(icon(81, false, &n), n.weather_rain);
+        assert_eq!(icon(73, true, &n), n.weather_snow);
+        assert_eq!(icon(95, true, &n), n.weather_storm);
+        assert_eq!(icon(0, true, &crate::status::Icons::plain()), "");
+    }
+
     const FIXTURE: &str = r#"{
       "current": {"temperature_2m": 9.4, "apparent_temperature": 7.1, "precipitation": 0.2,
                   "weather_code": 3, "wind_speed_10m": 4.2, "wind_gusts_10m": 7.0},
@@ -566,7 +577,12 @@ mod tests {
         };
         let mut weather = Weather::new(settings);
         weather.cache = Some((now_secs(), api));
-        assert_eq!(weather.summary(), "overcast 9°");
+        let nerd = crate::status::Icons::nerd();
+        assert_eq!(weather.summary(&nerd), "\u{f0c2} 9°");
+        assert_eq!(
+            weather.summary(&crate::status::Icons::plain()),
+            "overcast 9°"
+        );
         let (_, lines) = weather.panel();
         assert!(lines.iter().any(|l| l.contains("Stockholm")));
         assert!(lines.iter().any(|l| l.contains("sunrise")));
@@ -614,7 +630,9 @@ mod tests {
                 ..Api::default()
             },
         ));
-        assert!(weather.summary().contains("27"));
+        assert!(weather
+            .summary(&crate::status::Icons::plain())
+            .contains("27"));
     }
 
     #[test]

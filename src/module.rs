@@ -3023,15 +3023,17 @@ impl Module for Dnd {
 
 pub struct WeatherModule {
     weather: weather::Weather,
+    icons: status::Icons,
 }
 
 impl WeatherModule {
-    pub fn new(full: &config::Config) -> Self {
+    pub fn new(full: &config::Config, icons: status::Icons) -> Self {
         Self {
             weather: weather::Weather::new(weather::settings(
                 full.weather_latitude,
                 full.weather_longitude,
             )),
+            icons,
         }
     }
 }
@@ -3044,7 +3046,7 @@ impl Module for WeatherModule {
         Side::Right
     }
     fn render(&mut self) -> String {
-        self.weather.summary()
+        self.weather.summary(&self.icons)
     }
     fn popup(&mut self) -> Option<(String, Vec<String>)> {
         Some(self.weather.panel())
@@ -3351,7 +3353,7 @@ pub fn build(
             }
             "uptime" => out.push(Box::new(Uptime { icons })),
             "brightness" => out.push(Box::new(Brightness { icons })),
-            "weather" => out.push(Box::new(WeatherModule::new(full))),
+            "weather" => out.push(Box::new(WeatherModule::new(full, icons))),
             "notifications" => out.push(Box::new(Notifications::new(icons))),
             "dnd" => out.push(Box::new(Dnd::new(icons))),
             "sun" => out.push(Box::new(Sun {
